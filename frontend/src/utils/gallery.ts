@@ -1,5 +1,8 @@
 // 画廊的纯逻辑：查询串、发布时间、状态文案、分享文案与模糊偏好。
 
+/** 触屏点按临时去模糊的时长，单位毫秒。 */
+export const TOUCH_REVEAL_MS = 2500
+
 /** 模糊开关的本地存储键。 */
 export const BLUR_STORAGE_KEY = 'sesegraph.gallery.blur'
 
@@ -230,4 +233,14 @@ export function focusStep(index: number, length: number, backwards: boolean): nu
   if (index < 0) return backwards ? length - 1 : 0
   if (backwards) return index === 0 ? length - 1 : index - 1
   return index === length - 1 ? 0 : index + 1
+}
+
+/** shouldShowBlur 决定当前是否盖住模糊：开关开启且未处于临时去模糊状态。 */
+export function shouldShowBlur(blurred: boolean, revealed: boolean): boolean {
+  return blurred && !revealed
+}
+
+/** shouldRevealOnTap 判断这次点按是否只做临时去模糊。 */
+export function shouldRevealOnTap(input: { blurred: boolean; touch: boolean; revealed: boolean }): boolean {
+  return input.blurred && input.touch && !input.revealed
 }

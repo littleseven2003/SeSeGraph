@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
 import type { GalleryItem } from '../../api/gallery.ts'
-import { formatPublishedAt, statusLabel } from '../../utils/gallery.ts'
+import { TOUCH_REVEAL_MS, formatPublishedAt, shouldRevealOnTap, shouldShowBlur, statusLabel } from '../../utils/gallery.ts'
 
 const props = defineProps<{
   item: GalleryItem
@@ -19,13 +19,15 @@ function touchOnly(): boolean {
   return window.matchMedia('(hover: none)').matches
 }
 
+const showBlur = computed(() => shouldShowBlur(props.blurred, revealed.value))
+
 function onOpen(): void {
-  if (props.blurred && touchOnly() && !revealed.value) {
+  if (shouldRevealOnTap({ blurred: props.blurred, touch: touchOnly(), revealed: revealed.value })) {
     revealed.value = true
     if (revealTimer !== undefined) clearTimeout(revealTimer)
     revealTimer = setTimeout(() => {
       revealed.value = false
-    }, 2500)
+    }, TOUCH_REVEAL_MS)
     return
   }
   emit('open', props.item.id)
@@ -58,12 +60,10 @@ const toneClass = computed(() => {
   <button
     type="button"
     class="group flex w-full flex-col overflow-hidden rounded-lg border border-line bg-surface text-left transition hover:border-brand/40 hover:shadow-[0_8px_24px_-16px_rgba(15,23,42,0.45)] focus-visible:border-brand"
+    :class="showBlur ? 'is-blurred' : ''"
     @click="onOpen"
   >
-    <span
-      class="relative block aspect-[4/3] w-full overflow-hidden bg-canvas"
-      :class="blurred && !revealed ? 'is-blurred' : ''"
-    >
+    <span class="relative block aspect-[4/3] w-full overflow-hidden bg-canvas">
       <img
         v-if="item.cover_url !== ''"
         :src="item.cover_url"
@@ -114,8 +114,16 @@ const toneClass = computed(() => {
   transform: scale(1.06);
 }
 
-.is-blurred:hover img,
-.is-blurred:focus-within img {
+/* 悬停去模糊只对支持悬停的设备生效，避免触屏保留点按后的悬停状态。 */
+@media (hover: hover) {
+  .is-blurred:hover img {
+    filter: none;
+    transform: none;
+  }
+}
+
+/* 键盘去模糊绑定卡片按钮自身的可见焦点。 */
+.is-blurred:focus-visible img {
   filter: none;
   transform: none;
 }

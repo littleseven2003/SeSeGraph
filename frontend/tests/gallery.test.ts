@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import {
   BLUR_STORAGE_KEY,
@@ -14,6 +15,8 @@ import {
   postShareUrl,
   readShareTemplate,
   saveShareTemplate,
+  shouldRevealOnTap,
+  shouldShowBlur,
   readBlurPreference,
   renderShareText,
   saveBlurPreference,
@@ -187,4 +190,32 @@ test('focusStep 在首尾循环并处理无焦点元素', () => {
   assert.equal(focusStep(-1, 3, false), 0)
   assert.equal(focusStep(-1, 3, true), 2)
   assert.equal(focusStep(0, 0, false), -1)
+})
+
+test('触屏点按去模糊到期后恢复模糊', () => {
+  // 点按一次：临时去模糊，不打开详情。
+  assert.equal(shouldRevealOnTap({ blurred: true, touch: true, revealed: false }), true)
+  assert.equal(shouldShowBlur(true, true), false)
+
+  // 计时到期：revealed 复位，模糊重新生效。
+  assert.equal(shouldShowBlur(true, false), true)
+
+  // 已经开始去模糊后再次点按直接打开详情。
+  assert.equal(shouldRevealOnTap({ blurred: true, touch: true, revealed: true }), false)
+
+  // 关闭模糊或非触屏时不做临时去模糊。
+  assert.equal(shouldRevealOnTap({ blurred: false, touch: true, revealed: false }), false)
+  assert.equal(shouldRevealOnTap({ blurred: true, touch: false, revealed: false }), false)
+  assert.equal(shouldShowBlur(false, false), false)
+})
+
+test('封面悬停去模糊限定在支持悬停的设备且键盘绑定可见焦点', () => {
+  const source = readFileSync(new URL('../src/components/gallery/PostCard.vue', import.meta.url), 'utf8')
+  const media = source.indexOf('@media (hover: hover)')
+  const hover = source.indexOf('.is-blurred:hover img')
+  assert.ok(media >= 0, '缺少 hover 能力查询')
+  assert.ok(hover > media, '悬停规则必须写在 @media (hover: hover) 内')
+  assert.ok(source.includes('.is-blurred:focus-visible img'), '键盘去模糊应绑定按钮的可见焦点')
+  assert.equal(source.includes(':focus-within'), false, '不应再用 focus-within 触发去模糊')
+  assert.ok(source.includes(":class=\"showBlur ? 'is-blurred' : ''\""), '模糊类应挂在卡片按钮上')
 })
