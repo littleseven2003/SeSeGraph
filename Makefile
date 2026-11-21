@@ -26,7 +26,8 @@ test:
 typecheck:
 	cd frontend && pnpm typecheck
 
-cross:
+# 四个目标平台交叉编译，先构建并嵌入前端，避免产物缺少页面
+cross: frontend
 	cd backend && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$(LDFLAGS)" -o ../bin/sesegraph-linux-amd64 ./cmd/server
 	cd backend && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "$(LDFLAGS)" -o ../bin/sesegraph-linux-arm64 ./cmd/server
 	cd backend && CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "$(LDFLAGS)" -o ../bin/sesegraph-darwin-arm64 ./cmd/server
