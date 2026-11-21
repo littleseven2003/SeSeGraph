@@ -12,6 +12,7 @@ import (
 	"github.com/littleseven2003/SeSeGraph/backend/internal/auth"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/publisher"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/settings"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/storage"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/telegraph"
 )
@@ -37,6 +38,8 @@ type Deps struct {
 	PublicURL string
 	// Editor 负责把已发布帖的元数据同步到远端页面。
 	Editor *publisher.Editor
+	// Settings 解析运行期可修改的配置，未装配时设置接口不可用。
+	Settings *settings.Resolver
 }
 
 // maxAuthBodyBytes 是登录与初始化请求体的上限，超出的请求不会被解码。
@@ -85,6 +88,9 @@ func NewRouter(deps Deps) *gin.Engine {
 	admin.POST("/posts", limitBody(maxCreatePostBodyBytes), createPostHandler(deps))
 	admin.POST("/posts/:id/images", uploadImageHandler(deps))
 	admin.POST("/posts/:id/commit", commitPostHandler(deps))
+	admin.GET("/settings", settingsHandler(deps))
+	admin.PUT("/settings", limitBody(maxSettingsBodyBytes), updateSettingsHandler(deps))
+	admin.POST("/settings/connectivity", connectivityHandler(deps))
 	admin.GET("/telegraph/status", telegraphStatusHandler(deps))
 	admin.POST("/settings/telegraph/create-account", limitBody(maxTelegraphBodyBytes), telegraphAccountHandler(deps))
 	admin.GET("/posts/:id/progress", progressHandler(deps))

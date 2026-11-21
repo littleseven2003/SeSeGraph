@@ -82,8 +82,22 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		return errAssets
 	}
 
-	streams := buildStreamProvider(lookupEnv)
-	telegraphManager := buildTelegraphManager(store, lookupEnv)
+	settingsStore := settings.NewStore(store)
+	resolver := settings.NewResolver(settingsStore, settings.Env{
+		TelegramToken:    envValue(lookupEnv, "TELEGRAM_BOT_TOKEN"),
+		TelegramChannel:  envValue(lookupEnv, "TELEGRAM_CHANNEL_ID"),
+		TelegramAPIBase:  envValue(lookupEnv, "TELEGRAM_API_BASE"),
+		TelegraphToken:   envValue(lookupEnv, "TELEGRAPH_ACCESS_TOKEN"),
+		TelegraphAuthor:  envValue(lookupEnv, "TELEGRAPH_AUTHOR_NAME"),
+		TelegraphAPIBase: envValue(lookupEnv, "TELEGRAPH_API_BASE"),
+	})
+	effective, err := resolver.Effective(ctx)
+	if err != nil {
+		return errDatabase
+	}
+
+	streams := buildStreamProvider(effective)
+	telegraphManager := buildTelegraphManager(store, effective, lookupEnv)
 
 	editor, editorErr := publisher.NewEditor(repository, func(ctx context.Context) (publisher.PageAPI, error) {
 		if telegraphManager == nil {
@@ -108,6 +122,7 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		Telegraph:        telegraphManager,
 		PublicURL:        cfg.PublicURL,
 		Editor:           editor,
+		Settings:         resolver,
 		ImageConcurrency: readImageConcurrency(lookupEnv),
 	})
 
@@ -150,14 +165,14 @@ func bootstrapAdmin(ctx context.Context, service *auth.Service, lookupEnv func(s
 	}
 }
 
-// buildStreamProvider 按环境变量创建图床提供方。未配置或配置不合法时返回空，
+// buildStreamProvider 按生效配置创建图床提供方：环境变量优先，其次数据库，
+// 因此设置页保存的凭据在重启后生效。未配置或配置不合法时返回空，
 // 由调用方决定跳过上传队列，并让图片网关返回不可用。
-func buildStreamProvider(lookupEnv func(string) (string, bool)) storage.StreamProvider {
-	token, chatID, _ := readTelegramConfig(lookupEnv)
+func buildStreamProvider(effective settings.Effective) storage.StreamProvider {
 	provider, err := storage.NewTelegram(storage.TelegramConfig{
-		Token:   token,
-		ChatID:  chatID,
-		APIBase: readTelegramAPIBase(lookupEnv),
+		Token:   effective.TelegramToken.Value,
+		ChatID:  effective.TelegramChannel.Value,
+		APIBase: effective.TelegramAPIBase.Value,
 	})
 	switch {
 	case errors.Is(err, storage.ErrNotConfigured):
@@ -205,14 +220,14 @@ func startPublisher(ctx context.Context, repository *posts.Repository, manager *
 }
 
 // buildTelegraphManager 创建 Telegraph 账户管理，环境变量令牌优先于数据库。
-func buildTelegraphManager(store *sql.DB, lookupEnv func(string) (string, bool)) *telegraph.Manager {
+// 上游地址取生效配置，便于在没有环境变量时使用设置页保存的地址。
+func buildTelegraphManager(store *sql.DB, effective settings.Effective, lookupEnv func(string) (string, bool)) *telegraph.Manager {
 	token, _ := lookupEnv("TELEGRAPH_ACCESS_TOKEN")
 	author, _ := lookupEnv("TELEGRAPH_AUTHOR_NAME")
-	apiBase, _ := lookupEnv("TELEGRAPH_API_BASE")
 	return telegraph.NewManager(telegraph.Config{
 		AccessToken: strings.TrimSpace(token),
 		AuthorName:  strings.TrimSpace(author),
-		APIBase:     strings.TrimSpace(apiBase),
+		APIBase:     effective.TelegraphAPIBase.Value,
 	}, settings.NewStore(store))
 }
 
@@ -237,7 +252,7 @@ func startUploadQueue(ctx context.Context, repository *posts.Repository, dataDir
 	if provider == nil {
 		return func() {}
 	}
-	_, _, interval := readTelegramConfig(lookupEnv)
+	interval := readUploadInterval(lookupEnv)
 
 	queue, err := worker.New(worker.Options{
 		Repository: repository,
@@ -260,23 +275,22 @@ func startUploadQueue(ctx context.Context, repository *posts.Repository, dataDir
 	return cancel
 }
 
-// readTelegramConfig 读取图床凭据与上传间隔，未配置的项留空。
-func readTelegramConfig(lookupEnv func(string) (string, bool)) (string, string, time.Duration) {
-	token, _ := lookupEnv("TELEGRAM_BOT_TOKEN")
-	chatID, _ := lookupEnv("TELEGRAM_CHANNEL_ID")
-
-	interval := worker.DefaultInterval
-	if raw, ok := lookupEnv("UPLOAD_INTERVAL_MS"); ok {
-		if ms, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil && ms >= 0 {
-			interval = time.Duration(ms) * time.Millisecond
-		}
+// readUploadInterval 读取上传间隔，未配置或取值不合法时使用默认值。
+func readUploadInterval(lookupEnv func(string) (string, bool)) time.Duration {
+	raw, ok := lookupEnv("UPLOAD_INTERVAL_MS")
+	if !ok {
+		return worker.DefaultInterval
 	}
-	return strings.TrimSpace(token), strings.TrimSpace(chatID), interval
+	ms, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || ms < 0 {
+		return worker.DefaultInterval
+	}
+	return time.Duration(ms) * time.Millisecond
 }
 
-// readTelegramAPIBase 读取可选的上游地址，便于接入自建反代或本地联调。
-func readTelegramAPIBase(lookupEnv func(string) (string, bool)) string {
-	value, _ := lookupEnv("TELEGRAM_API_BASE")
+// envValue 读取环境变量并去除首尾空白。
+func envValue(lookupEnv func(string) (string, bool), key string) string {
+	value, _ := lookupEnv(key)
 	return strings.TrimSpace(value)
 }
 
