@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
@@ -51,6 +52,9 @@ func TestThumbServesCoverFile(t *testing.T) {
 	if got := rec.Header().Get("Content-Type"); got != "image/webp" {
 		t.Errorf("Content-Type = %q，期望 image/webp", got)
 	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q，期望 no-store", got)
+	}
 	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
 		t.Errorf("缺少 nosniff 头，实际 %q", got)
 	}
@@ -63,5 +67,39 @@ func TestThumbServesCoverFile(t *testing.T) {
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("%s 状态码 = %d，期望 404", name, rec.Code)
 		}
+	}
+}
+
+// TestThumbNeedsSessionAfterLogout 验证封面响应不被缓存，且登出后的请求重新受鉴权约束。
+func TestThumbNeedsSessionAfterLogout(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	cookie := env.setup(t)
+	dir := filepath.Join(env.dataDir, posts.CoverDir)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatalf("创建封面目录失败: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "5.webp"), []byte("webp-bytes"), 0o640); err != nil {
+		t.Fatalf("写入封面失败: %v", err)
+	}
+
+	rec := env.do(t, http.MethodGet, "/api/thumbs/5.webp", "", cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("登录状态码 = %d，期望 200", rec.Code)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("登录响应 Cache-Control = %q，期望 no-store", got)
+	}
+
+	logout := env.do(t, http.MethodPost, "/api/auth/logout", "", cookie)
+	if logout.Code != http.StatusNoContent {
+		t.Fatalf("登出状态码 = %d，期望 204", logout.Code)
+	}
+	if cleared := logout.Header().Get("Set-Cookie"); cleared == "" || !strings.Contains(cleared, "Max-Age=0") {
+		t.Errorf("登出应清空会话 Cookie，实际 %q", cleared)
+	}
+
+	after := env.do(t, http.MethodGet, "/api/thumbs/5.webp", "", nil)
+	if after.Code != http.StatusUnauthorized {
+		t.Errorf("登出后状态码 = %d，期望 401", after.Code)
 	}
 }

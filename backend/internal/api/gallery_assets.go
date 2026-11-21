@@ -47,7 +47,7 @@ func thumbHandler(deps Deps) gin.HandlerFunc {
 			return
 		}
 		c.Header("Content-Type", "image/webp")
-		c.Header("Cache-Control", "private, max-age=604800")
+		c.Header("Cache-Control", "no-store")
 		c.Header("X-Content-Type-Options", "nosniff")
 		http.ServeContent(c.Writer, c.Request, name, info.ModTime(), file)
 	}
