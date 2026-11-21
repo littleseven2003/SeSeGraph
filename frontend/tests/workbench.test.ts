@@ -1,8 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  appendSelection,
   assignSortOrders,
+  discardBlocked,
   moveItem,
+  planUploadQueue,
   removeItem,
   selectCover,
   sortByName,
@@ -91,4 +94,48 @@ test('选错文件后可恢复为不匹配状态并重新选择', () => {
   assert.ok('error' in matchSnapshotFiles(snapshotFiles, wrong))
   // 重新选回同一批文件后又能匹配，说明入口可以反复使用。
   assert.deepEqual(matchSnapshotFiles(snapshotFiles, snapshotFiles), { order: [0, 1] })
+})
+
+test('续传失配后的重选整体替换旧选择，新建任务仍然追加', () => {
+  const wrong = [{ id: 'a' }, { id: 'b' }]
+  const right = [{ id: 'x' }, { id: 'y' }]
+  assert.deepEqual(appendSelection(wrong, right, true), right)
+  assert.deepEqual(appendSelection(wrong, right, false).map((item) => item.id), ['a', 'b', 'x', 'y'])
+})
+
+test('先选错再一次重选成功后可以匹配回任务', () => {
+  const snapshotFiles = [
+    { name: '01.jpg', size: 100 },
+    { name: '02.jpg', size: 200 },
+  ]
+  const wrong = [
+    { name: 'a.jpg', size: 100 },
+    { name: 'b.jpg', size: 200 },
+  ]
+  assert.ok('error' in matchSnapshotFiles(snapshotFiles, wrong))
+  const replaced = appendSelection(wrong, snapshotFiles, true)
+  assert.deepEqual(matchSnapshotFiles(snapshotFiles, replaced), { order: [0, 1] })
+})
+
+test('上传队列使用开始时的列表快照，中途变化不影响已排定请求', () => {
+  const tiles = [{ name: '1.jpg' }, { name: '2.jpg' }, { name: '3.jpg' }]
+  const queue = planUploadQueue(tiles.slice(), [
+    { index: 0, sortOrder: 1 },
+    { index: 2, sortOrder: 3 },
+  ])
+  tiles.splice(0, 2)
+  assert.deepEqual(queue.map((item) => item.tile.name), ['1.jpg', '3.jpg'])
+  assert.deepEqual(queue.map((item) => item.sortOrder), [1, 3])
+})
+
+test('越界下标的待上传项被跳过，不会取到别的图片', () => {
+  assert.deepEqual(planUploadQueue([{ name: 'only.jpg' }], [{ index: 5, sortOrder: 6 }]), [])
+})
+
+test('创建与上传期间禁止放弃任务', () => {
+  assert.equal(discardBlocked('creating'), true)
+  assert.equal(discardBlocked('uploading'), true)
+  for (const phase of ['idle', 'queued', 'failed'] as const) {
+    assert.equal(discardBlocked(phase), false)
+  }
 })

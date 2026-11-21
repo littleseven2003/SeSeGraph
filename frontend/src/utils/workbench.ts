@@ -78,3 +78,37 @@ export function validatePublishInput(input: PublishInput): string | null {
   if (!input.coverReady) return '封面还在生成，请稍后重试'
   return null
 }
+
+// appendSelection 决定新选择是追加还是替换：续传时失配的选择需要整体替换。
+export function appendSelection<T>(existing: readonly T[], incoming: readonly T[], replace: boolean): T[] {
+  return replace ? [...incoming] : [...existing, ...incoming]
+}
+
+// 上传队列条目：序号来自服务端进度，文件来自开始上传时的列表快照。
+export interface UploadItem<T> {
+  tile: T
+  sortOrder: number
+}
+
+// planUploadQueue 用固定下来的列表生成上传队列，后续列表变化不影响已排定的请求。
+export function planUploadQueue<T>(
+  items: readonly T[],
+  pending: readonly { index: number; sortOrder: number }[],
+): UploadItem<T>[] {
+  const queue: UploadItem<T>[] = []
+  for (const item of pending) {
+    const tile = items[item.index]
+    if (tile === undefined) continue
+    queue.push({ tile, sortOrder: item.sortOrder })
+  }
+  return queue
+}
+
+// 工作台阶段，与视图里的阶段取值保持一致。
+export type WorkbenchPhase = 'idle' | 'creating' | 'uploading' | 'queued' | 'failed'
+
+// discardBlocked 判断当前阶段是否禁止放弃任务：
+// 创建或上传进行中放弃会解锁列表，可能让未发出的请求取到新选的文件。
+export function discardBlocked(phase: WorkbenchPhase): boolean {
+  return phase === 'creating' || phase === 'uploading'
+}

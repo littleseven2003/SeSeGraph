@@ -24,9 +24,12 @@ import {
 import { acceptedCount, initialStatuses, planUploads, type UploadStatus } from '../utils/upload.ts'
 import { DEFAULT_META_FILENAMES, unpackZip } from '../utils/zip.ts'
 import {
+  appendSelection,
   assignSortOrders,
   createId,
+  discardBlocked,
   moveItem,
+  planUploadQueue,
   removeItem,
   selectCover,
   sortByName,
@@ -36,7 +39,9 @@ import {
 } from '../utils/workbench.ts'
 
 // 上传阶段：只有收尾后按钮才会重新可用。
-type Phase = 'idle' | 'creating' | 'uploading' | 'queued' | 'failed'
+import type { WorkbenchPhase } from '../utils/workbench.ts'
+
+type Phase = WorkbenchPhase
 
 const storage: StorageLike | null = browserStorage()
 
@@ -64,7 +69,7 @@ const imageCount = computed(() => tiles.value.length)
 const totalSize = computed(() => totalBytes(tiles.value))
 const coverTile = computed(() => tiles.value.find((tile) => tile.id === coverId.value))
 const uploadedCount = computed(() => acceptedCount(statuses.value))
-const busy = computed(() => phase.value === 'creating' || phase.value === 'uploading')
+const busy = computed(() => discardBlocked(phase.value))
 const finished = computed(() => serverProgress.value?.status === 'completed')
 // resuming 表示当前选中的文件与上次任务完全一致，可以直接补传。
 const resuming = computed(() => {
@@ -280,9 +285,14 @@ function onImages(files: File[]): void {
     accepted.push(addTile(baseName(file.name), file, file.size))
   }
   if (accepted.length === 0) return
-  // 文件夹与多图入口默认按文件名自然排序，已有顺序保持不变。
+  // 文件夹与多图入口默认按文件名自然排序；续传时失配的旧选择整体替换掉。
   const sorted = sortByNaturalName(accepted, (tile) => tile.name)
-  applyTiles([...tiles.value, ...sorted])
+  const replace = snapshot.value !== null && !resuming.value
+  if (replace) {
+    releaseTiles(tiles.value)
+    coverId.value = ''
+  }
+  applyTiles(appendSelection(tiles.value, sorted, replace))
   restoreOrder()
   void refreshCover()
 }
@@ -398,6 +408,7 @@ function resetProgress(): void {
 
 // discardSnapshot 放弃上次任务的续传入口，允许直接开新任务。
 function discardSnapshot(): void {
+  if (discardBlocked(phase.value)) return
   const abandoned = snapshot.value?.postId ?? postId.value
   snapshot.value = null
   clearTask(storage)
@@ -516,16 +527,17 @@ async function publish(): Promise<void> {
     }
 
     phase.value = 'uploading'
-    for (const item of planned.plan.pending) {
-      const tile = tiles.value[item.index]
+    // 用开始上传时的列表生成队列，中途任何列表变化都不会影响已排定的请求。
+    const queue = planUploadQueue(tiles.value.slice(), planned.plan.pending)
+    for (const item of queue) {
       statuses.value = { ...statuses.value, [item.sortOrder]: 'uploading' }
       try {
-        await uploadImage(id, item.sortOrder, tile.blob, tile.mime)
+        await uploadImage(id, item.sortOrder, item.tile.blob, item.tile.mime)
         statuses.value = { ...statuses.value, [item.sortOrder]: 'uploaded' }
       } catch (error) {
         statuses.value = { ...statuses.value, [item.sortOrder]: 'failed' }
         phase.value = 'failed'
-        pushError(error instanceof ApiError ? error.message : `${tile.name} 上传失败，请稍后继续`)
+        pushError(error instanceof ApiError ? error.message : `${item.tile.name} 上传失败，请稍后继续`)
         return
       }
     }
@@ -615,7 +627,8 @@ onBeforeUnmount(() => {
           <div class="flex items-center gap-2">
             <button
               type="button"
-              class="h-9 rounded-md border border-line px-3 text-sm font-medium transition hover:border-muted/40 hover:bg-canvas"
+              class="h-9 rounded-md border border-line px-3 text-sm font-medium transition hover:border-muted/40 hover:bg-canvas disabled:opacity-50"
+              :disabled="discardBlocked(phase)"
               @click="discardSnapshot"
             >
               放弃此任务
