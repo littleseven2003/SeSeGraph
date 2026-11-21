@@ -1,9 +1,9 @@
 package api
 
 import (
+	"crypto/subtle"
 	"errors"
 	"log"
-	"net"
 	"net/http"
 	"strings"
 
@@ -13,13 +13,19 @@ import (
 
 // Deps 汇总构建路由所需的依赖。
 type Deps struct {
-	Version          string
-	Commit           string
-	Auth             *auth.Service
-	Sessions         *auth.Sessions
-	AllowRemoteSetup bool
-	Logger           *log.Logger
+	Version    string
+	Commit     string
+	Auth       *auth.Service
+	Sessions   *auth.Sessions
+	SetupToken string
+	Logger     *log.Logger
 }
+
+// maxAuthBodyBytes 是登录与初始化请求体的上限，超出的请求不会被解码。
+const maxAuthBodyBytes = 4096
+
+// setupTokenHeader 是初始化凭证的请求头名称。
+const setupTokenHeader = "X-Setup-Token"
 
 // credentialsRequest 是初始化与登录接口的请求体。
 type credentialsRequest struct {
@@ -40,8 +46,8 @@ func NewRouter(deps Deps) *gin.Engine {
 		})
 	})
 	router.GET("/api/auth/status", statusHandler(deps))
-	router.POST("/api/auth/setup", setupHandler(deps))
-	router.POST("/api/auth/login", loginHandler(deps))
+	router.POST("/api/auth/setup", limitBody(maxAuthBodyBytes), setupHandler(deps))
+	router.POST("/api/auth/login", limitBody(maxAuthBodyBytes), loginHandler(deps))
 	router.POST("/api/auth/logout", logoutHandler(deps))
 
 	admin := router.Group("/api", RequireAuth(deps.Sessions))
@@ -76,14 +82,19 @@ func statusHandler(deps Deps) gin.HandlerFunc {
 // setupHandler 完成首次管理员初始化，已初始化后不再允许调用。
 func setupHandler(deps Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if !deps.AllowRemoteSetup && !isLoopbackRequest(c.Request.RemoteAddr) {
-			c.JSON(http.StatusForbidden, gin.H{"error": "首次初始化仅允许从本机访问"})
+		// 初始化凭证必须显式配置，避免经由反代的可达入口被抢先注册。
+		if deps.SetupToken == "" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "未配置初始化凭证，请通过环境变量完成首次初始化"})
+			return
+		}
+		provided := c.GetHeader(setupTokenHeader)
+		if subtle.ConstantTimeCompare([]byte(provided), []byte(deps.SetupToken)) != 1 {
+			c.JSON(http.StatusForbidden, gin.H{"error": "初始化凭证不正确"})
 			return
 		}
 
 		var req credentialsRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式不正确"})
+		if !bindCredentials(c, &req) {
 			return
 		}
 
@@ -112,8 +123,7 @@ func setupHandler(deps Deps) gin.HandlerFunc {
 func loginHandler(deps Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req credentialsRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式不正确"})
+		if !bindCredentials(c, &req) {
 			return
 		}
 
@@ -156,12 +166,26 @@ func issueSession(c *gin.Context, deps Deps, username string) error {
 	return nil
 }
 
-// isLoopbackRequest 判断请求来源是否为本机。只取连接地址，不信任代理头。
-func isLoopbackRequest(remoteAddr string) bool {
-	host, _, err := net.SplitHostPort(remoteAddr)
-	if err != nil {
-		host = remoteAddr
+// limitBody 限制请求体大小，超限时读取会直接失败。
+func limitBody(limit int64) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.Body != nil {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
+		}
+		c.Next()
 	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+}
+
+// bindCredentials 解析请求体，超限时返回 413，格式错误时返回 400。
+func bindCredentials(c *gin.Context, req *credentialsRequest) bool {
+	if err := c.ShouldBindJSON(req); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "请求体过大"})
+			return false
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式不正确"})
+		return false
+	}
+	return true
 }

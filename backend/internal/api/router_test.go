@@ -22,16 +22,19 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
+const testSetupToken = "setup-once-token"
+
 type testEnv struct {
-	router   *gin.Engine
-	auth     *auth.Service
-	handle   *sql.DB
-	logs     *bytes.Buffer
-	logger   *log.Logger
-	sessions *auth.Sessions
+	router     *gin.Engine
+	auth       *auth.Service
+	handle     *sql.DB
+	logs       *bytes.Buffer
+	logger     *log.Logger
+	sessions   *auth.Sessions
+	setupToken string
 }
 
-func newTestEnv(t *testing.T, allowRemoteSetup bool) *testEnv {
+func newTestEnv(t *testing.T, setupToken string) *testEnv {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "sesegraph.db")
 	handle, err := db.Open(path)
@@ -49,33 +52,38 @@ func newTestEnv(t *testing.T, allowRemoteSetup bool) *testEnv {
 	sessions := auth.NewSessions([]byte("0123456789abcdef0123456789abcdef"), time.Hour, false)
 
 	router := NewRouter(Deps{
-		Version:          "v0.1.0-test",
-		Commit:           "abc1234",
-		Auth:             service,
-		Sessions:         sessions,
-		AllowRemoteSetup: allowRemoteSetup,
-		Logger:           logger,
+		Version:    "v0.1.0-test",
+		Commit:     "abc1234",
+		Auth:       service,
+		Sessions:   sessions,
+		SetupToken: setupToken,
+		Logger:     logger,
 	})
-	return &testEnv{router: router, auth: service, handle: handle, logs: buf, logger: logger, sessions: sessions}
+	return &testEnv{
+		router:     router,
+		auth:       service,
+		handle:     handle,
+		logs:       buf,
+		logger:     logger,
+		sessions:   sessions,
+		setupToken: setupToken,
+	}
 }
 
 func (e *testEnv) do(t *testing.T, method, path, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
 	t.Helper()
-	return e.doFrom(t, "127.0.0.1:54321", method, path, body, cookie)
+	return e.doWithToken(t, method, path, body, e.setupToken, cookie)
 }
 
-func (e *testEnv) doFrom(t *testing.T, remoteAddr, method, path, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
+func (e *testEnv) doWithToken(t *testing.T, method, path, body, token string, cookie *http.Cookie) *httptest.ResponseRecorder {
 	t.Helper()
-	var reader *strings.Reader
-	if body == "" {
-		reader = strings.NewReader("")
-	} else {
-		reader = strings.NewReader(body)
-	}
-	req := httptest.NewRequest(method, path, reader)
-	req.RemoteAddr = remoteAddr
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.RemoteAddr = "127.0.0.1:54321"
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		req.Header.Set(setupTokenHeader, token)
 	}
 	if cookie != nil {
 		req.AddCookie(cookie)
@@ -99,7 +107,7 @@ func (e *testEnv) setup(t *testing.T) *http.Cookie {
 }
 
 func TestHealthReturnsVersionInfo(t *testing.T) {
-	env := newTestEnv(t, false)
+	env := newTestEnv(t, testSetupToken)
 	rec := env.do(t, http.MethodGet, "/api/health", "", nil)
 
 	if rec.Code != http.StatusOK {
@@ -118,7 +126,7 @@ func TestHealthReturnsVersionInfo(t *testing.T) {
 }
 
 func TestStatusBeforeInitialization(t *testing.T) {
-	env := newTestEnv(t, false)
+	env := newTestEnv(t, testSetupToken)
 	rec := env.do(t, http.MethodGet, "/api/auth/status", "", nil)
 
 	var body map[string]any
@@ -130,8 +138,30 @@ func TestStatusBeforeInitialization(t *testing.T) {
 	}
 }
 
-func TestSetupCreatesAdminAndSession(t *testing.T) {
-	env := newTestEnv(t, false)
+func TestSetupRequiresConfiguredToken(t *testing.T) {
+	env := newTestEnv(t, "")
+	rec := env.do(t, http.MethodPost, "/api/auth/setup", `{"username":"admin","password":"correct-horse"}`, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("未配置凭证时状态码 = %d，期望 403", rec.Code)
+	}
+	if ok, _ := env.auth.IsInitialized(context.Background()); ok {
+		t.Error("未配置凭证时不应创建管理员")
+	}
+}
+
+func TestSetupRejectsWrongToken(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	rec := env.doWithToken(t, http.MethodPost, "/api/auth/setup", `{"username":"admin","password":"correct-horse"}`, "wrong-token", nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("凭证错误时状态码 = %d，期望 403", rec.Code)
+	}
+	if ok, _ := env.auth.IsInitialized(context.Background()); ok {
+		t.Error("凭证错误时不应创建管理员")
+	}
+}
+
+func TestSetupAcceptsConfiguredToken(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
 	cookie := env.setup(t)
 
 	rec := env.do(t, http.MethodGet, "/api/auth/status", "", cookie)
@@ -144,32 +174,25 @@ func TestSetupCreatesAdminAndSession(t *testing.T) {
 	}
 }
 
-func TestSetupRejectedFromRemoteByDefault(t *testing.T) {
-	env := newTestEnv(t, false)
-	rec := env.doFrom(t, "203.0.113.9:40000", http.MethodPost, "/api/auth/setup", `{"username":"admin","password":"correct-horse"}`, nil)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("远程初始化状态码 = %d，期望 403", rec.Code)
-	}
-
-	allowed := newTestEnv(t, true)
-	rec = allowed.doFrom(t, "203.0.113.9:40000", http.MethodPost, "/api/auth/setup", `{"username":"admin","password":"correct-horse"}`, nil)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("允许远程时状态码 = %d，期望 201", rec.Code)
-	}
-}
-
-func TestSetupTwiceConflicts(t *testing.T) {
-	env := newTestEnv(t, false)
+func TestSetupTokenCannotBeReused(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
 	env.setup(t)
 
-	rec := env.do(t, http.MethodPost, "/api/auth/setup", `{"username":"admin","password":"correct-horse"}`, nil)
+	rec := env.do(t, http.MethodPost, "/api/auth/setup", `{"username":"other","password":"another-secret"}`, nil)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("重复初始化状态码 = %d，期望 409", rec.Code)
+	}
+	if ok, _ := env.auth.IsInitialized(context.Background()); !ok {
+		t.Error("管理员应保持已初始化")
+	}
+	name, err := env.auth.Username(context.Background())
+	if err != nil || name != "admin" {
+		t.Errorf("账号名 = %q err=%v，不应被二次初始化覆盖", name, err)
 	}
 }
 
 func TestSetupRejectsWeakPassword(t *testing.T) {
-	env := newTestEnv(t, false)
+	env := newTestEnv(t, testSetupToken)
 	rec := env.do(t, http.MethodPost, "/api/auth/setup", `{"username":"admin","password":"short"}`, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("弱密码状态码 = %d，期望 400", rec.Code)
@@ -180,7 +203,7 @@ func TestSetupRejectsWeakPassword(t *testing.T) {
 }
 
 func TestLoginFlow(t *testing.T) {
-	env := newTestEnv(t, false)
+	env := newTestEnv(t, testSetupToken)
 	env.setup(t)
 
 	wrong := env.do(t, http.MethodPost, "/api/auth/login", `{"username":"admin","password":"wrong-password"}`, nil)
@@ -207,15 +230,39 @@ func TestLoginFlow(t *testing.T) {
 }
 
 func TestLoginBeforeInitialization(t *testing.T) {
-	env := newTestEnv(t, false)
+	env := newTestEnv(t, testSetupToken)
 	rec := env.do(t, http.MethodPost, "/api/auth/login", `{"username":"admin","password":"correct-horse"}`, nil)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("未初始化时登录状态码 = %d，期望 409", rec.Code)
 	}
 }
 
+func TestOversizedSetupBodyRejectedBeforeHashing(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	huge := `{"username":"admin","password":"` + strings.Repeat("a", maxAuthBodyBytes*2) + `"}`
+
+	rec := env.do(t, http.MethodPost, "/api/auth/setup", huge, nil)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("超限初始化状态码 = %d，期望 413", rec.Code)
+	}
+	if ok, _ := env.auth.IsInitialized(context.Background()); ok {
+		t.Error("超限请求不应创建管理员")
+	}
+}
+
+func TestOversizedLoginBodyRejected(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	env.setup(t)
+
+	huge := `{"username":"admin","password":"correct-horse` + strings.Repeat("a", maxAuthBodyBytes*2) + `"}`
+	rec := env.do(t, http.MethodPost, "/api/auth/login", huge, nil)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("超限登录状态码 = %d，期望 413", rec.Code)
+	}
+}
+
 func TestProtectedRouteRequiresSession(t *testing.T) {
-	env := newTestEnv(t, false)
+	env := newTestEnv(t, testSetupToken)
 
 	anonymous := env.do(t, http.MethodGet, "/api/posts", "", nil)
 	if anonymous.Code != http.StatusUnauthorized {
@@ -230,7 +277,7 @@ func TestProtectedRouteRequiresSession(t *testing.T) {
 }
 
 func TestAccessLogOmitsCredentialsAndQuery(t *testing.T) {
-	env := newTestEnv(t, false)
+	env := newTestEnv(t, testSetupToken)
 	cookie := env.setup(t)
 
 	rec := env.do(t, http.MethodGet, "/api/posts?token=query-secret", "", cookie)
@@ -250,7 +297,7 @@ func TestAccessLogOmitsCredentialsAndQuery(t *testing.T) {
 }
 
 func TestAccessLogOnUnmatchedRoute(t *testing.T) {
-	env := newTestEnv(t, false)
+	env := newTestEnv(t, testSetupToken)
 	rec := env.do(t, http.MethodGet, "/i/guessable-code", "", nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("未知路径状态码 = %d，期望 404", rec.Code)

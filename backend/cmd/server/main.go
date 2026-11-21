@@ -67,11 +67,11 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	}
 
 	router := api.NewRouter(api.Deps{
-		Version:          version,
-		Commit:           commit,
-		Auth:             authService,
-		Sessions:         auth.NewSessions(secret, auth.DefaultSessionTTL, isHTTPS(cfg.PublicURL)),
-		AllowRemoteSetup: allowRemoteSetup(lookupEnv),
+		Version:    version,
+		Commit:     commit,
+		Auth:       authService,
+		Sessions:   auth.NewSessions(secret, auth.DefaultSessionTTL, isHTTPS(cfg.PublicURL)),
+		SetupToken: readSetupToken(lookupEnv),
 	})
 
 	// 只记录版本信息，监听地址与数据目录属于本地部署细节，不写入日志。
@@ -107,15 +107,10 @@ func bootstrapAdmin(ctx context.Context, service *auth.Service, lookupEnv func(s
 	}
 }
 
-// allowRemoteSetup 判断是否允许从非本机地址完成首次初始化，默认关闭。
-func allowRemoteSetup(lookupEnv func(string) (string, bool)) bool {
-	value, _ := lookupEnv("ADMIN_SETUP_ALLOW_REMOTE")
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "1", "true", "yes":
-		return true
-	default:
-		return false
-	}
+// readSetupToken 读取网页初始化使用的一次性凭证，未配置时为空。
+func readSetupToken(lookupEnv func(string) (string, bool)) string {
+	value, _ := lookupEnv("ADMIN_SETUP_TOKEN")
+	return strings.TrimSpace(value)
 }
 
 // isHTTPS 判断对外地址是否使用 HTTPS，用于决定会话 Cookie 是否带 Secure。

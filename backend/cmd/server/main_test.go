@@ -263,18 +263,12 @@ func TestIsHTTPS(t *testing.T) {
 	}
 }
 
-func TestAllowRemoteSetup(t *testing.T) {
-	cases := map[string]bool{
-		"1": true, "true": true, "TRUE": true, "yes": true,
-		"0": false, "": false, "no": false,
+func TestReadSetupToken(t *testing.T) {
+	if got := readSetupToken(noEnv); got != "" {
+		t.Errorf("未配置时应为空，实际 %q", got)
 	}
-	for value, want := range cases {
-		env := envLookup(map[string]string{"ADMIN_SETUP_ALLOW_REMOTE": value})
-		if got := allowRemoteSetup(env); got != want {
-			t.Errorf("值 %q 时 allowRemoteSetup = %v，期望 %v", value, got, want)
-		}
-	}
-	if allowRemoteSetup(noEnv) {
-		t.Error("默认应禁止远程初始化")
+	env := envLookup(map[string]string{"ADMIN_SETUP_TOKEN": "  abc123  "})
+	if got := readSetupToken(env); got != "abc123" {
+		t.Errorf("应去除首尾空白，实际 %q", got)
 	}
 }
