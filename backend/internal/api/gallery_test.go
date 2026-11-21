@@ -34,7 +34,7 @@ type galleryListBody struct {
 
 func TestGalleryRequiresAuth(t *testing.T) {
 	env := newTestEnv(t, testSetupToken)
-	paths := []string{"/api/posts", "/api/posts/1"}
+	paths := []string{"/api/posts", "/api/posts/1", "/api/tags", "/api/thumbs/1.webp"}
 	for _, target := range paths {
 		rec := env.do(t, http.MethodGet, target, "", nil)
 		if rec.Code != http.StatusUnauthorized {
