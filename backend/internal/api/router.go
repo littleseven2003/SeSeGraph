@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/auth"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/publisher"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/storage"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/telegraph"
 )
@@ -34,6 +35,8 @@ type Deps struct {
 	Telegraph *telegraph.Manager
 	// PublicURL 是对外访问地址，发布前要求为 HTTPS。
 	PublicURL string
+	// Editor 负责把已发布帖的元数据同步到远端页面。
+	Editor *publisher.Editor
 }
 
 // maxAuthBodyBytes 是登录与初始化请求体的上限，超出的请求不会被解码。
@@ -72,6 +75,7 @@ func NewRouter(deps Deps) *gin.Engine {
 	admin := router.Group("/api", RequireAuth(deps.Sessions))
 	admin.GET("/posts", listPostsHandler(deps))
 	admin.GET("/posts/:id", postDetailHandler(deps))
+	admin.PUT("/posts/:id", limitBody(maxCreatePostBodyBytes), updatePostHandler(deps))
 	admin.GET("/tags", tagsHandler(deps))
 	admin.GET("/thumbs/:filename", thumbHandler(deps))
 	admin.POST("/posts", limitBody(maxCreatePostBodyBytes), createPostHandler(deps))

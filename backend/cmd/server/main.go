@@ -85,6 +85,16 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	streams := buildStreamProvider(lookupEnv)
 	telegraphManager := buildTelegraphManager(store, lookupEnv)
 
+	editor, editorErr := publisher.NewEditor(repository, func(ctx context.Context) (publisher.PageAPI, error) {
+		if telegraphManager == nil {
+			return nil, telegraph.ErrNotConfigured
+		}
+		return telegraphManager.Client(ctx)
+	}, cfg.PublicURL)
+	if editorErr != nil {
+		return errEditorConfig
+	}
+
 	router := api.NewRouter(api.Deps{
 		Version:          version,
 		Commit:           commit,
@@ -97,6 +107,7 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		Streams:          streams,
 		Telegraph:        telegraphManager,
 		PublicURL:        cfg.PublicURL,
+		Editor:           editor,
 		ImageConcurrency: readImageConcurrency(lookupEnv),
 	})
 
@@ -286,6 +297,9 @@ var errServerStart = errors.New("HTTP 服务启动失败，请检查监听地址
 
 // errDatabase 是数据库或鉴权初始化失败时的固定说明，不包含路径等本地信息。
 var errDatabase = errors.New("数据库初始化失败，请检查数据目录是否可写")
+
+// errEditorConfig 表示在线编辑依赖装配失败，不回显具体原因。
+var errEditorConfig = errors.New("在线编辑初始化失败")
 
 // errAdminEnv 说明环境变量中的管理员凭据不符合要求，同样不回显取值。
 var errAdminEnv = errors.New("环境变量中的管理员账号或密码不符合要求")
