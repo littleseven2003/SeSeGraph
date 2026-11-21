@@ -31,6 +31,7 @@ import {
   selectCover,
   sortByName,
   totalBytes,
+  validatePublishInput,
   type WorkbenchTile,
 } from '../utils/workbench.ts'
 
@@ -64,8 +65,22 @@ const totalSize = computed(() => totalBytes(tiles.value))
 const coverTile = computed(() => tiles.value.find((tile) => tile.id === coverId.value))
 const uploadedCount = computed(() => acceptedCount(statuses.value))
 const busy = computed(() => phase.value === 'creating' || phase.value === 'uploading')
-const locked = computed(() => busy.value || (postId.value > 0 && tiles.value.length > 0))
 const finished = computed(() => serverProgress.value?.status === 'completed')
+// resuming 表示当前选中的文件与上次任务完全一致，可以直接补传。
+const resuming = computed(() => {
+  if (postId.value > 0) {
+    const current = snapshot.value
+    if (!current) return true
+    const local: SnapshotFile[] = tiles.value.map((tile) => ({ name: tile.name, size: tile.size }))
+    return !('error' in matchSnapshotFiles(current.files, local))
+  }
+  const saved = snapshot.value
+  if (!saved || tiles.value.length === 0) return false
+  const local: SnapshotFile[] = tiles.value.map((tile) => ({ name: tile.name, size: tile.size }))
+  return !('error' in matchSnapshotFiles(saved.files, local))
+})
+// 续传时沿用旧任务元数据，文件与任务不匹配时解锁，允许重新选择或放弃。
+const locked = computed(() => busy.value || (postId.value > 0 && tiles.value.length > 0 && resuming.value))
 const viewingTask = computed(() => snapshot.value !== null && tiles.value.length === 0)
 const modeLimitText = computed(() =>
   mode.value === 'document' ? 'document 原图，单图上限 20MB' : 'photo 省流量，单图上限 10MB',
@@ -459,19 +474,29 @@ async function publish(): Promise<void> {
     pushError('请先选择图片')
     return
   }
-  if (draft.value.title.trim() === '') {
-    pushError('请填写总标题')
+  if (snapshot.value && !resuming.value) {
+    // 选错文件时先说明身份不符，避免被标题校验挡住真正的提示。
+    pushError(`当前选择与上次任务 #${snapshot.value.postId} 不一致，请重新选择同一批文件，或放弃此任务后重新开始`)
     return
   }
-  if (coverDataUrl.value === '' && postId.value === 0) {
-    pushError('封面还在生成，请稍后重试')
+  const invalid = validatePublishInput({
+    title: draft.value.title,
+    coverReady: coverDataUrl.value !== '',
+    resuming: resuming.value,
+  })
+  if (invalid !== null) {
+    pushError(invalid)
     return
   }
 
   phase.value = 'creating'
   try {
     const id = await ensureTask()
-    if (id === null) return
+    if (id === null) {
+      // 文件与任务不匹配：恢复按钮状态，保留重新选择与放弃入口。
+      phase.value = 'idle'
+      return
+    }
 
     const progress = await fetchProgress(id)
     statuses.value = initialStatuses(progress)
@@ -567,18 +592,24 @@ onBeforeUnmount(() => {
         {{ message }}
       </p>
 
-      <div
-        v-if="viewingTask && snapshot"
-        class="mb-4 rounded-lg border border-line bg-surface p-4"
-        role="status"
-      >
+      <div v-if="snapshot" class="mb-4 rounded-lg border border-line bg-surface p-4" role="status">
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p class="text-sm font-semibold">上次任务 #{{ snapshot.postId }}</p>
+            <p class="flex items-center gap-2 text-sm font-semibold">
+              上次任务 #{{ snapshot.postId }}
+              <span
+                class="rounded px-1.5 py-0.5 text-[11px] font-medium"
+                :class="resuming ? 'bg-accent/10 text-accent' : 'bg-danger-soft text-danger'"
+                >{{ resuming ? '已匹配' : '未匹配' }}</span
+              >
+            </p>
             <p class="mt-0.5 text-xs text-muted">
               {{ snapshot.imageCount }} 张，文件：
               {{ snapshot.files.slice(0, 2).map((file) => file.name).join('、')
-              }}{{ snapshot.files.length > 2 ? ' 等' : '' }}。重新选择同一批文件会按原序号续传。
+              }}{{ snapshot.files.length > 2 ? ' 等' : '' }}。
+              <template v-if="viewingTask">重新选择同一批文件会按原序号续传。</template>
+              <template v-else-if="resuming">续传沿用任务已保存的标题、说明与标签，无需重新填写，发布时只补传缺失序号。</template>
+              <template v-else>当前选择与上次任务不一致，请重新选择同一批文件，或放弃此任务后重新开始。</template>
             </p>
           </div>
           <div class="flex items-center gap-2">

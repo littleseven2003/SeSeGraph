@@ -64,3 +64,17 @@ export function totalBytes(items: readonly { size: number }[]): number {
 export interface WorkbenchTile extends WorkbenchImage {
   previewUrl: string
 }
+
+// 发布前的必填校验：续传沿用旧任务已保存的元数据，不再要求重新填写。
+export interface PublishInput {
+  title: string
+  coverReady: boolean
+  resuming: boolean
+}
+
+export function validatePublishInput(input: PublishInput): string | null {
+  if (input.resuming) return null
+  if (input.title.trim() === '') return '请填写总标题'
+  if (!input.coverReady) return '封面还在生成，请稍后重试'
+  return null
+}
