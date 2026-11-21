@@ -61,6 +61,7 @@ func NewRouter(deps Deps) *gin.Engine {
 	})
 	admin.POST("/posts", createPostHandler(deps))
 	admin.POST("/posts/:id/images", uploadImageHandler(deps))
+	admin.POST("/posts/:id/commit", commitPostHandler(deps))
 
 	if deps.WebFS != nil {
 		router.NoRoute(spaHandler(deps.WebFS))
