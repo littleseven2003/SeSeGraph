@@ -33,6 +33,12 @@ func spaHandler(webFS fs.FS) gin.HandlerFunc {
 			return
 		}
 
+		// 静态资源缺失时不回退入口页，避免旧哈希资源拿到 200 的 HTML。
+		if strings.HasPrefix(requested, "static/") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "未找到"})
+			return
+		}
+
 		if indexErr != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "前端页面尚未构建"})
 			return

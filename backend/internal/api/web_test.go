@@ -79,6 +79,19 @@ func TestAPIPathsDoNotFallBackToIndex(t *testing.T) {
 	}
 }
 
+func TestMissingAssetReturns404(t *testing.T) {
+	router := newWebEnv(t)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/static/missing.js", nil))
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("状态码 = %d，期望 404", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "entry") {
+		t.Errorf("缺失静态资源不应回退到入口页")
+	}
+}
+
 func TestNonGetRequestsAreNotServedPages(t *testing.T) {
 	router := newWebEnv(t)
 	rec := httptest.NewRecorder()
