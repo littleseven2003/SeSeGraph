@@ -6,6 +6,32 @@
 
 （暂无）
 
+## [v0.3.0] - 2026-11-22
+
+本版验收终点为「发布到 Telegraph 并能用短码看图」：管理员在进度面板确认发布后，后台生成 telegra.ph 页面并开启图片公开访问，访客经 `GET /i/{short_code}` 流式取图。公开访问由独立标记控制，升级前已存图的任务保持私有。
+
+### 新增
+
+- 流式下载：存储提供方新增 `OpenStream`，`getFile` 查询远端路径后按 45 分钟、512 条上限缓存；路径失效的 404 只刷新并重试一次，取消与关闭响应体会及时结束上游流。
+- 图片网关：`GET /i/{short_code}` 仅在帖子被显式标记公开、未禁用、图片已存图且有远端标识时转发，任一条件不满足都在请求上游前返回 404；默认并发上限 25，满额立即返回 503。
+- 网关响应：`io.Copy` 搭配可刷新写入保留首段即时到达，成功响应设一年强缓存与 `Content-Disposition: inline`，MIME 只放行 jpeg/png/webp/gif，其余回落 `application/octet-stream` 并加 `X-Content-Type-Options: nosniff`。
+- Telegraph 账户：支持环境变量提供 `access_token`，也支持管理员调用 `POST /api/settings/telegraph/create-account` 建号后落库；并发建号只申请一次，重复调用复用已有账户。
+- Telegraph 页面：实现 `createPage` 与 `editPage`，编辑请求按上游形态走 `/editPage/{path}`；按实际发送的 `content` UTF-8 JSON 字节数分页，阈值 56 KiB 且为互链节点预留空间，超限节点在请求发出前被拒绝。
+- 发布队列：`POST /api/posts/{id}/publish` 先校验账户、公开 HTTPS 地址与存图完成，通过后置为待发布并开启公开标记；串行领取任务，逐页创建后立即落库路径，全部就绪再补互链（首页仅下一页、末页仅上一页、中间双向）。
+- 失败重试：发布中断时保留已建页面路径，管理员重新调用发布后复用已有页面，只补建缺少的页面。
+- 工作台进度：进度接口新增 `publish_state`、`public` 与 `telegraph_urls`，存图完成后出现发布入口，发布中继续轮询，完成列出分享链接。
+
+### 变更
+
+- 数据库结构升到 6：`posts` 增加 `is_public`、`publish_state`、`publish_error`、`telegraph_paths` 与 `telegraph_urls`，旧库自动补列，升级前的任务默认私有。
+- 公开地址校验统一到 `config.ValidatePublicURL`：发布前要求 HTTPS，并拒绝查询串、片段（含末尾裸 `#`）与内嵌凭据，避免拼接出无法访问的图片链接。
+- 发布器随服务启动，每处理任务前重新获取 Telegraph 客户端，运行期完成建号后自动接手队列。
+
+### 说明
+
+- 真实频道实传、真实 Telegraph 发布、浏览器实渲、容器实机与空闲常驻内存实测尚未在发布环境执行，继续列为开口项。
+- 画廊检索、设置页、防社死模糊、流量看护、单帖熔断、代理配置与自动备份属于后续里程碑。
+
 ## [v0.2.0] - 2026-11-22
 
 本版验收终点为「存图完成」：浏览器选图后逐张上传，后台推送至 Telegram 私有频道并落库远端标识，页面显示完成状态。Telegraph 帖子与公开图片链接在 v0.3.0 接入。
