@@ -9,9 +9,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/littleseven2003/SeSeGraph/backend/internal/auth"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/db"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/worker"
 )
 
 // noEnv 模拟没有任何环境变量参与配置。
@@ -269,6 +271,44 @@ func TestReadSetupToken(t *testing.T) {
 	}
 	env := envLookup(map[string]string{"ADMIN_SETUP_TOKEN": "  abc123  "})
 	if got := readSetupToken(env); got != "abc123" {
+		t.Errorf("应去除首尾空白，实际 %q", got)
+	}
+}
+
+func TestReadTelegramConfig(t *testing.T) {
+	token, chatID, interval := readTelegramConfig(noEnv)
+	if token != "" || chatID != "" {
+		t.Errorf("未配置时应为空: %q %q", token, chatID)
+	}
+	if interval != worker.DefaultInterval {
+		t.Errorf("默认间隔 = %s，期望 %s", interval, worker.DefaultInterval)
+	}
+
+	env := envLookup(map[string]string{
+		"TELEGRAM_BOT_TOKEN":  "  123:abc  ",
+		"TELEGRAM_CHANNEL_ID": " -100123 ",
+		"UPLOAD_INTERVAL_MS":  "2500",
+	})
+	token, chatID, interval = readTelegramConfig(env)
+	if token != "123:abc" || chatID != "-100123" {
+		t.Errorf("应去除首尾空白: %q %q", token, chatID)
+	}
+	if interval != 2500*time.Millisecond {
+		t.Errorf("间隔 = %s，期望 2.5s", interval)
+	}
+
+	invalid := envLookup(map[string]string{"UPLOAD_INTERVAL_MS": "abc"})
+	if _, _, got := readTelegramConfig(invalid); got != worker.DefaultInterval {
+		t.Errorf("非法间隔应回落到默认值，实际 %s", got)
+	}
+}
+
+func TestReadTelegramAPIBase(t *testing.T) {
+	if got := readTelegramAPIBase(noEnv); got != "" {
+		t.Errorf("未配置时应为空，实际 %q", got)
+	}
+	env := envLookup(map[string]string{"TELEGRAM_API_BASE": " http://127.0.0.1:9090 "})
+	if got := readTelegramAPIBase(env); got != "http://127.0.0.1:9090" {
 		t.Errorf("应去除首尾空白，实际 %q", got)
 	}
 }

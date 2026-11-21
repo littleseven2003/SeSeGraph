@@ -8,7 +8,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/api"
@@ -16,7 +18,9 @@ import (
 	"github.com/littleseven2003/SeSeGraph/backend/internal/config"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/db"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/storage"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/web"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/worker"
 )
 
 // 构建时通过 -ldflags 注入，未注入时使用开发默认值。
@@ -68,6 +72,7 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		return err
 	}
 
+	repository := posts.NewRepository(store)
 	assets, err := web.Assets()
 	if err != nil {
 		return errAssets
@@ -81,8 +86,11 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		SetupToken: readSetupToken(lookupEnv),
 		WebFS:      assets,
 		DataDir:    cfg.DataDir,
-		Posts:      posts.NewRepository(store),
+		Posts:      repository,
 	})
+
+	stopWorker := startUploadQueue(ctx, repository, cfg.DataDir, lookupEnv)
+	defer stopWorker()
 
 	// 只记录版本信息，监听地址与数据目录属于本地部署细节，不写入日志。
 	log.Printf("服务启动：版本 %s（提交 %s）", version, commit)
@@ -115,6 +123,65 @@ func bootstrapAdmin(ctx context.Context, service *auth.Service, lookupEnv func(s
 	default:
 		return errDatabase
 	}
+}
+
+// startUploadQueue 在配置了图床凭据时启动上传队列，返回停止函数。
+func startUploadQueue(ctx context.Context, repository *posts.Repository, dataDir string, lookupEnv func(string) (string, bool)) func() {
+	token, chatID, interval := readTelegramConfig(lookupEnv)
+	if token == "" || chatID == "" {
+		log.Print("图床未配置，上传队列未启动")
+		return func() {}
+	}
+
+	provider, err := storage.NewTelegram(storage.TelegramConfig{
+		Token:   token,
+		ChatID:  chatID,
+		APIBase: readTelegramAPIBase(lookupEnv),
+	})
+	if err != nil {
+		log.Print("图床配置不可用，上传队列未启动")
+		return func() {}
+	}
+
+	queue, err := worker.New(worker.Options{
+		Repository: repository,
+		Provider:   provider,
+		DataDir:    dataDir,
+		Interval:   interval,
+	})
+	if err != nil {
+		log.Print("上传队列初始化失败")
+		return func() {}
+	}
+
+	if _, err := queue.Recover(ctx); err != nil {
+		log.Print("上传队列恢复失败")
+	}
+
+	queueCtx, cancel := context.WithCancel(ctx)
+	go queue.Run(queueCtx)
+	log.Print("上传队列已启动")
+	return cancel
+}
+
+// readTelegramConfig 读取图床凭据与上传间隔，未配置的项留空。
+func readTelegramConfig(lookupEnv func(string) (string, bool)) (string, string, time.Duration) {
+	token, _ := lookupEnv("TELEGRAM_BOT_TOKEN")
+	chatID, _ := lookupEnv("TELEGRAM_CHANNEL_ID")
+
+	interval := worker.DefaultInterval
+	if raw, ok := lookupEnv("UPLOAD_INTERVAL_MS"); ok {
+		if ms, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil && ms >= 0 {
+			interval = time.Duration(ms) * time.Millisecond
+		}
+	}
+	return strings.TrimSpace(token), strings.TrimSpace(chatID), interval
+}
+
+// readTelegramAPIBase 读取可选的上游地址，便于接入自建反代或本地联调。
+func readTelegramAPIBase(lookupEnv func(string) (string, bool)) string {
+	value, _ := lookupEnv("TELEGRAM_API_BASE")
+	return strings.TrimSpace(value)
 }
 
 // readSetupToken 读取网页初始化使用的一次性凭证，未配置时为空。

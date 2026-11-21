@@ -58,6 +58,7 @@ type Image struct {
 	FileSize     int64
 	TempFilePath string
 	Status       string
+	ErrorMessage string
 }
 
 // Repository 负责帖子与图片记录的读写。
@@ -261,7 +262,7 @@ func (r *Repository) Enqueue(ctx context.Context, postID int64) ([]int, error) {
 // ListImages 返回帖子的全部图片记录，按序号升序。
 func (r *Repository) ListImages(ctx context.Context, postID int64) ([]Image, error) {
 	rows, err := r.handle.QueryContext(ctx,
-		`SELECT id, sort_order, short_code, mime_type, file_size, temp_file_path, status
+		`SELECT id, sort_order, short_code, mime_type, file_size, temp_file_path, status, error_message
 		 FROM post_images WHERE post_id = ? ORDER BY sort_order`, postID)
 	if err != nil {
 		return nil, errors.New("读取图片列表失败")
@@ -272,7 +273,7 @@ func (r *Repository) ListImages(ctx context.Context, postID int64) ([]Image, err
 	for rows.Next() {
 		image := Image{PostID: postID}
 		if err := rows.Scan(&image.ID, &image.SortOrder, &image.ShortCode, &image.MimeType,
-			&image.FileSize, &image.TempFilePath, &image.Status); err != nil {
+			&image.FileSize, &image.TempFilePath, &image.Status, &image.ErrorMessage); err != nil {
 			return nil, errors.New("读取图片列表失败")
 		}
 		images = append(images, image)
@@ -511,4 +512,49 @@ func (r *Repository) MarkPostFinished(ctx context.Context, postID int64, status,
 		return errors.New("更新帖子状态失败")
 	}
 	return nil
+}
+
+// ResetFailedImages 把失败的图片恢复为待上传，并把帖子重新排入队列。
+func (r *Repository) ResetFailedImages(ctx context.Context, postID int64) (int64, error) {
+	tx, err := r.handle.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, errors.New("开启重试事务失败")
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var status string
+	err = tx.QueryRowContext(ctx, `SELECT status FROM posts WHERE id = ?`, postID).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, errors.New("读取帖子状态失败")
+	}
+	if status == StatusQueued || status == StatusPublishing {
+		return 0, nil
+	}
+
+	result, err := tx.ExecContext(ctx,
+		`UPDATE post_images SET status = ?, error_message = '' WHERE post_id = ? AND status = ?`,
+		ImageStatusUploaded, postID, ImageStatusFailed)
+	if err != nil {
+		return 0, errors.New("重置失败图片失败")
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, errors.New("重置失败图片失败")
+	}
+	if affected == 0 {
+		return 0, nil
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE posts SET status = ?, error_message = '', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		StatusQueued, postID); err != nil {
+		return 0, errors.New("重新排队失败")
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, errors.New("提交重试事务失败")
+	}
+	return affected, nil
 }

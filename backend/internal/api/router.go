@@ -62,6 +62,8 @@ func NewRouter(deps Deps) *gin.Engine {
 	admin.POST("/posts", limitBody(maxCreatePostBodyBytes), createPostHandler(deps))
 	admin.POST("/posts/:id/images", uploadImageHandler(deps))
 	admin.POST("/posts/:id/commit", commitPostHandler(deps))
+	admin.GET("/posts/:id/progress", progressHandler(deps))
+	admin.POST("/posts/:id/retry", retryHandler(deps))
 
 	if deps.WebFS != nil {
 		router.NoRoute(spaHandler(deps.WebFS))
