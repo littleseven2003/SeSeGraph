@@ -39,6 +39,12 @@ type testEnv struct {
 
 func newTestEnv(t *testing.T, setupToken string) *testEnv {
 	t.Helper()
+	return newTestEnvWith(t, setupToken, nil)
+}
+
+// newTestEnvWith 允许在默认依赖上做额外注入，供新增模块的集成测试使用。
+func newTestEnvWith(t *testing.T, setupToken string, mutate func(*Deps, *sql.DB)) *testEnv {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "sesegraph.db")
 	handle, err := db.Open(path)
 	if err != nil {
@@ -57,7 +63,7 @@ func newTestEnv(t *testing.T, setupToken string) *testEnv {
 	dataDir := t.TempDir()
 	repository := posts.NewRepository(handle)
 
-	router := NewRouter(Deps{
+	deps := Deps{
 		Version:    "v0.1.0-test",
 		Commit:     "abc1234",
 		Auth:       service,
@@ -66,7 +72,11 @@ func newTestEnv(t *testing.T, setupToken string) *testEnv {
 		Logger:     logger,
 		DataDir:    dataDir,
 		Posts:      repository,
-	})
+	}
+	if mutate != nil {
+		mutate(&deps, handle)
+	}
+	router := NewRouter(deps)
 	return &testEnv{
 		router:     router,
 		auth:       service,

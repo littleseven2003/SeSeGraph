@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"flag"
 	"fmt"
@@ -18,7 +19,9 @@ import (
 	"github.com/littleseven2003/SeSeGraph/backend/internal/config"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/db"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/settings"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/storage"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/telegraph"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/web"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/worker"
 )
@@ -79,6 +82,7 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	}
 
 	streams := buildStreamProvider(lookupEnv)
+	telegraphManager := buildTelegraphManager(store, lookupEnv)
 
 	router := api.NewRouter(api.Deps{
 		Version:          version,
@@ -90,6 +94,7 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		DataDir:          cfg.DataDir,
 		Posts:            repository,
 		Streams:          streams,
+		Telegraph:        telegraphManager,
 		ImageConcurrency: readImageConcurrency(lookupEnv),
 	})
 
@@ -147,6 +152,18 @@ func buildStreamProvider(lookupEnv func(string) (string, bool)) storage.StreamPr
 		return nil
 	}
 	return provider
+}
+
+// buildTelegraphManager 创建 Telegraph 账户管理，环境变量令牌优先于数据库。
+func buildTelegraphManager(store *sql.DB, lookupEnv func(string) (string, bool)) *telegraph.Manager {
+	token, _ := lookupEnv("TELEGRAPH_ACCESS_TOKEN")
+	author, _ := lookupEnv("TELEGRAPH_AUTHOR_NAME")
+	apiBase, _ := lookupEnv("TELEGRAPH_API_BASE")
+	return telegraph.NewManager(telegraph.Config{
+		AccessToken: strings.TrimSpace(token),
+		AuthorName:  strings.TrimSpace(author),
+		APIBase:     strings.TrimSpace(apiBase),
+	}, settings.NewStore(store))
 }
 
 // readImageConcurrency 读取图片网关并发上限，未配置时使用默认值。

@@ -12,6 +12,7 @@ import (
 	"github.com/littleseven2003/SeSeGraph/backend/internal/auth"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/storage"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/telegraph"
 )
 
 // Deps 汇总构建路由所需的依赖。
@@ -29,6 +30,8 @@ type Deps struct {
 	Streams storage.StreamProvider
 	// ImageConcurrency 是图片网关的并发上限，非正时使用默认值。
 	ImageConcurrency int
+	// Telegraph 负责账户配置与建号，未配置时为 nil。
+	Telegraph *telegraph.Manager
 }
 
 // maxAuthBodyBytes 是登录与初始化请求体的上限，超出的请求不会被解码。
@@ -71,6 +74,8 @@ func NewRouter(deps Deps) *gin.Engine {
 	admin.POST("/posts", limitBody(maxCreatePostBodyBytes), createPostHandler(deps))
 	admin.POST("/posts/:id/images", uploadImageHandler(deps))
 	admin.POST("/posts/:id/commit", commitPostHandler(deps))
+	admin.GET("/telegraph/status", telegraphStatusHandler(deps))
+	admin.POST("/telegraph/account", limitBody(maxTelegraphBodyBytes), telegraphAccountHandler(deps))
 	admin.GET("/posts/:id/progress", progressHandler(deps))
 	admin.POST("/posts/:id/retry", retryHandler(deps))
 

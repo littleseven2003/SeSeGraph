@@ -1,0 +1,184 @@
+// Package telegraph 封装 Telegraph API 客户端与账户管理，令牌只留在服务端。
+package telegraph
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+)
+
+const (
+	// DefaultAPIBase 是 Telegraph API 的默认地址。
+	DefaultAPIBase = "https://api.telegra.ph"
+	// defaultTimeout 覆盖创建与编辑页面的常规耗时。
+	defaultTimeout = 30 * time.Second
+	// maxResponseBytes 限制响应体读取量，避免异常上游把内存打满。
+	maxResponseBytes = 1 << 20
+)
+
+var (
+	// ErrNotConfigured 表示尚未配置访问令牌。
+	ErrNotConfigured = errors.New("Telegraph 未配置")
+	// ErrUpstream 表示上游请求失败，具体原因不回显。
+	ErrUpstream = errors.New("Telegraph 请求失败")
+	// ErrInvalidInput 表示调用参数不合法。
+	ErrInvalidInput = errors.New("Telegraph 参数不合法")
+)
+
+// errTransport 是所有网络层失败的统一说明，不携带地址与令牌。
+var errTransport = fmt.Errorf("%w：网络请求未完成", ErrUpstream)
+
+// blockRedirects 禁止跟随重定向，避免把带令牌的请求带到其他地址。
+func blockRedirects(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
+// Config 是客户端配置。AccessToken 为空表示只用于创建账户。
+type Config struct {
+	AccessToken string
+	AuthorName  string
+	APIBase     string
+	HTTPClient  *http.Client
+	Timeout     time.Duration
+}
+
+// Client 是 Telegraph API 客户端。
+type Client struct {
+	token      string
+	authorName string
+	apiBase    string
+	client     *http.Client
+}
+
+// New 创建客户端。APIBase 为空时使用官方地址，客户端统一禁止重定向。
+func New(cfg Config) *Client {
+	base := strings.TrimRight(strings.TrimSpace(cfg.APIBase), "/")
+	if base == "" {
+		base = DefaultAPIBase
+	}
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = defaultTimeout
+	}
+	client := &http.Client{Timeout: timeout, CheckRedirect: blockRedirects}
+	if cfg.HTTPClient != nil {
+		cloned := *cfg.HTTPClient
+		cloned.CheckRedirect = blockRedirects
+		client = &cloned
+	}
+	return &Client{
+		token:      strings.TrimSpace(cfg.AccessToken),
+		authorName: strings.TrimSpace(cfg.AuthorName),
+		apiBase:    base,
+		client:     client,
+	}
+}
+
+// Configured 表示客户端是否带有访问令牌。
+func (c *Client) Configured() bool { return c.token != "" }
+
+// AuthorName 返回默认作者名。
+func (c *Client) AuthorName() string { return c.authorName }
+
+// Account 是 createAccount 的返回结果，访问令牌只交给持久化层。
+type Account struct {
+	AccessToken string
+	AuthorName  string
+	ShortName   string
+	AuthorURL   string
+}
+
+// CreateAccount 申请新的 Telegraph 账户。
+func (c *Client) CreateAccount(ctx context.Context, shortName, authorName string) (Account, error) {
+	shortName = strings.TrimSpace(shortName)
+	authorName = strings.TrimSpace(authorName)
+	if shortName == "" {
+		shortName = "sesegraph"
+	}
+	if len(shortName) > 32 {
+		return Account{}, ErrInvalidInput
+	}
+
+	form := url.Values{}
+	form.Set("short_name", shortName)
+	if authorName != "" {
+		form.Set("author_name", authorName)
+	}
+
+	var result struct {
+		ShortName   string `json:"short_name"`
+		AuthorName  string `json:"author_name"`
+		AuthorURL   string `json:"author_url"`
+		AccessToken string `json:"access_token"`
+	}
+	if err := c.post(ctx, "createAccount", form, &result); err != nil {
+		return Account{}, err
+	}
+	if result.AccessToken == "" {
+		return Account{}, ErrUpstream
+	}
+	return Account{
+		AccessToken: result.AccessToken,
+		AuthorName:  result.AuthorName,
+		ShortName:   result.ShortName,
+		AuthorURL:   result.AuthorURL,
+	}, nil
+}
+
+// apiEnvelope 是 Telegraph 的统一响应结构。
+type apiEnvelope struct {
+	OK     bool            `json:"ok"`
+	Error  string          `json:"error"`
+	Result json.RawMessage `json:"result"`
+}
+
+// post 发送表单请求，错误统一为固定说明，不带上游描述与地址。
+func (c *Client) post(ctx context.Context, method string, form url.Values, out any) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	endpoint := c.apiBase + "/" + method
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return ErrUpstream
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	response, err := c.client.Do(request)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		return errTransport
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10))
+		_ = response.Body.Close()
+	}()
+
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("%w：上游返回 %d", ErrUpstream, response.StatusCode)
+	}
+
+	var envelope apiEnvelope
+	if err := json.NewDecoder(io.LimitReader(response.Body, maxResponseBytes)).Decode(&envelope); err != nil {
+		return ErrUpstream
+	}
+	if !envelope.OK {
+		return ErrUpstream
+	}
+	if out == nil {
+		return nil
+	}
+	if err := json.Unmarshal(envelope.Result, out); err != nil {
+		return ErrUpstream
+	}
+	return nil
+}
