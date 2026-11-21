@@ -388,8 +388,8 @@ func TestGatewayLimitsConcurrency(t *testing.T) {
 	env := newGatewayEnv(t, 2, provider)
 	code := env.publishPost(t, "conc12345", "image/jpeg", "photo", true, false)
 
-	results := make(chan int, 3)
-	for index := 0; index < 3; index++ {
+	results := make(chan int, 2)
+	for index := 0; index < 2; index++ {
 		go func() {
 			response, err := http.Get(env.server.URL + "/i/" + code)
 			if err != nil {
@@ -401,8 +401,6 @@ func TestGatewayLimitsConcurrency(t *testing.T) {
 			results <- response.StatusCode
 		}()
 	}
-
-	// 先确认只有 2 个请求进入上游。
 	for index := 0; index < 2; index++ {
 		select {
 		case <-started:
@@ -410,14 +408,20 @@ func TestGatewayLimitsConcurrency(t *testing.T) {
 			t.Fatal("并发请求未及时进入上游")
 		}
 	}
+
+	// 名额已满：第三个请求立即得到 503，且不会进入上游。
+	response, body := getImage(t, env.server.URL+"/i/"+code)
+	if response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("满额状态码 = %d，期望 503，响应: %s", response.StatusCode, body)
+	}
 	select {
 	case <-started:
-		t.Fatal("第三个请求应排队等待，不应进入上游")
-	case <-time.After(200 * time.Millisecond):
+		t.Fatal("满额时不应再有请求进入上游")
+	case <-time.After(100 * time.Millisecond):
 	}
 
 	close(release)
-	for index := 0; index < 3; index++ {
+	for index := 0; index < 2; index++ {
 		select {
 		case status := <-results:
 			if status != http.StatusOK {
@@ -428,20 +432,34 @@ func TestGatewayLimitsConcurrency(t *testing.T) {
 		}
 	}
 	mu.Lock()
-	defer mu.Unlock()
-	if maxActive > 2 {
-		t.Errorf("上游最大并发 = %d，超过上限 2", maxActive)
+	observed := maxActive
+	mu.Unlock()
+	if observed > 2 {
+		t.Errorf("上游最大并发 = %d，超过上限 2", observed)
+	}
+
+	// 名额释放后新请求可以正常通过。
+	after, _ := getImage(t, env.server.URL+"/i/"+code)
+	if after.StatusCode != http.StatusOK {
+		t.Errorf("释放后状态码 = %d，期望 200", after.StatusCode)
 	}
 }
 
 func TestGatewayClosesUpstreamOnDisconnect(t *testing.T) {
-	readerCtx := make(chan context.Context, 1)
 	closed := make(chan struct{})
+	var opened int
+	var openMu sync.Mutex
 	provider := &fakeStreamProvider{}
 	provider.open = func(ctx context.Context, _ string) (storage.Stream, error) {
-		reader := &ctxReader{ctx: ctx, chunk: []byte("first"), closed: closed}
-		readerCtx <- ctx
-		return storage.Stream{Body: reader, ContentType: "image/jpeg", Size: 0}, nil
+		openMu.Lock()
+		opened++
+		first := opened == 1
+		openMu.Unlock()
+		if !first {
+			// 断连后的复查请求直接返回完整响应，避免再次阻塞。
+			return storage.Stream{Body: io.NopCloser(strings.NewReader("again")), ContentType: "image/jpeg", Size: 5}, nil
+		}
+		return storage.Stream{Body: &ctxReader{ctx: ctx, chunk: []byte("first"), closed: closed}, ContentType: "image/jpeg", Size: 0}, nil
 	}
 	env := newGatewayEnv(t, 2, provider)
 	code := env.publishPost(t, "drop12345", "image/jpeg", "photo", true, false)
@@ -467,6 +485,19 @@ func TestGatewayClosesUpstreamOnDisconnect(t *testing.T) {
 	case <-closed:
 	case <-time.After(2 * time.Second):
 		t.Fatal("客户端断开后上游流未关闭")
+	}
+
+	// 断连后名额应被释放：后续请求能立刻拿到 200。
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		recheck, body := getImage(t, env.server.URL+"/i/"+code)
+		if recheck.StatusCode == http.StatusOK {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("断连后名额未释放，状态码 %d，响应: %s", recheck.StatusCode, body)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

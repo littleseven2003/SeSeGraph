@@ -109,10 +109,14 @@ func (g *imageGateway) handle(c *gin.Context) {
 		return
 	}
 
-	// 并发信号量：等待期间客户端断开就直接结束，不再占用上游连接。
+	// 并发信号量满额时快速拒绝，避免低配实例堆积等待中的请求。
 	select {
 	case g.slots <- struct{}{}:
-	case <-c.Request.Context().Done():
+	default:
+		c.Header("Cache-Control", "no-store")
+		c.Header("Retry-After", "1")
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "图片请求过多，请稍后重试"})
 		return
 	}
 	defer func() { <-g.slots }()
@@ -152,7 +156,7 @@ func (g *imageGateway) handle(c *gin.Context) {
 	}
 	c.Status(http.StatusOK)
 
-	if _, err := copyStream(c.Writer, stream.Body); err != nil {
+	if _, err := io.Copy(flushWriter{writer: c.Writer}, stream.Body); err != nil {
 		// 客户端断开或上游中断：连接已不可用，这里只记录一次固定说明。
 		if c.Request.Context().Err() == nil && g.logger != nil {
 			g.logger.Print("图片转发中断")
@@ -160,25 +164,16 @@ func (g *imageGateway) handle(c *gin.Context) {
 	}
 }
 
-// copyStream 边读边写并逐段刷新，保证慢流时首段能及时到达客户端。
-func copyStream(dst gin.ResponseWriter, src io.Reader) (int64, error) {
-	buffer := make([]byte, 32<<10)
-	var written int64
-	for {
-		read, readErr := src.Read(buffer)
-		if read > 0 {
-			copied, writeErr := dst.Write(buffer[:read])
-			written += int64(copied)
-			if writeErr != nil {
-				return written, writeErr
-			}
-			dst.Flush()
-		}
-		if readErr != nil {
-			if errors.Is(readErr, io.EOF) {
-				return written, nil
-			}
-			return written, readErr
-		}
+// flushWriter 每次写入后立即刷新，保证慢流时首段能及时到达客户端。
+// 只暴露 Write 方法，让 io.Copy 使用固定缓冲区而不是走整块快路径。
+type flushWriter struct {
+	writer gin.ResponseWriter
+}
+
+func (w flushWriter) Write(p []byte) (int, error) {
+	written, err := w.writer.Write(p)
+	if written > 0 {
+		w.writer.Flush()
 	}
+	return written, err
 }
