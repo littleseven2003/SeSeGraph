@@ -179,21 +179,27 @@ func (r *Repository) ListTags(ctx context.Context, postID int64) ([]string, erro
 	return tags, nil
 }
 
-// ToggleDisabled 原子切换单帖熔断状态，返回切换后的禁用与公开标记。
-// 只改 is_disabled，不动 is_public，恢复后沿用原有公开授权。
-func (r *Repository) ToggleDisabled(ctx context.Context, postID int64) (bool, bool, error) {
-	var disabled, public int
+// SetDisabled 把单帖熔断状态写成目标值，返回写入后的禁用与公开标记。
+// 显式目标值让重复提交保持同一结果：首次撤回成功但响应丢失时，重试不会把图片重新公开。
+// 只改 is_disabled 与变化时的 updated_at，不动 is_public，恢复后沿用原有公开授权。
+func (r *Repository) SetDisabled(ctx context.Context, postID int64, disabled bool) (bool, bool, error) {
+	target := 0
+	if disabled {
+		target = 1
+	}
+	var gotDisabled, public int
 	err := r.handle.QueryRowContext(ctx,
-		`UPDATE posts SET is_disabled = CASE is_disabled WHEN 1 THEN 0 ELSE 1 END,
-		        updated_at = CURRENT_TIMESTAMP
-		 WHERE id = ? RETURNING is_disabled, is_public`, postID).Scan(&disabled, &public)
+		`UPDATE posts SET is_disabled = ?,
+		        updated_at = CASE WHEN is_disabled = ? THEN updated_at ELSE CURRENT_TIMESTAMP END
+		 WHERE id = ? RETURNING is_disabled, is_public`,
+		target, target, postID).Scan(&gotDisabled, &public)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, false, ErrNotFound
 	}
 	if err != nil {
 		return false, false, errors.New("更新熔断状态失败")
 	}
-	return disabled == 1, public == 1, nil
+	return gotDisabled == 1, public == 1, nil
 }
 
 // Get 读取帖子元数据。

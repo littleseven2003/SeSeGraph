@@ -19,6 +19,14 @@ func newToggleEnv(t *testing.T) (*testEnv, *fakeStreamProvider) {
 	return env, streams
 }
 
+// toggleBody 生成显式目标状态的请求体。
+func toggleBody(disabled bool) string {
+	if disabled {
+		return `{"disabled":true}`
+	}
+	return `{"disabled":false}`
+}
+
 // shortCodeOf 返回帖子的首张图片短码。
 func shortCodeOf(t *testing.T, env *testEnv, postID int64) string {
 	t.Helper()
@@ -39,9 +47,16 @@ func publicFlag(t *testing.T, env *testEnv, postID int64) bool {
 	return detail.IsPublic
 }
 
+// toggleResponse 是撤回接口的响应体。
+type toggleResponse struct {
+	ID       int64 `json:"id"`
+	Disabled bool  `json:"disabled"`
+	Public   bool  `json:"public"`
+}
+
 func TestTogglePostRequiresAuth(t *testing.T) {
 	env, _ := newToggleEnv(t)
-	rec := env.do(t, http.MethodPatch, "/api/posts/1/toggle", "", nil)
+	rec := env.do(t, http.MethodPatch, "/api/posts/1/toggle", toggleBody(true), nil)
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("状态码 = %d，期望 401", rec.Code)
 	}
@@ -60,15 +75,11 @@ func TestTogglePostWithdrawsAndRestoresShortCode(t *testing.T) {
 	callsBefore := streams.callCount()
 
 	// 撤回：源站立即 404，且不再请求上游。
-	rec = env.do(t, http.MethodPatch, "/api/posts/"+formatID(postID)+"/toggle", "", cookie)
+	rec = env.do(t, http.MethodPatch, "/api/posts/"+formatID(postID)+"/toggle", toggleBody(true), cookie)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("撤回状态码 = %d，期望 200，响应: %s", rec.Code, rec.Body.String())
 	}
-	var body struct {
-		ID       int64 `json:"id"`
-		Disabled bool  `json:"disabled"`
-		Public   bool  `json:"public"`
-	}
+	var body toggleResponse
 	if err := decodeJSON(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("响应不是合法 JSON: %v", err)
 	}
@@ -90,7 +101,7 @@ func TestTogglePostWithdrawsAndRestoresShortCode(t *testing.T) {
 	}
 
 	// 恢复：沿用原有公开授权，短码重新可取。
-	rec = env.do(t, http.MethodPatch, "/api/posts/"+formatID(postID)+"/toggle", "", cookie)
+	rec = env.do(t, http.MethodPatch, "/api/posts/"+formatID(postID)+"/toggle", toggleBody(false), cookie)
 	if err := decodeJSON(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("响应不是合法 JSON: %v", err)
 	}
@@ -106,15 +117,73 @@ func TestTogglePostWithdrawsAndRestoresShortCode(t *testing.T) {
 	}
 }
 
+// TestTogglePostRepeatedWithdrawKeepsBlocked 覆盖「首次撤回已写库但响应丢失」的重试：
+// 客户端重发撤回后仍为禁用，短码继续 404，且不产生任何上游请求。
+func TestTogglePostRepeatedWithdrawKeepsBlocked(t *testing.T) {
+	env, streams := newToggleEnv(t)
+	cookie := env.setup(t)
+	postID := publishedPost(t, env)
+	code := shortCodeOf(t, env, postID)
+
+	if rec := env.do(t, http.MethodGet, "/i/"+code, "", nil); rec.Code != http.StatusOK {
+		t.Fatalf("撤回前短码状态 = %d，期望 200", rec.Code)
+	}
+	callsBefore := streams.callCount()
+
+	for attempt := 0; attempt < 2; attempt++ {
+		rec := env.do(t, http.MethodPatch, "/api/posts/"+formatID(postID)+"/toggle", toggleBody(true), cookie)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("第 %d 次撤回状态码 = %d，响应: %s", attempt+1, rec.Code, rec.Body.String())
+		}
+		var body toggleResponse
+		if err := decodeJSON(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("响应不是合法 JSON: %v", err)
+		}
+		if !body.Disabled {
+			t.Errorf("第 %d 次撤回后 disabled = false，期望仍禁用", attempt+1)
+		}
+		if !body.Public {
+			t.Errorf("第 %d 次撤回后公开标记丢失", attempt+1)
+		}
+	}
+
+	for i := 0; i < 3; i++ {
+		if rec := env.do(t, http.MethodGet, "/i/"+code, "", nil); rec.Code != http.StatusNotFound {
+			t.Errorf("重复撤回后短码状态 = %d，期望 404", rec.Code)
+		}
+	}
+	if got := streams.callCount(); got != callsBefore {
+		t.Errorf("重复撤回期间上游调用从 %d 变为 %d，期望不变", callsBefore, got)
+	}
+}
+
+// TestTogglePostRequiresTargetState 确认缺少目标状态时拒绝请求，避免被当成切换或恢复。
+func TestTogglePostRequiresTargetState(t *testing.T) {
+	env, _ := newToggleEnv(t)
+	cookie := env.setup(t)
+	postID := publishedPost(t, env)
+	path := "/api/posts/" + formatID(postID) + "/toggle"
+
+	for _, body := range []string{"", "{}", `{"disabled":null}`} {
+		rec := env.do(t, http.MethodPatch, path, body, cookie)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("请求体 %q 状态码 = %d，期望 400", body, rec.Code)
+		}
+	}
+	if publicFlag(t, env, postID) != true {
+		t.Error("非法请求不应改动公开标记")
+	}
+}
+
 func TestTogglePostMissingAndInvalid(t *testing.T) {
 	env, _ := newToggleEnv(t)
 	cookie := env.setup(t)
 
-	missing := env.do(t, http.MethodPatch, "/api/posts/999/toggle", "", cookie)
+	missing := env.do(t, http.MethodPatch, "/api/posts/999/toggle", toggleBody(true), cookie)
 	if missing.Code != http.StatusNotFound {
 		t.Errorf("不存在帖子状态码 = %d，期望 404", missing.Code)
 	}
-	invalid := env.do(t, http.MethodPatch, "/api/posts/abc/toggle", "", cookie)
+	invalid := env.do(t, http.MethodPatch, "/api/posts/abc/toggle", toggleBody(true), cookie)
 	if invalid.Code != http.StatusBadRequest {
 		t.Errorf("非法编号状态码 = %d，期望 400", invalid.Code)
 	}
@@ -125,11 +194,12 @@ func TestTogglePostListShowsDisabled(t *testing.T) {
 	cookie := env.setup(t)
 	postID := publishedPost(t, env)
 
-	if rec := env.do(t, http.MethodPatch, "/api/posts/"+formatID(postID)+"/toggle", "", cookie); rec.Code != http.StatusOK {
+	rec := env.do(t, http.MethodPatch, "/api/posts/"+formatID(postID)+"/toggle", toggleBody(true), cookie)
+	if rec.Code != http.StatusOK {
 		t.Fatalf("撤回失败: %d", rec.Code)
 	}
 
-	rec := env.do(t, http.MethodGet, "/api/posts", "", cookie)
+	rec = env.do(t, http.MethodGet, "/api/posts", "", cookie)
 	var page galleryListBody
 	if err := decodeJSON(rec.Body.Bytes(), &page); err != nil {
 		t.Fatalf("响应不是合法 JSON: %v", err)
@@ -156,7 +226,7 @@ func TestTogglePostKeepsPublishState(t *testing.T) {
 		t.Fatalf("读取详情失败: %v", err)
 	}
 
-	env.do(t, http.MethodPatch, "/api/posts/"+formatID(postID)+"/toggle", "", cookie)
+	env.do(t, http.MethodPatch, "/api/posts/"+formatID(postID)+"/toggle", toggleBody(true), cookie)
 	after, err := env.posts.GalleryDetail(context.Background(), postID)
 	if err != nil {
 		t.Fatalf("读取详情失败: %v", err)
