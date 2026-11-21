@@ -21,6 +21,8 @@ var (
 	ErrUpstream        = errors.New("图床上传失败")
 	ErrNotConfigured   = errors.New("图床未配置")
 	ErrUnsupportedMode = errors.New("不支持的画质模式")
+	// ErrFileUnavailable 表示远端文件已不可取，调用方应返回 404 而不是 5xx。
+	ErrFileUnavailable = errors.New("远端文件不可用")
 )
 
 // RateLimitError 表示上游要求等待后重试，具体排期由调用方决定。
@@ -60,4 +62,17 @@ type UploadResult struct {
 type Provider interface {
 	Name() string
 	Upload(ctx context.Context, req UploadRequest) (UploadResult, error)
+}
+
+// Stream 是一次流式下载的句柄。Body 由调用方负责关闭，读取不整块载入内存。
+type Stream struct {
+	Body        io.ReadCloser
+	ContentType string
+	Size        int64
+}
+
+// StreamProvider 是在上传之外提供流式读取的图床接口，供图片网关按远端标识转发。
+type StreamProvider interface {
+	Provider
+	OpenStream(ctx context.Context, fileID string) (Stream, error)
 }
