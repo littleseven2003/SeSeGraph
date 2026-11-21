@@ -176,3 +176,25 @@ func TestDefaultAuthorFallback(t *testing.T) {
 		t.Errorf("author_name = %q，期望默认值", form["author_name"])
 	}
 }
+
+func TestCreatePageRejectsOversizedContentBeforeRequest(t *testing.T) {
+	server := newPageServer(t)
+	client := New(Config{AccessToken: "secret-access-token", APIBase: server.server.URL})
+
+	huge := []Node{Paragraph(strings.Repeat("长", MaxPageContentBytes))}
+	_, err := client.CreatePage(context.Background(), PageRequest{Title: "超大内容", Content: huge})
+	if !errors.Is(err, ErrContentTooLarge) {
+		t.Fatalf("错误 = %v，期望 ErrContentTooLarge", err)
+	}
+	if method, _ := server.requestForm(); method != "" {
+		t.Errorf("超限内容不应发出请求，实际调用了 %q", method)
+	}
+
+	_, err = client.EditPage(context.Background(), "Test-Page-01", PageRequest{Title: "超大内容", Content: huge})
+	if !errors.Is(err, ErrContentTooLarge) {
+		t.Fatalf("编辑时错误 = %v，期望 ErrContentTooLarge", err)
+	}
+	if method, _ := server.requestForm(); method != "" {
+		t.Errorf("编辑超限内容不应发出请求，实际调用了 %q", method)
+	}
+}

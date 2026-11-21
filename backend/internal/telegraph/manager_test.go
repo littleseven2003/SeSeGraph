@@ -15,8 +15,9 @@ import (
 
 // mapStore 是内存版配置存储。
 type mapStore struct {
-	mu     sync.Mutex
-	values map[string]string
+	mu      sync.Mutex
+	values  map[string]string
+	batches int
 }
 
 func newMapStore() *mapStore {
@@ -34,6 +35,16 @@ func (m *mapStore) Set(_ context.Context, key, value string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.values[key] = value
+	return nil
+}
+
+func (m *mapStore) SetMany(_ context.Context, values map[string]string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.batches++
+	for key, value := range values {
+		m.values[key] = value
+	}
 	return nil
 }
 
@@ -144,6 +155,146 @@ func TestManagerUpstreamFailureIsDesensitized(t *testing.T) {
 	for _, secret := range []string{"TELEGRAPH_TOKEN_LEAK", server.URL} {
 		if strings.Contains(err.Error(), secret) {
 			t.Errorf("错误信息泄露了 %q: %v", secret, err)
+		}
+	}
+}
+
+// countingAccountServer 统计 createAccount 调用次数，并可切换令牌。
+type countingAccountServer struct {
+	mu     sync.Mutex
+	calls  int
+	token  string
+	server *httptest.Server
+}
+
+func newCountingAccountServer(t *testing.T, token string) *countingAccountServer {
+	t.Helper()
+	cs := &countingAccountServer{token: token}
+	cs.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cs.mu.Lock()
+		cs.calls++
+		current := cs.token
+		cs.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"result": map[string]any{
+				"short_name":   "sese",
+				"author_name":  "SeSe",
+				"author_url":   "https://telegra.ph/SeSe",
+				"access_token": current,
+			},
+		})
+	}))
+	t.Cleanup(cs.server.Close)
+	return cs
+}
+
+func (c *countingAccountServer) callCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
+}
+
+func TestManagerCreateAccountReusesExisting(t *testing.T) {
+	server := newCountingAccountServer(t, "first-token")
+	store := newMapStore()
+	manager := NewManager(Config{APIBase: server.server.URL}, store)
+	ctx := context.Background()
+
+	if _, err := manager.CreateAccount(ctx, "sese", "SeSe"); err != nil {
+		t.Fatalf("首次建号失败: %v", err)
+	}
+	first := store.values[settings.KeyTelegraphToken]
+
+	// 重复点击不应再次申请账户或覆盖令牌。
+	status, err := manager.CreateAccount(ctx, "other", "其他作者")
+	if err != nil {
+		t.Fatalf("重复建号失败: %v", err)
+	}
+	if server.callCount() != 1 {
+		t.Errorf("上游调用 %d 次，期望 1 次", server.callCount())
+	}
+	if store.values[settings.KeyTelegraphToken] != first {
+		t.Errorf("令牌被覆盖: %q -> %q", first, store.values[settings.KeyTelegraphToken])
+	}
+	if !status.Configured || status.AuthorName != "SeSe" {
+		t.Errorf("状态 = %+v，期望保留原账户资料", status)
+	}
+}
+
+func TestManagerCreateAccountConcurrentCallsOnce(t *testing.T) {
+	server := newCountingAccountServer(t, "concurrent-token")
+	store := newMapStore()
+	manager := NewManager(Config{APIBase: server.server.URL}, store)
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+	statuses := make([]Status, 4)
+	errs := make([]error, 4)
+	for index := 0; index < 4; index++ {
+		wg.Add(1)
+		go func(slot int) {
+			defer wg.Done()
+			statuses[slot], errs[slot] = manager.CreateAccount(ctx, "sese", "SeSe")
+		}(index)
+	}
+	wg.Wait()
+
+	for index, err := range errs {
+		if err != nil {
+			t.Fatalf("并发建号第 %d 次失败: %v", index, err)
+		}
+		if !statuses[index].Configured {
+			t.Errorf("并发建号第 %d 次状态未配置", index)
+		}
+	}
+	if calls := server.callCount(); calls != 1 {
+		t.Errorf("上游调用 %d 次，期望并发下只调用 1 次", calls)
+	}
+	if store.values[settings.KeyTelegraphToken] != "concurrent-token" {
+		t.Errorf("令牌 = %q", store.values[settings.KeyTelegraphToken])
+	}
+}
+
+func TestManagerClientUsesStoredAuthor(t *testing.T) {
+	store := newMapStore()
+	store.values[settings.KeyTelegraphToken] = "stored-token"
+	store.values[settings.KeyTelegraphAuthorName] = "贴库作者"
+
+	manager := NewManager(Config{}, store)
+	client, err := manager.Client(context.Background())
+	if err != nil {
+		t.Fatalf("读取客户端失败: %v", err)
+	}
+	if !client.Configured() {
+		t.Fatal("客户端应带令牌")
+	}
+	if client.AuthorName() != "贴库作者" {
+		t.Errorf("客户端作者名 = %q，期望取数据库保存值", client.AuthorName())
+	}
+}
+
+func TestManagerCreateAccountWritesAtomically(t *testing.T) {
+	server := newCountingAccountServer(t, "atomic-token")
+	store := newMapStore()
+	manager := NewManager(Config{APIBase: server.server.URL}, store)
+
+	if _, err := manager.CreateAccount(context.Background(), "sese", "原子作者"); err != nil {
+		t.Fatalf("建号失败: %v", err)
+	}
+	// mapStore 实现了批量写入，四项资料应在一次调用内落库。
+	if store.batches != 1 {
+		t.Errorf("批量写入次数 = %d，期望 1", store.batches)
+	}
+	for _, key := range []string{
+		settings.KeyTelegraphToken,
+		settings.KeyTelegraphAuthorName,
+		settings.KeyTelegraphShortName,
+		settings.KeyTelegraphAuthorURL,
+	} {
+		if _, ok := store.values[key]; !ok {
+			t.Errorf("缺少配置项 %q", key)
 		}
 	}
 }

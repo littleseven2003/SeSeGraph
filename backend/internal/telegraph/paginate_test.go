@@ -160,3 +160,22 @@ func describeChildren(node Node) string {
 	}
 	return builder.String()
 }
+
+func TestPaginateRejectsOversizedNodeAfterBody(t *testing.T) {
+	// 当前页已有正文时，超大节点不能被塞进新页绕过上限。
+	body := []Node{Paragraph("正常说明"), Paragraph(strings.Repeat("长", MaxPageContentBytes))}
+	if _, err := Paginate(body); !errors.Is(err, ErrContentTooLarge) {
+		t.Fatalf("错误 = %v，期望 ErrContentTooLarge", err)
+	}
+}
+
+func TestPaginateRejectsOversizedNodeInMiddle(t *testing.T) {
+	body := []Node{
+		Paragraph(repeatText(20)),
+		Paragraph(strings.Repeat("超", MaxPageContentBytes+1)),
+		Paragraph(repeatText(20)),
+	}
+	if _, err := Paginate(body); !errors.Is(err, ErrContentTooLarge) {
+		t.Fatalf("错误 = %v，期望 ErrContentTooLarge", err)
+	}
+}

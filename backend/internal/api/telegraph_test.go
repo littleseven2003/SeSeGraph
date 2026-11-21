@@ -100,7 +100,7 @@ func TestTelegraphCreateAccountPersistsTokenWithoutEcho(t *testing.T) {
 	})
 	cookie := env.setup(t)
 
-	rec := env.do(t, http.MethodPost, "/api/telegraph/account", `{"short_name":"sese","author_name":"SeSe"}`, cookie)
+	rec := env.do(t, http.MethodPost, "/api/settings/telegraph/create-account", `{"short_name":"sese","author_name":"SeSe"}`, cookie)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("状态码 = %d，期望 201，响应: %s", rec.Code, rec.Body.String())
 	}
@@ -146,7 +146,7 @@ func TestTelegraphCreateAccountRequiresSession(t *testing.T) {
 		deps.Telegraph = telegraph.NewManager(telegraph.Config{APIBase: fake.server.URL}, settings.NewStore(handle))
 	})
 
-	rec := env.do(t, http.MethodPost, "/api/telegraph/account", `{"short_name":"sese"}`, nil)
+	rec := env.do(t, http.MethodPost, "/api/settings/telegraph/create-account", `{"short_name":"sese"}`, nil)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("未登录状态码 = %d，期望 401", rec.Code)
 	}
@@ -163,7 +163,7 @@ func TestTelegraphCreateAccountMapsUpstreamFailure(t *testing.T) {
 	})
 	cookie := env.setup(t)
 
-	rec := env.do(t, http.MethodPost, "/api/telegraph/account", `{"short_name":"sese"}`, cookie)
+	rec := env.do(t, http.MethodPost, "/api/settings/telegraph/create-account", `{"short_name":"sese"}`, cookie)
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("状态码 = %d，期望 502，响应: %s", rec.Code, rec.Body.String())
 	}
@@ -197,7 +197,7 @@ func TestTelegraphEnvTokenTakesPriority(t *testing.T) {
 	}
 
 	// 已有环境变量令牌时不再申请新账户。
-	rec := env.do(t, http.MethodPost, "/api/telegraph/account", `{"short_name":"x"}`, cookie)
+	rec := env.do(t, http.MethodPost, "/api/settings/telegraph/create-account", `{"short_name":"x"}`, cookie)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("状态码 = %d，期望 201", rec.Code)
 	}

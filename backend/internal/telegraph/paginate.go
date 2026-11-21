@@ -59,15 +59,15 @@ func Paginate(body []Node) ([]PageBody, error) {
 		if err != nil {
 			return nil, err
 		}
+		// 单节点自身就超过预算时，无论当前页是否已有正文都直接拒绝。
+		if size+2 > budget {
+			return nil, ErrContentTooLarge
+		}
 		separator := 0
 		if len(current) > 0 {
 			separator = 1
 		}
 		if used+separator+size > budget {
-			if len(current) == 0 {
-				// 单节点就放不下，说明正文需要拆分或压缩。
-				return nil, ErrContentTooLarge
-			}
 			pages = append(pages, current)
 			current = make([]Node, 0, len(body))
 			used = 2

@@ -75,7 +75,7 @@ func NewRouter(deps Deps) *gin.Engine {
 	admin.POST("/posts/:id/images", uploadImageHandler(deps))
 	admin.POST("/posts/:id/commit", commitPostHandler(deps))
 	admin.GET("/telegraph/status", telegraphStatusHandler(deps))
-	admin.POST("/telegraph/account", limitBody(maxTelegraphBodyBytes), telegraphAccountHandler(deps))
+	admin.POST("/settings/telegraph/create-account", limitBody(maxTelegraphBodyBytes), telegraphAccountHandler(deps))
 	admin.GET("/posts/:id/progress", progressHandler(deps))
 	admin.POST("/posts/:id/retry", retryHandler(deps))
 

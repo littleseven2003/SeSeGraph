@@ -65,3 +65,31 @@ func (s *Store) Delete(ctx context.Context, key string) error {
 	}
 	return nil
 }
+
+// SetMany 在单个事务内写入多项配置，任意一项失败时整体回滚。
+func (s *Store) SetMany(ctx context.Context, values map[string]string) error {
+	if s == nil || s.handle == nil {
+		return errors.New("配置存储不可用")
+	}
+	if len(values) == 0 {
+		return nil
+	}
+	tx, err := s.handle.BeginTx(ctx, nil)
+	if err != nil {
+		return errors.New("保存配置失败")
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for key, value := range values {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+			 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`,
+			key, value); err != nil {
+			return errors.New("保存配置失败")
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return errors.New("保存配置失败")
+	}
+	return nil
+}

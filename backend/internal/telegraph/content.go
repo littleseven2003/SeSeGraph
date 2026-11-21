@@ -58,6 +58,10 @@ func (c *Client) normalize(request PageRequest) (url.Values, error) {
 	if err != nil {
 		return nil, err
 	}
+	// 发出请求前复核最终内容（含导航节点）不超过单页上限。
+	if len(encoded) > MaxPageContentBytes {
+		return nil, ErrContentTooLarge
+	}
 
 	author := strings.TrimSpace(request.AuthorName)
 	if author == "" {
