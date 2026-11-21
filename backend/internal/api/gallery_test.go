@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"testing"
 
@@ -222,6 +223,42 @@ func TestGalleryFieldsAlwaysPresent(t *testing.T) {
 	for _, key := range []string{"images", "telegraph_paths", "telegraph_urls", "tags", "cover_url", "published_at"} {
 		if _, ok := detail[key]; !ok {
 			t.Errorf("详情缺少字段 %q", key)
+		}
+	}
+}
+
+// TestPostDetailExposesPublicBaseURL 验证详情只下发结构合法的 HTTPS 公开地址。
+func TestPostDetailExposesPublicBaseURL(t *testing.T) {
+	cases := map[string]string{
+		"https://img.example.com":       "https://img.example.com",
+		"https://img.example.com/base/": "https://img.example.com/base",
+		"http://img.example.com":        "",
+		"https://img.example.com/?x=1":  "",
+		"https://img.example.com/#top":  "",
+		"https://user@img.example.com":  "",
+		"":                              "",
+	}
+	for publicURL, want := range cases {
+		env := newTestEnvWith(t, testSetupToken, func(deps *Deps, _ *sql.DB) {
+			deps.PublicURL = publicURL
+		})
+		cookie := env.setup(t)
+		postID := galleryPost(t, env, "公开地址", "")
+
+		rec := env.do(t, http.MethodGet, "/api/posts/"+formatID(postID), "", cookie)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("状态码 = %d，期望 200", rec.Code)
+		}
+		var detail map[string]any
+		if err := decodeJSON(rec.Body.Bytes(), &detail); err != nil {
+			t.Fatalf("响应不是合法 JSON: %v", err)
+		}
+		value, ok := detail["public_base_url"]
+		if !ok {
+			t.Fatalf("详情缺少 public_base_url 字段")
+		}
+		if got, _ := value.(string); got != want {
+			t.Errorf("公开地址 %q 下发 %q，期望 %q", publicURL, got, want)
 		}
 	}
 }

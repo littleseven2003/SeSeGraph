@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/config"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
 )
 
@@ -55,6 +56,8 @@ type galleryDetailResponse struct {
 	PublishError string                 `json:"publish_error,omitempty"`
 	Paths        []string               `json:"telegraph_paths"`
 	Images       []galleryImageResponse `json:"images"`
+	// PublicBaseURL 是拼接单图外链用的公开地址，未配置或结构不合法时为空。
+	PublicBaseURL string `json:"public_base_url"`
 }
 
 // coverURL 把库内封面路径转成接口地址，只保留文件名部分。
@@ -68,6 +71,14 @@ func coverURL(stored string) string {
 		return ""
 	}
 	return "/api/thumbs/" + name
+}
+
+// publicBaseURL 返回可拼接图片路径的公开地址，去掉末尾斜杠；未配置或不合法的返回空串。
+func publicBaseURL(raw string) string {
+	if !config.PublicURLIsHTTPS(raw) {
+		return ""
+	}
+	return strings.TrimRight(strings.TrimSpace(raw), "/")
 }
 
 // toGalleryItem 把仓储结果转成接口结构。
@@ -216,6 +227,7 @@ func postDetailHandler(deps Deps) gin.HandlerFunc {
 			PublishError:        detail.PublishError,
 			Paths:               paths,
 			Images:              images,
+			PublicBaseURL:       publicBaseURL(deps.PublicURL),
 		})
 	}
 }
