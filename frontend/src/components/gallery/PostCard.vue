@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import type { GalleryItem } from '../../api/gallery.ts'
 import { formatPublishedAt, statusLabel } from '../../utils/gallery.ts'
 
@@ -9,6 +9,31 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ open: [id: number] }>()
+
+// 触屏没有悬停：第一次点按只临时去模糊，再点一次才打开详情。
+const revealed = ref(false)
+let revealTimer: ReturnType<typeof setTimeout> | undefined
+
+function touchOnly(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false
+  return window.matchMedia('(hover: none)').matches
+}
+
+function onOpen(): void {
+  if (props.blurred && touchOnly() && !revealed.value) {
+    revealed.value = true
+    if (revealTimer !== undefined) clearTimeout(revealTimer)
+    revealTimer = setTimeout(() => {
+      revealed.value = false
+    }, 2500)
+    return
+  }
+  emit('open', props.item.id)
+}
+
+onBeforeUnmount(() => {
+  if (revealTimer !== undefined) clearTimeout(revealTimer)
+})
 
 const status = computed(() => statusLabel(props.item.status, props.item.publish_state, props.item.disabled))
 const published = computed(() => formatPublishedAt(props.item.published_at))
@@ -33,11 +58,11 @@ const toneClass = computed(() => {
   <button
     type="button"
     class="group flex w-full flex-col overflow-hidden rounded-lg border border-line bg-surface text-left transition hover:border-brand/40 hover:shadow-[0_8px_24px_-16px_rgba(15,23,42,0.45)] focus-visible:border-brand"
-    @click="emit('open', item.id)"
+    @click="onOpen"
   >
     <span
       class="relative block aspect-[4/3] w-full overflow-hidden bg-canvas"
-      :class="blurred ? 'is-blurred' : ''"
+      :class="blurred && !revealed ? 'is-blurred' : ''"
     >
       <img
         v-if="item.cover_url !== ''"
