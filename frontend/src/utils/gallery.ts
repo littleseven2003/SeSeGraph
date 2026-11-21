@@ -94,22 +94,55 @@ export function renderShareText(
   return text.trim()
 }
 
-/** primaryShareUrl 优先取首个 Telegraph 页面链接，未发布时回落到首图短码。 */
-export function primaryShareUrl(
-  detail: { telegraph_urls: string[]; images: Array<{ short_code: string }> },
-  origin: string,
-): string {
-  const page = detail.telegraph_urls.find((url) => url.trim() !== '')
-  if (page !== undefined) return page
-  const image = detail.images.find((item) => item.short_code.trim() !== '')
-  if (image === undefined) return ''
-  return imagePublicUrl(image.short_code, origin)
+/** 整帖分享的可用条件：已发布、公开、未撤回且互链页面就绪。 */
+export interface SharePostState {
+  publish_state: string
+  public: boolean
+  disabled: boolean
+  telegraph_urls: string[]
 }
 
-/** imagePublicUrl 生成单图外链。 */
-export function imagePublicUrl(shortCode: string, origin: string): string {
-  const base = origin.replace(/\/+$/, '')
-  return base + '/i/' + shortCode
+/** 单图外链的可用条件：帖子公开未撤回且该图已存图。 */
+export interface ShareImageState {
+  short_code: string
+  status: string
+}
+
+/** postShareUrl 仅在分篇互链完成后返回整帖分享链接，否则为空。 */
+export function postShareUrl(post: SharePostState): string {
+  if (post.disabled || !post.public || post.publish_state !== 'published') return ''
+  return post.telegraph_urls.find((url) => url.trim() !== '') ?? ''
+}
+
+/** imageShareUrl 用服务端公开地址拼接单图外链，条件不满足时返回空串。 */
+export function imageShareUrl(
+  post: { public: boolean; disabled: boolean },
+  image: ShareImageState,
+  publicBase: string,
+): string {
+  if (publicBase.trim() === '' || post.disabled || !post.public) return ''
+  if (image.status !== 'stored' || image.short_code.trim() === '') return ''
+  return publicBase.trim().replace(/\/+$/, '') + '/i/' + image.short_code
+}
+
+/** LatestGuard 只让最后一次请求的结果生效，避免旧响应覆盖新选择。 */
+export interface LatestGuard {
+  begin(): number
+  isCurrent(token: number): boolean
+}
+
+/** createLatestGuard 生成请求序号守卫。 */
+export function createLatestGuard(): LatestGuard {
+  let current = 0
+  return {
+    begin(): number {
+      current += 1
+      return current
+    },
+    isCurrent(token: number): boolean {
+      return token === current
+    },
+  }
 }
 
 /** formatFileSize 把字节数转成易读单位。 */

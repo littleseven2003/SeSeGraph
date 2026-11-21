@@ -5,8 +5,8 @@ import {
   DEFAULT_SHARE_TEMPLATE,
   formatFileSize,
   formatPublishedAt,
-  imagePublicUrl,
-  primaryShareUrl,
+  imageShareUrl,
+  postShareUrl,
   renderShareText,
   statusLabel,
 } from '../../utils/gallery.ts'
@@ -29,8 +29,15 @@ const status = computed(() =>
 )
 const published = computed(() => (props.detail === null ? '' : formatPublishedAt(props.detail.published_at)))
 const created = computed(() => (props.detail === null ? '' : formatPublishedAt(props.detail.created_at)))
-const origin = computed(() => (typeof window === 'undefined' ? '' : window.location.origin))
-const shareUrl = computed(() => (props.detail === null ? '' : primaryShareUrl(props.detail, origin.value)))
+// 分享链接一律使用服务端公开地址，管理页面的域名不能代表图片出口。
+const shareUrl = computed(() => (props.detail === null ? '' : postShareUrl(props.detail)))
+const publicBase = computed(() => (props.detail === null ? '' : props.detail.public_base_url))
+const shareReady = computed(() => shareUrl.value !== '')
+
+function imageLink(image: { short_code: string; status: string }): string {
+  if (props.detail === null) return ''
+  return imageShareUrl(props.detail, image, publicBase.value)
+}
 
 const toneClass = computed(() => {
   switch (status.value.tone) {
@@ -225,20 +232,23 @@ watch(
                     {{ image.mime_type }} · {{ formatFileSize(image.file_size) }}
                   </p>
                 </div>
-                <a
-                  :href="imagePublicUrl(image.short_code, origin)"
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  class="shrink-0 text-xs text-brand hover:underline"
-                  >查看外链</a
-                >
-                <button
-                  type="button"
-                  class="h-8 shrink-0 rounded border border-line px-2 text-xs text-muted transition hover:bg-canvas"
-                  @click="copy(imagePublicUrl(image.short_code, origin), '单图外链')"
-                >
-                  复制
-                </button>
+                <template v-if="imageLink(image) !== ''">
+                  <a
+                    :href="imageLink(image)"
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    class="shrink-0 text-xs text-brand hover:underline"
+                    >查看外链</a
+                  >
+                  <button
+                    type="button"
+                    class="h-8 shrink-0 rounded border border-line px-2 text-xs text-muted transition hover:bg-canvas"
+                    @click="copy(imageLink(image), '单图外链')"
+                  >
+                    复制
+                  </button>
+                </template>
+                <span v-else class="shrink-0 text-xs text-muted">暂不可用</span>
               </li>
             </ul>
             <p v-if="detail.images.length === 0" class="mt-2 text-xs text-muted">还没有已上传的图片。</p>
@@ -251,7 +261,7 @@ watch(
           <button
             type="button"
             class="h-9 flex-1 rounded-md bg-brand px-3 text-xs font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
-            :disabled="detail === null || shareUrl === ''"
+            :disabled="detail === null || !shareReady"
             @click="copy(shareUrl, '链接')"
           >
             复制纯链接
@@ -259,13 +269,15 @@ watch(
           <button
             type="button"
             class="h-9 flex-1 rounded-md border border-line px-3 text-xs font-medium transition hover:bg-canvas disabled:opacity-60"
-            :disabled="detail === null"
+            :disabled="detail === null || !shareReady"
             @click="copyShareText"
           >
             复制分享文案
           </button>
         </div>
-        <p class="mt-2 min-h-[18px] text-xs text-muted" aria-live="polite">{{ feedback }}</p>
+        <p class="mt-2 min-h-[18px] text-xs text-muted" aria-live="polite">
+          {{ feedback !== '' ? feedback : shareReady || detail === null ? '' : '发布完成并生成互链后可分享整帖' }}
+        </p>
       </footer>
     </aside>
   </div>

@@ -41,6 +41,7 @@ export interface PostDetail extends GalleryItem {
   publish_error?: string
   telegraph_paths: string[]
   images: GalleryImage[]
+  public_base_url: string
 }
 
 export interface TagCount {

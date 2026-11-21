@@ -6,9 +6,10 @@ import {
   buildGalleryQuery,
   formatFileSize,
   formatPublishedAt,
-  imagePublicUrl,
+  createLatestGuard,
+  imageShareUrl,
   pageWindow,
-  primaryShareUrl,
+  postShareUrl,
   readBlurPreference,
   renderShareText,
   saveBlurPreference,
@@ -71,15 +72,53 @@ test('renderShareText 保留未知占位符', () => {
   assert.equal(text, '标题 / {{unknown}}')
 })
 
-test('primaryShareUrl 优先 Telegraph 链接并回落到首图短码', () => {
-  const origin = 'https://img.example.com/'
-  assert.equal(
-    primaryShareUrl({ telegraph_urls: ['https://telegra.ph/Page-1'], images: [{ short_code: 'abc12345' }] }, origin),
-    'https://telegra.ph/Page-1',
-  )
-  assert.equal(primaryShareUrl({ telegraph_urls: [], images: [{ short_code: 'abc12345' }] }, origin), 'https://img.example.com/i/abc12345')
-  assert.equal(primaryShareUrl({ telegraph_urls: [], images: [] }, origin), '')
-  assert.equal(imagePublicUrl('abc12345', 'https://img.example.com/'), 'https://img.example.com/i/abc12345')
+test('postShareUrl 只在发布完成且互链就绪时给出链接', () => {
+  const published = {
+    publish_state: 'published',
+    public: true,
+    disabled: false,
+    telegraph_urls: ['https://telegra.ph/Page-1'],
+  }
+  assert.equal(postShareUrl(published), 'https://telegra.ph/Page-1')
+  assert.equal(postShareUrl({ ...published, publish_state: 'pending' }), '')
+  assert.equal(postShareUrl({ ...published, public: false }), '')
+  assert.equal(postShareUrl({ ...published, disabled: true }), '')
+  assert.equal(postShareUrl({ ...published, telegraph_urls: [] }), '')
+  assert.equal(postShareUrl({ ...published, telegraph_urls: ['  '] }), '')
+})
+
+test('imageShareUrl 按公开状态、存图状态与公开地址拼接', () => {
+  const post = { public: true, disabled: false }
+  const stored = { short_code: 'abc12345', status: 'stored' }
+  assert.equal(imageShareUrl(post, stored, 'https://img.example.com/'), 'https://img.example.com/i/abc12345')
+  assert.equal(imageShareUrl(post, stored, 'https://img.example.com/base'), 'https://img.example.com/base/i/abc12345')
+  assert.equal(imageShareUrl({ ...post, disabled: true }, stored, 'https://img.example.com'), '')
+  assert.equal(imageShareUrl({ ...post, public: false }, stored, 'https://img.example.com'), '')
+  assert.equal(imageShareUrl(post, { short_code: 'abc12345', status: 'uploaded' }, 'https://img.example.com'), '')
+  assert.equal(imageShareUrl(post, { short_code: '', status: 'stored' }, 'https://img.example.com'), '')
+  assert.equal(imageShareUrl(post, stored, ''), '')
+})
+
+test('createLatestGuard 丢弃迟到的旧响应', async () => {
+  const guard = createLatestGuard()
+  const first = guard.begin()
+  const second = guard.begin()
+  assert.equal(guard.isCurrent(first), false)
+  assert.equal(guard.isCurrent(second), true)
+
+  // 模拟 A 慢、B 快：B 的结果生效后 A 才返回，A 必须被丢弃。
+  const order: string[] = []
+  const respond = (token: number, name: string, delay: number): Promise<void> =>
+    new Promise((resolve) =>
+      setTimeout(() => {
+        if (guard.isCurrent(token)) order.push(name)
+        resolve()
+      }, delay),
+    )
+  const slow = respond(guard.begin(), 'A', 20)
+  const fast = respond(guard.begin(), 'B', 1)
+  await Promise.all([slow, fast])
+  assert.deepEqual(order, ['B'])
 })
 
 test('formatFileSize 覆盖字节档位', () => {

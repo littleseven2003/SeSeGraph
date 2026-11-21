@@ -10,7 +10,7 @@ import {
   type PostDetail,
   type TagCount,
 } from '../api/gallery'
-import { pageWindow, readBlurPreference, saveBlurPreference } from '../utils/gallery'
+import { createLatestGuard, pageWindow, readBlurPreference, saveBlurPreference } from '../utils/gallery'
 import DetailDrawer from '../components/gallery/DetailDrawer.vue'
 import PostCard from '../components/gallery/PostCard.vue'
 
@@ -35,6 +35,9 @@ const detailError = ref('')
 const detailId = ref<number | null>(null)
 
 let searchTimer: ReturnType<typeof setTimeout> | undefined
+// 列表与详情各自维护请求序号，只接受最后一次请求的结果。
+const listGuard = createLatestGuard()
+const detailGuard = createLatestGuard()
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
 const pages = computed(() => pageWindow(page.value, PAGE_SIZE, total.value))
@@ -46,6 +49,7 @@ function messageOf(cause: unknown): string {
 }
 
 async function loadList(target = page.value): Promise<void> {
+  const token = listGuard.begin()
   loading.value = true
   error.value = ''
   try {
@@ -55,13 +59,15 @@ async function loadList(target = page.value): Promise<void> {
       page: target,
       pageSize: PAGE_SIZE,
     })
+    if (!listGuard.isCurrent(token)) return
     items.value = result.items
     total.value = result.total
     page.value = result.page
   } catch (cause) {
+    if (!listGuard.isCurrent(token)) return
     error.value = messageOf(cause)
   } finally {
-    loading.value = false
+    if (listGuard.isCurrent(token)) loading.value = false
   }
 }
 
@@ -107,19 +113,25 @@ async function openDetail(id: number): Promise<void> {
 
 async function loadDetail(): Promise<void> {
   if (detailId.value === null) return
+  const token = detailGuard.begin()
   detailLoading.value = true
   detailError.value = ''
   detail.value = null
   try {
-    detail.value = await fetchPostDetail(detailId.value)
+    const fetched = await fetchPostDetail(detailId.value)
+    if (!detailGuard.isCurrent(token)) return
+    detail.value = fetched
   } catch (cause) {
+    if (!detailGuard.isCurrent(token)) return
     detailError.value = messageOf(cause)
   } finally {
-    detailLoading.value = false
+    if (detailGuard.isCurrent(token)) detailLoading.value = false
   }
 }
 
 function closeDetail(): void {
+  // 关闭后作废在途请求，避免旧详情回填到下一次打开。
+  detailGuard.begin()
   drawerOpen.value = false
   detail.value = null
   detailError.value = ''
