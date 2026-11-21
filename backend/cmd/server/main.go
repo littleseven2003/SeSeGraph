@@ -8,9 +8,11 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/api"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/auth"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/config"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/db"
 )
@@ -35,7 +37,7 @@ func main() {
 	}
 }
 
-// run 加载配置并启动 HTTP 服务，便于测试与 main 分离。
+// run 加载配置、准备数据库与鉴权，然后启动 HTTP 服务。
 func run(args []string, lookupEnv func(string) (string, bool)) error {
 	cfg, err := config.Load(args, lookupEnv)
 	if err != nil {
@@ -43,7 +45,6 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	}
 
 	gin.SetMode(gin.ReleaseMode)
-	router := api.NewRouter(version, commit)
 
 	store, err := db.Open(filepath.Join(cfg.DataDir, databaseFileName))
 	if err != nil {
@@ -51,9 +52,27 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	}
 	defer func() { _ = store.Close() }()
 
-	if err := db.Migrate(context.Background(), store); err != nil {
+	ctx := context.Background()
+	if err := db.Migrate(ctx, store); err != nil {
 		return errDatabase
 	}
+
+	authService := auth.NewService(store)
+	secret, err := authService.SessionSecret(ctx)
+	if err != nil {
+		return errDatabase
+	}
+	if err := bootstrapAdmin(ctx, authService, lookupEnv); err != nil {
+		return err
+	}
+
+	router := api.NewRouter(api.Deps{
+		Version:          version,
+		Commit:           commit,
+		Auth:             authService,
+		Sessions:         auth.NewSessions(secret, auth.DefaultSessionTTL, isHTTPS(cfg.PublicURL)),
+		AllowRemoteSetup: allowRemoteSetup(lookupEnv),
+	})
 
 	// 只记录版本信息，监听地址与数据目录属于本地部署细节，不写入日志。
 	log.Printf("服务启动：版本 %s（提交 %s）", version, commit)
@@ -65,8 +84,50 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	return nil
 }
 
+// bootstrapAdmin 在配置了环境变量账号密码时完成首次初始化。
+// 已初始化时静默跳过，不覆盖已有账号。
+func bootstrapAdmin(ctx context.Context, service *auth.Service, lookupEnv func(string) (string, bool)) error {
+	username, _ := lookupEnv("ADMIN_USERNAME")
+	password, _ := lookupEnv("ADMIN_PASSWORD")
+	if strings.TrimSpace(username) == "" || password == "" {
+		return nil
+	}
+
+	err := service.Create(ctx, username, password)
+	switch {
+	case err == nil:
+		log.Print("管理员账号已通过环境变量完成初始化")
+		return nil
+	case errors.Is(err, auth.ErrAlreadyInitialized):
+		return nil
+	case errors.Is(err, auth.ErrInvalidInput):
+		return errAdminEnv
+	default:
+		return errDatabase
+	}
+}
+
+// allowRemoteSetup 判断是否允许从非本机地址完成首次初始化，默认关闭。
+func allowRemoteSetup(lookupEnv func(string) (string, bool)) bool {
+	value, _ := lookupEnv("ADMIN_SETUP_ALLOW_REMOTE")
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
+	}
+}
+
+// isHTTPS 判断对外地址是否使用 HTTPS，用于决定会话 Cookie 是否带 Secure。
+func isHTTPS(publicURL string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(publicURL)), "https://")
+}
+
 // errServerStart 是启动失败时对外的固定说明，避免回显配置取值。
 var errServerStart = errors.New("HTTP 服务启动失败，请检查监听地址是否可用")
 
-// errDatabase 是数据库初始化失败时的固定说明，不包含路径等本地信息。
+// errDatabase 是数据库或鉴权初始化失败时的固定说明，不包含路径等本地信息。
 var errDatabase = errors.New("数据库初始化失败，请检查数据目录是否可写")
+
+// errAdminEnv 说明环境变量中的管理员凭据不符合要求，同样不回显取值。
+var errAdminEnv = errors.New("环境变量中的管理员账号或密码不符合要求")

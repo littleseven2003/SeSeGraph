@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"log"
 	"net"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/littleseven2003/SeSeGraph/backend/internal/auth"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/db"
 )
 
@@ -154,5 +156,125 @@ func TestRunReportsInvalidConfig(t *testing.T) {
 	}
 	if err := run([]string{"--addr", ""}, noEnv); err == nil {
 		t.Fatal("空监听地址应返回错误")
+	}
+}
+
+func envLookup(pairs map[string]string) func(string) (string, bool) {
+	return func(key string) (string, bool) {
+		value, ok := pairs[key]
+		return value, ok
+	}
+}
+
+func TestEnvBootstrapCreatesAdminWithoutLoggingPassword(t *testing.T) {
+	addr, closeFn := occupyPort(t)
+	defer closeFn()
+	dataDir := t.TempDir()
+	password := "env-bootstrap-pass"
+
+	var buf bytes.Buffer
+	original := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(original)
+
+	env := envLookup(map[string]string{"ADMIN_USERNAME": "admin", "ADMIN_PASSWORD": password})
+	if err := run([]string{"--addr", addr, "--data", dataDir}, env); err == nil {
+		t.Fatal("端口被占用时应返回错误")
+	}
+
+	if strings.Contains(buf.String(), password) {
+		t.Errorf("启动日志不应包含密码，实际: %s", buf.String())
+	}
+
+	store, err := db.Open(filepath.Join(dataDir, databaseFileName))
+	if err != nil {
+		t.Fatalf("打开数据库失败: %v", err)
+	}
+	defer store.Close()
+
+	var name, hash string
+	if err := store.QueryRow("SELECT username, password_hash FROM admin_users WHERE id = 1").Scan(&name, &hash); err != nil {
+		t.Fatalf("读取管理员失败: %v", err)
+	}
+	if name != "admin" {
+		t.Errorf("账号名 = %q，期望 admin", name)
+	}
+	if strings.Contains(hash, password) {
+		t.Error("密码必须以摘要形式保存")
+	}
+
+	service := auth.NewService(store)
+	if err := service.Authenticate(context.Background(), "admin", password); err != nil {
+		t.Errorf("环境变量初始化的账号应可登录: %v", err)
+	}
+}
+
+func TestEnvBootstrapRejectsWeakPassword(t *testing.T) {
+	env := envLookup(map[string]string{"ADMIN_USERNAME": "admin", "ADMIN_PASSWORD": "short"})
+	err := run([]string{"--addr", "127.0.0.1:0", "--data", t.TempDir()}, env)
+	if err == nil {
+		t.Fatal("弱密码应返回错误")
+	}
+	if err != errAdminEnv {
+		t.Errorf("错误 = %v，期望固定说明", err)
+	}
+	if strings.Contains(err.Error(), "short") {
+		t.Errorf("错误信息不应回显密码: %s", err.Error())
+	}
+}
+
+func TestEnvBootstrapKeepsExistingAdmin(t *testing.T) {
+	addr, closeFn := occupyPort(t)
+	defer closeFn()
+	dataDir := t.TempDir()
+
+	first := envLookup(map[string]string{"ADMIN_USERNAME": "admin", "ADMIN_PASSWORD": "first-password"})
+	_ = run([]string{"--addr", addr, "--data", dataDir}, first)
+
+	second := envLookup(map[string]string{"ADMIN_USERNAME": "intruder", "ADMIN_PASSWORD": "second-password"})
+	_ = run([]string{"--addr", addr, "--data", dataDir}, second)
+
+	store, err := db.Open(filepath.Join(dataDir, databaseFileName))
+	if err != nil {
+		t.Fatalf("打开数据库失败: %v", err)
+	}
+	defer store.Close()
+
+	service := auth.NewService(store)
+	if err := service.Authenticate(context.Background(), "admin", "first-password"); err != nil {
+		t.Errorf("应保留首次初始化的账号: %v", err)
+	}
+	if err := service.Authenticate(context.Background(), "intruder", "second-password"); err == nil {
+		t.Error("不应被后一次环境变量覆盖")
+	}
+}
+
+func TestIsHTTPS(t *testing.T) {
+	cases := map[string]bool{
+		"https://img.example.com": true,
+		"HTTPS://img.example.com": true,
+		"http://img.example.com":  false,
+		"":                        false,
+	}
+	for input, want := range cases {
+		if got := isHTTPS(input); got != want {
+			t.Errorf("isHTTPS(%q) = %v，期望 %v", input, got, want)
+		}
+	}
+}
+
+func TestAllowRemoteSetup(t *testing.T) {
+	cases := map[string]bool{
+		"1": true, "true": true, "TRUE": true, "yes": true,
+		"0": false, "": false, "no": false,
+	}
+	for value, want := range cases {
+		env := envLookup(map[string]string{"ADMIN_SETUP_ALLOW_REMOTE": value})
+		if got := allowRemoteSetup(env); got != want {
+			t.Errorf("值 %q 时 allowRemoteSetup = %v，期望 %v", value, got, want)
+		}
+	}
+	if allowRemoteSetup(noEnv) {
+		t.Error("默认应禁止远程初始化")
 	}
 }
