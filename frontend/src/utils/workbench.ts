@@ -112,3 +112,8 @@ export type WorkbenchPhase = 'idle' | 'creating' | 'uploading' | 'queued' | 'fai
 export function discardBlocked(phase: WorkbenchPhase): boolean {
   return phase === 'creating' || phase === 'uploading'
 }
+
+// quotaUsed 返回本次选择可用的张数基数：续传重选按新批次计算，不占用旧列表配额。
+export function quotaUsed(existingCount: number, replace: boolean): number {
+  return replace ? 0 : existingCount
+}

@@ -28,6 +28,7 @@ import {
   assignSortOrders,
   createId,
   discardBlocked,
+  quotaUsed,
   moveItem,
   planUploadQueue,
   removeItem,
@@ -271,13 +272,16 @@ function onZip(file: File): void {
 
 function onImages(files: File[]): void {
   message.value = ''
+  // 续传重选会整体替换旧选择，配额按新批次计算，避免旧列表占满 500 张上限。
+  const replace = snapshot.value !== null && !resuming.value
+  const base = quotaUsed(tiles.value.length, replace)
   const accepted: WorkbenchTile[] = []
   for (const file of files) {
-    if (tiles.value.length + accepted.length >= MAX_IMAGE_COUNT) {
+    if (base + accepted.length >= MAX_IMAGE_COUNT) {
       pushError(`单个帖子最多 ${MAX_IMAGE_COUNT} 张图片`)
       break
     }
-    const problem = checkFile({ name: file.name, size: file.size }, mode.value, tiles.value.length + accepted.length + 1)
+    const problem = checkFile({ name: file.name, size: file.size }, mode.value, base + accepted.length + 1)
     if (problem) {
       pushError(problem)
       continue
@@ -287,7 +291,6 @@ function onImages(files: File[]): void {
   if (accepted.length === 0) return
   // 文件夹与多图入口默认按文件名自然排序；续传时失配的旧选择整体替换掉。
   const sorted = sortByNaturalName(accepted, (tile) => tile.name)
-  const replace = snapshot.value !== null && !resuming.value
   if (replace) {
     releaseTiles(tiles.value)
     coverId.value = ''

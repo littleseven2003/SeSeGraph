@@ -6,6 +6,7 @@ import {
   discardBlocked,
   moveItem,
   planUploadQueue,
+  quotaUsed,
   removeItem,
   selectCover,
   sortByName,
@@ -138,4 +139,13 @@ test('创建与上传期间禁止放弃任务', () => {
   for (const phase of ['idle', 'queued', 'failed'] as const) {
     assert.equal(discardBlocked(phase), false)
   }
+})
+
+test('续传重选按新批次计算配额，旧列表不占额度', () => {
+  assert.equal(quotaUsed(499, true), 0)
+  assert.equal(quotaUsed(499, false), 499)
+  // 替换模式下 500 张新文件全部可用，追加模式下只剩 1 张额度。
+  const accepted = (base: number) => Array.from({ length: 500 }, (_, index) => index).filter((index) => base + index < 500).length
+  assert.equal(accepted(quotaUsed(499, true)), 500)
+  assert.equal(accepted(quotaUsed(499, false)), 1)
 })
