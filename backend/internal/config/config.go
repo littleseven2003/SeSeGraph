@@ -72,11 +72,15 @@ func Load(args []string, lookupEnv func(string) (string, bool)) (*Config, error)
 	return cfg, nil
 }
 
-// validatePublicURL 校验对外访问地址。空值表示尚未确定，允许通过。
-// 校验失败时只返回固定描述，不回显具体取值。
-func validatePublicURL(raw string) error {
+// ValidatePublicURL 校验对外访问地址的结构。空值表示尚未确定，允许通过。
+// 地址会被直接拼上图片路径，因此查询串、片段与内嵌凭据都必须拒绝，
+// 否则生成出来的看图链接无法访问。校验失败时只返回固定描述，不回显具体取值。
+func ValidatePublicURL(raw string) error {
 	if raw == "" {
 		return nil
+	}
+	if strings.ContainsAny(raw, "\r\n\t ") {
+		return errors.New("对外访问地址不能包含空白字符")
 	}
 	parsed, err := url.Parse(raw)
 	if err != nil {
@@ -91,8 +95,30 @@ func validatePublicURL(raw string) error {
 	if parsed.User != nil {
 		return errors.New("对外访问地址不允许包含内嵌凭据")
 	}
-	if strings.ContainsAny(raw, "\r\n\t ") {
-		return errors.New("对外访问地址不能包含空白字符")
+	if parsed.RawQuery != "" || parsed.ForceQuery {
+		return errors.New("对外访问地址不能包含查询串")
+	}
+	if parsed.Fragment != "" {
+		return errors.New("对外访问地址不能包含片段")
 	}
 	return nil
+}
+
+// PublicURLIsHTTPS 判断对外访问地址是否可作为公开看图地址。
+// 除协议为 HTTPS 外，还要求地址结构完整，避免拼接出无法访问的图片链接。
+func PublicURLIsHTTPS(raw string) bool {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || ValidatePublicURL(trimmed) != nil {
+		return false
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return false
+	}
+	return parsed.Scheme == "https"
+}
+
+// validatePublicURL 保留包内调用入口，便于启动参数与单元测试复用同一套规则。
+func validatePublicURL(raw string) error {
+	return ValidatePublicURL(raw)
 }

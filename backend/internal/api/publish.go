@@ -4,9 +4,9 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/config"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
 )
 
@@ -28,7 +28,8 @@ func publishPostHandler(deps Deps) gin.HandlerFunc {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Telegraph 未配置"})
 			return
 		}
-		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(deps.PublicURL)), "https://") {
+		// 公开地址会被直接拼上图片路径，必须是结构完整的 HTTPS 地址。
+		if !config.PublicURLIsHTTPS(deps.PublicURL) {
 			c.JSON(http.StatusConflict, gin.H{"error": "需要先配置公开 HTTPS 地址"})
 			return
 		}

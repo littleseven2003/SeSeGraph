@@ -122,6 +122,9 @@ func TestLoadRejectsInvalidPublicURLWithoutEcho(t *testing.T) {
 		{"缺少主机", "https://"},
 		{"内嵌凭据", "https://user@img.example.com"},
 		{"含空白", "https://img.example.com/a b"},
+		{"带查询串", "https://img.example.com/?a=1"},
+		{"空查询串", "https://img.example.com/?"},
+		{"带片段", "https://img.example.com/#top"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -136,6 +139,24 @@ func TestLoadRejectsInvalidPublicURLWithoutEcho(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPublicURLIsHTTPS(t *testing.T) {
+	cases := map[string]bool{
+		"https://img.example.com":          true,
+		"  HTTPS://img.example.com/base  ": true,
+		"http://img.example.com":           false,
+		"https://img.example.com/?a=1":     false,
+		"https://img.example.com/#top":     false,
+		"https://user@img.example.com":     false,
+		"https://":                         false,
+		"":                                 false,
+	}
+	for input, want := range cases {
+		if got := PublicURLIsHTTPS(input); got != want {
+			t.Errorf("PublicURLIsHTTPS(%q) = %v，期望 %v", input, got, want)
+		}
 	}
 }
 

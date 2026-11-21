@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -102,6 +103,62 @@ func TestPublishRequiresTelegraphAndHTTPS(t *testing.T) {
 	rec = withoutTelegraph.do(t, http.MethodPost, "/api/posts/"+formatID(postID2)+"/publish", "", cookie2)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("未配置 Telegraph 状态码 = %d，期望 503", rec.Code)
+	}
+}
+
+// TestPublishRejectsMalformedPublicURL 校验公开地址结构不合法时拒绝发布，
+// 图片保持私有，短码仍然 404。
+func TestPublishRejectsMalformedPublicURL(t *testing.T) {
+	cases := map[string]string{
+		"带查询串": "https://img.example.com/?a=1",
+		"空查询串": "https://img.example.com/?",
+		"带片段":  "https://img.example.com/#top",
+		"内嵌凭据": "https://user@img.example.com",
+	}
+	for name, publicURL := range cases {
+		t.Run(name, func(t *testing.T) {
+			env := newPublishEnv(t, publicURL, true)
+			cookie := env.setup(t)
+			postID := completedPost(t, env)
+
+			rec := env.do(t, http.MethodPost, "/api/posts/"+formatID(postID)+"/publish", "", cookie)
+			if rec.Code != http.StatusConflict {
+				t.Fatalf("状态码 = %d，期望 409，响应: %s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "HTTPS") {
+				t.Errorf("错误文案未说明地址要求: %s", rec.Body.String())
+			}
+			if state, public := publishStateOf(t, env, postID); state != posts.PublishIdle || public != 0 {
+				t.Errorf("校验失败时不应开启公开: state=%s public=%d", state, public)
+			}
+
+			ctx := context.Background()
+			images, err := env.posts.ListImages(ctx, postID)
+			if err != nil || len(images) == 0 {
+				t.Fatalf("读取图片失败: %v", err)
+			}
+			if _, err := env.posts.PublicImage(ctx, images[0].ShortCode); !errors.Is(err, posts.ErrNotFound) {
+				t.Errorf("图片仍应私有，实际错误 = %v", err)
+			}
+			gate := env.do(t, http.MethodGet, "/i/"+images[0].ShortCode, "", nil)
+			if gate.Code != http.StatusNotFound {
+				t.Errorf("短码状态码 = %d，期望 404", gate.Code)
+			}
+		})
+	}
+}
+
+func TestPublishAcceptsPublicURLWithBasePath(t *testing.T) {
+	env := newPublishEnv(t, "https://img.example.com/base/", true)
+	cookie := env.setup(t)
+	postID := completedPost(t, env)
+
+	rec := env.do(t, http.MethodPost, "/api/posts/"+formatID(postID)+"/publish", "", cookie)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("状态码 = %d，期望 202，响应: %s", rec.Code, rec.Body.String())
+	}
+	if state, public := publishStateOf(t, env, postID); state != posts.PublishPending || public != 1 {
+		t.Errorf("状态 = %s public=%d，期望 pending 且公开", state, public)
 	}
 }
 

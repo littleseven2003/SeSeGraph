@@ -276,8 +276,9 @@ func readSetupToken(lookupEnv func(string) (string, bool)) string {
 }
 
 // isHTTPS 判断对外地址是否使用 HTTPS，用于决定会话 Cookie 是否带 Secure。
+// 地址结构（查询串、片段、内嵌凭据）由 config 统一校验，避免拼接出无法访问的链接。
 func isHTTPS(publicURL string) bool {
-	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(publicURL)), "https://")
+	return config.PublicURLIsHTTPS(publicURL)
 }
 
 // errServerStart 是启动失败时对外的固定说明，避免回显配置取值。
