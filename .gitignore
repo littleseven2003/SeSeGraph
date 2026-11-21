@@ -1,0 +1,35 @@
+# 环境变量与密钥（保留示例文件）
+.env
+.env.*
+!.env.example
+
+# 数据目录、数据库与 WAL 附属文件
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# 依赖与构建产物
+node_modules/
+dist/
+bin/
+*.exe
+*.test
+
+# 本地测试与个人配置（可能含凭据、个人域名或频道信息）
+.local/
+*.local
+testdata/local/
+deploy/*.local.conf
+
+# 日志与临时文件
+*.log
+tmp/
+.cache/
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
