@@ -149,7 +149,8 @@ func TestPostDetailReturnsImagesAndLinks(t *testing.T) {
 		t.Fatalf("保存图片失败: %v", err)
 	}
 	if _, err := env.handle.ExecContext(ctx,
-		`UPDATE posts SET is_public = 1, publish_state = ?, telegraph_urls = ? WHERE id = ?`,
+		`UPDATE posts SET is_public = 1, publish_state = ?, telegraph_urls = ?,
+		        published_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		posts.PublishPublished, `["https://telegra.ph/Page-1"]`, postID); err != nil {
 		t.Fatalf("更新发布信息失败: %v", err)
 	}
@@ -177,6 +178,9 @@ func TestPostDetailReturnsImagesAndLinks(t *testing.T) {
 	if detail.CoverURL != "/api/thumbs/9.webp" {
 		t.Errorf("封面地址 = %q", detail.CoverURL)
 	}
+	if detail.PublishedAt == "" {
+		t.Error("已发布帖应返回发布时间")
+	}
 
 	missing := env.do(t, http.MethodGet, "/api/posts/999", "", cookie)
 	if missing.Code != http.StatusNotFound {
@@ -203,7 +207,7 @@ func TestGalleryFieldsAlwaysPresent(t *testing.T) {
 	if len(raw.Items) != 1 {
 		t.Fatalf("条数 = %d，期望 1", len(raw.Items))
 	}
-	for _, key := range []string{"cover_url", "cover_thumb_path", "tags", "telegraph_urls"} {
+	for _, key := range []string{"cover_url", "cover_thumb_path", "tags", "telegraph_urls", "published_at"} {
 		if _, ok := raw.Items[0][key]; !ok {
 			t.Errorf("列表缺少字段 %q", key)
 		}
@@ -215,7 +219,7 @@ func TestGalleryFieldsAlwaysPresent(t *testing.T) {
 	if err := decodeJSON(rec.Body.Bytes(), &detail); err != nil {
 		t.Fatalf("响应不是合法 JSON: %v", err)
 	}
-	for _, key := range []string{"images", "telegraph_paths", "telegraph_urls", "tags", "cover_url"} {
+	for _, key := range []string{"images", "telegraph_paths", "telegraph_urls", "tags", "cover_url", "published_at"} {
 		if _, ok := detail[key]; !ok {
 			t.Errorf("详情缺少字段 %q", key)
 		}

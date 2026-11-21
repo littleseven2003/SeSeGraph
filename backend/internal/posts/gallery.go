@@ -71,6 +71,7 @@ type GalleryItem struct {
 	IsDisabled     bool
 	TelegraphURLs  []string
 	Tags           []string
+	PublishedAt    string
 	CreatedAt      string
 	UpdatedAt      string
 }
@@ -162,6 +163,7 @@ func (r *Repository) ListGallery(ctx context.Context, query GalleryQuery) (*Gall
 	rows, err := r.handle.QueryContext(ctx,
 		`SELECT p.id, p.title, p.cover_thumb_path, p.image_count, p.status, p.publish_state,
 		        p.is_public, p.is_disabled, p.telegraph_urls,
+		        COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', p.published_at), ''),
 		        strftime('%Y-%m-%dT%H:%M:%SZ', p.created_at),
 		        strftime('%Y-%m-%dT%H:%M:%SZ', p.updated_at)
 		 FROM posts p`+where+` ORDER BY p.created_at DESC, p.id DESC LIMIT ? OFFSET ?`, pageArgs...)
@@ -177,7 +179,8 @@ func (r *Repository) ListGallery(ctx context.Context, query GalleryQuery) (*Gall
 		var public, disabled int
 		var urls string
 		if err := rows.Scan(&item.ID, &item.Title, &item.CoverThumbPath, &item.ImageCount, &item.Status,
-			&item.PublishState, &public, &disabled, &urls, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			&item.PublishState, &public, &disabled, &urls, &item.PublishedAt,
+			&item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, errors.New("读取画廊失败")
 		}
 		item.IsPublic = public == 1
@@ -241,13 +244,14 @@ func (r *Repository) GalleryDetail(ctx context.Context, id int64) (*GalleryDetai
 		`SELECT p.id, p.title, p.description, p.author_name, p.cover_thumb_path, p.image_count,
 		        p.upload_mode, p.status, p.error_message, p.publish_state, p.publish_error,
 		        p.is_public, p.is_disabled, p.telegraph_urls, p.telegraph_paths,
+		        COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', p.published_at), ''),
 		        strftime('%Y-%m-%dT%H:%M:%SZ', p.created_at),
 		        strftime('%Y-%m-%dT%H:%M:%SZ', p.updated_at)
 		 FROM posts p WHERE p.id = ?`, id,
 	).Scan(&detail.ID, &detail.Title, &detail.Description, &detail.AuthorName, &detail.CoverThumbPath,
 		&detail.ImageCount, &detail.UploadMode, &detail.Status, &detail.ErrorMessage,
 		&detail.PublishState, &detail.PublishError, &public, &disabled, &urls, &paths,
-		&detail.CreatedAt, &detail.UpdatedAt)
+		&detail.PublishedAt, &detail.CreatedAt, &detail.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

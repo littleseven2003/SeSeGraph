@@ -325,7 +325,8 @@ func (r *Repository) MarkPublished(ctx context.Context, postID int64, paths, url
 	}
 	if _, err := r.handle.ExecContext(ctx,
 		`UPDATE posts SET publish_state = ?, publish_error = '', telegraph_paths = ?, telegraph_urls = ?,
-		 is_public = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		 is_public = 1, published_at = COALESCE(NULLIF(published_at, ''), CURRENT_TIMESTAMP),
+		 updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		PublishPublished, string(encodedPaths), string(encodedURLs), postID); err != nil {
 		return errors.New("保存发布结果失败")
 	}

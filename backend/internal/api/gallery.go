@@ -31,6 +31,7 @@ type galleryItemResponse struct {
 	Disabled       bool     `json:"disabled"`
 	Tags           []string `json:"tags"`
 	TelegraphURLs  []string `json:"telegraph_urls"`
+	PublishedAt    string   `json:"published_at"`
 	CreatedAt      string   `json:"created_at"`
 	UpdatedAt      string   `json:"updated_at"`
 }
@@ -91,6 +92,7 @@ func toGalleryItem(item posts.GalleryItem) galleryItemResponse {
 		Disabled:       item.IsDisabled,
 		Tags:           tags,
 		TelegraphURLs:  urls,
+		PublishedAt:    item.PublishedAt,
 		CreatedAt:      item.CreatedAt,
 		UpdatedAt:      item.UpdatedAt,
 	}

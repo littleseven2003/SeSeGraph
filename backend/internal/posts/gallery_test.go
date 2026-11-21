@@ -255,3 +255,63 @@ func TestListTagCounts(t *testing.T) {
 		}
 	}
 }
+
+func TestMarkPublishedKeepsFirstPublishedAt(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+	postID, err := repo.Create(ctx, Post{Title: "发布时间", ImageCount: 1})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+
+	detail, err := repo.GalleryDetail(ctx, postID)
+	if err != nil {
+		t.Fatalf("读取详情失败: %v", err)
+	}
+	if detail.PublishedAt != "" {
+		t.Errorf("未发布帖发布时间 = %q，期望为空", detail.PublishedAt)
+	}
+
+	if err := repo.MarkPublished(ctx, postID, []string{"Page-1"}, []string{"https://telegra.ph/Page-1"}); err != nil {
+		t.Fatalf("标记发布失败: %v", err)
+	}
+	detail, err = repo.GalleryDetail(ctx, postID)
+	if err != nil {
+		t.Fatalf("读取详情失败: %v", err)
+	}
+	if detail.PublishedAt == "" {
+		t.Fatal("发布后应写入发布时间")
+	}
+	first := detail.PublishedAt
+
+	// 固定第一次发布时间，重新发布与开关禁用都不应改写它。
+	if _, err := repo.handle.ExecContext(ctx,
+		`UPDATE posts SET published_at = '2026-11-01 08:00:00' WHERE id = ?`, postID); err != nil {
+		t.Fatalf("固定发布时间失败: %v", err)
+	}
+	if err := repo.MarkPublished(ctx, postID, []string{"Page-1"}, []string{"https://telegra.ph/Page-1"}); err != nil {
+		t.Fatalf("重新发布失败: %v", err)
+	}
+	if err := repo.SetPublic(ctx, postID, false); err != nil {
+		t.Fatalf("关闭公开失败: %v", err)
+	}
+	if err := repo.SetPublic(ctx, postID, true); err != nil {
+		t.Fatalf("重新公开失败: %v", err)
+	}
+
+	detail, err = repo.GalleryDetail(ctx, postID)
+	if err != nil {
+		t.Fatalf("读取详情失败: %v", err)
+	}
+	if detail.PublishedAt != "2026-11-01T08:00:00Z" {
+		t.Errorf("发布时间被改写为 %q，首次为 %q", detail.PublishedAt, first)
+	}
+
+	page, err := repo.ListGallery(ctx, GalleryQuery{})
+	if err != nil {
+		t.Fatalf("读取画廊失败: %v", err)
+	}
+	if len(page.Items) != 1 || page.Items[0].PublishedAt != "2026-11-01T08:00:00Z" {
+		t.Errorf("列表发布时间 = %+v", page.Items)
+	}
+}
