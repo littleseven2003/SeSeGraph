@@ -308,7 +308,7 @@ func TestAccessLogOmitsCredentialsAndQuery(t *testing.T) {
 
 func TestAccessLogOnUnmatchedRoute(t *testing.T) {
 	env := newTestEnv(t, testSetupToken)
-	rec := env.do(t, http.MethodGet, "/i/guessable-code", "", nil)
+	rec := env.do(t, http.MethodGet, "/no-such-entry/guessable-code", "", nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("未知路径状态码 = %d，期望 404", rec.Code)
 	}

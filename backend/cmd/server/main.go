@@ -78,18 +78,22 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		return errAssets
 	}
 
+	streams := buildStreamProvider(lookupEnv)
+
 	router := api.NewRouter(api.Deps{
-		Version:    version,
-		Commit:     commit,
-		Auth:       authService,
-		Sessions:   auth.NewSessions(secret, auth.DefaultSessionTTL, isHTTPS(cfg.PublicURL)),
-		SetupToken: readSetupToken(lookupEnv),
-		WebFS:      assets,
-		DataDir:    cfg.DataDir,
-		Posts:      repository,
+		Version:          version,
+		Commit:           commit,
+		Auth:             authService,
+		Sessions:         auth.NewSessions(secret, auth.DefaultSessionTTL, isHTTPS(cfg.PublicURL)),
+		SetupToken:       readSetupToken(lookupEnv),
+		WebFS:            assets,
+		DataDir:          cfg.DataDir,
+		Posts:            repository,
+		Streams:          streams,
+		ImageConcurrency: readImageConcurrency(lookupEnv),
 	})
 
-	stopWorker := startUploadQueue(ctx, repository, cfg.DataDir, lookupEnv)
+	stopWorker := startUploadQueue(ctx, repository, cfg.DataDir, streams, lookupEnv)
 	defer stopWorker()
 
 	// 只记录版本信息，监听地址与数据目录属于本地部署细节，不写入日志。
@@ -125,23 +129,48 @@ func bootstrapAdmin(ctx context.Context, service *auth.Service, lookupEnv func(s
 	}
 }
 
-// startUploadQueue 在配置了图床凭据时启动上传队列，返回停止函数。
-func startUploadQueue(ctx context.Context, repository *posts.Repository, dataDir string, lookupEnv func(string) (string, bool)) func() {
-	token, chatID, interval := readTelegramConfig(lookupEnv)
-	if token == "" || chatID == "" {
-		log.Print("图床未配置，上传队列未启动")
-		return func() {}
-	}
-
+// buildStreamProvider 按环境变量创建图床提供方。未配置或配置不合法时返回空，
+// 由调用方决定跳过上传队列，并让图片网关返回不可用。
+func buildStreamProvider(lookupEnv func(string) (string, bool)) storage.StreamProvider {
+	token, chatID, _ := readTelegramConfig(lookupEnv)
 	provider, err := storage.NewTelegram(storage.TelegramConfig{
 		Token:   token,
 		ChatID:  chatID,
 		APIBase: readTelegramAPIBase(lookupEnv),
 	})
-	if err != nil {
+	switch {
+	case errors.Is(err, storage.ErrNotConfigured):
+		log.Print("图床未配置，上传队列未启动")
+		return nil
+	case err != nil:
 		log.Print("图床配置不可用，上传队列未启动")
+		return nil
+	}
+	return provider
+}
+
+// readImageConcurrency 读取图片网关并发上限，未配置时使用默认值。
+func readImageConcurrency(lookupEnv func(string) (string, bool)) int {
+	raw, ok := lookupEnv("PROXY_CONCURRENCY")
+	if !ok {
+		return api.DefaultImageConcurrency
+	}
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || value <= 0 {
+		return api.DefaultImageConcurrency
+	}
+	if value > 100 {
+		return 100
+	}
+	return value
+}
+
+// startUploadQueue 在提供方可用时启动上传队列，返回停止函数。
+func startUploadQueue(ctx context.Context, repository *posts.Repository, dataDir string, provider storage.StreamProvider, lookupEnv func(string) (string, bool)) func() {
+	if provider == nil {
 		return func() {}
 	}
+	_, _, interval := readTelegramConfig(lookupEnv)
 
 	queue, err := worker.New(worker.Options{
 		Repository: repository,

@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/auth"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/storage"
 )
 
 // Deps 汇总构建路由所需的依赖。
@@ -24,6 +25,10 @@ type Deps struct {
 	WebFS      fs.FS
 	DataDir    string
 	Posts      *posts.Repository
+	// Streams 提供按远端标识流式读取的能力，未配置时 /i/ 路由返回 503。
+	Streams storage.StreamProvider
+	// ImageConcurrency 是图片网关的并发上限，非正时使用默认值。
+	ImageConcurrency int
 }
 
 // maxAuthBodyBytes 是登录与初始化请求体的上限，超出的请求不会被解码。
@@ -54,6 +59,10 @@ func NewRouter(deps Deps) *gin.Engine {
 	router.POST("/api/auth/setup", limitBody(maxAuthBodyBytes), setupHandler(deps))
 	router.POST("/api/auth/login", limitBody(maxAuthBodyBytes), loginHandler(deps))
 	router.POST("/api/auth/logout", logoutHandler(deps))
+
+	// 公开图片网关：短码即凭证，不经过管理会话。
+	gateway := newImageGateway(deps.Posts, deps.Streams, deps.ImageConcurrency, deps.Logger)
+	router.GET("/i/:short_code", gateway.handle)
 
 	admin := router.Group("/api", RequireAuth(deps.Sessions))
 	admin.GET("/posts", func(c *gin.Context) {
