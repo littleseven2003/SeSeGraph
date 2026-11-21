@@ -7,19 +7,20 @@ import ProgressPanel from '../components/workbench/ProgressPanel.vue'
 import { commitPost, createPost, fetchProgress, retryPost, uploadImage, type ServerProgress } from '../api/posts.ts'
 import { ApiError } from '../api/client.ts'
 import { makeCover } from '../utils/cover.ts'
-import {
-  MAX_IMAGE_COUNT,
-  baseName,
-  checkFile,
-  formatBytes,
-  limitForMode,
-  mimeForName,
-  type UploadMode,
-} from '../utils/image.ts'
+import { MAX_IMAGE_COUNT, baseName, checkFile, formatBytes, limitForMode, mimeForName, type UploadMode } from '../utils/image.ts'
 import { parseMetaText, type PostMeta } from '../utils/meta.ts'
 import { sortByNaturalName } from '../utils/natural.ts'
-import { browserStorage, clearTask, loadTask, saveTask, type StorageLike, type TaskSnapshot } from '../utils/task-store.ts'
 import { isActiveStatus } from '../utils/progress.ts'
+import {
+  browserStorage,
+  clearTask,
+  loadTask,
+  matchSnapshotFiles,
+  saveTask,
+  type SnapshotFile,
+  type StorageLike,
+  type TaskSnapshot,
+} from '../utils/task-store.ts'
 import { acceptedCount, initialStatuses, planUploads, type UploadStatus } from '../utils/upload.ts'
 import { DEFAULT_META_FILENAMES, unpackZip } from '../utils/zip.ts'
 import {
@@ -52,7 +53,7 @@ const draft = ref<PostMeta>({ title: '', description: '', tags: [], author: '' }
 const postId = ref(0)
 const phase = ref<Phase>('idle')
 const statuses = ref<Record<number, UploadStatus>>({})
-const resumed = ref<TaskSnapshot | null>(null)
+const snapshot = ref<TaskSnapshot | null>(null)
 const serverProgress = ref<ServerProgress | null>(null)
 const retrying = ref(false)
 const pollIntervalMs = 2000
@@ -63,8 +64,12 @@ const totalSize = computed(() => totalBytes(tiles.value))
 const coverTile = computed(() => tiles.value.find((tile) => tile.id === coverId.value))
 const uploadedCount = computed(() => acceptedCount(statuses.value))
 const busy = computed(() => phase.value === 'creating' || phase.value === 'uploading')
-const locked = computed(() => postId.value > 0 || busy.value)
+const locked = computed(() => busy.value || (postId.value > 0 && tiles.value.length > 0))
 const finished = computed(() => serverProgress.value?.status === 'completed')
+const viewingTask = computed(() => snapshot.value !== null && tiles.value.length === 0)
+const modeLimitText = computed(() =>
+  mode.value === 'document' ? 'document 原图，单图上限 20MB' : 'photo 省流量，单图上限 10MB',
+)
 const phaseText = computed(() => {
   if (serverProgress.value?.status === 'completed') {
     return '存图完成，图片已进入频道，可以关闭网页'
@@ -87,9 +92,31 @@ const phaseText = computed(() => {
 })
 
 onMounted(() => {
-  // 上次未完成的任务：提示重新选择同一批文件续传。
-  resumed.value = loadTask(storage)
+  const saved = loadTask(storage)
+  if (!saved) return
+  snapshot.value = saved
+  void hydrate(saved)
 })
+
+// hydrate 按快照读取服务端进度，刷新后可直接查看进度并重试。
+async function hydrate(saved: TaskSnapshot): Promise<void> {
+  try {
+    const progress = await fetchProgress(saved.postId)
+    postId.value = saved.postId
+    applyServerProgress(progress)
+    phase.value = progress.status === 'uploading' ? 'idle' : progress.status === 'failed' ? 'failed' : 'queued'
+    if (isActiveStatus(progress.status)) {
+      startPolling(saved.postId)
+    }
+    if (progress.status === 'completed') {
+      message.value = `任务 #${saved.postId} 已存图完成`
+    }
+  } catch {
+    // 任务不存在（例如数据目录被清空）时丢弃快照，避免挡住新任务。
+    clearTask(storage)
+    snapshot.value = null
+  }
+}
 
 function pushError(text: string): void {
   message.value = text
@@ -140,6 +167,26 @@ function applyTiles(next: WorkbenchTile[]): void {
   coverId.value = selectCover(tiles.value, coverId.value)
 }
 
+// restoreOrder 用名称与体积把本地文件放回上次任务的顺序；失败时给出提示。
+function restoreOrder(): boolean {
+  const saved = snapshot.value
+  if (!saved) return true
+  const local: SnapshotFile[] = tiles.value.map((tile) => ({ name: tile.name, size: tile.size }))
+  const matched = matchSnapshotFiles(saved.files, local)
+  if ('error' in matched) {
+    pushError(`${matched.error}。如需放弃上次任务 #${saved.postId}，点「放弃此任务」`)
+    return false
+  }
+  const byIndex = new Map(tiles.value.map((tile, index) => [index, tile]))
+  const ordered = matched.order
+    .map((index) => byIndex.get(index))
+    .filter((tile): tile is WorkbenchTile => tile !== undefined)
+  applyTiles(ordered)
+  statuses.value = {}
+  message.value = `已按上次任务 #${saved.postId} 的顺序恢复 ${ordered.length} 张，发布时会补传缺少的序号`
+  return true
+}
+
 // 切换画质模式前先确认现有图片在新上限内，避免静默失效。
 function setMode(next: UploadMode): void {
   if (next === mode.value || locked.value) return
@@ -163,14 +210,18 @@ function onZip(file: File): void {
         pushError(result.error)
         return
       }
+      if (result.images.length > MAX_IMAGE_COUNT) {
+        pushError(`单个帖子最多 ${MAX_IMAGE_COUNT} 张图片，请先精简压缩包`)
+        return
+      }
       releaseTiles(tiles.value)
       const next = result.images.map((image) =>
         addTile(baseName(image.name), new Blob([image.data.slice()], { type: mimeForName(image.name) }), image.data.length),
       )
       metaText.value = result.metaText
       metaSource.value = result.metaText === '' ? '' : result.metaName
-      statuses.value = {}
       applyTiles(next)
+      restoreOrder()
       if (result.metaText !== '') {
         // 包内存在说明文件时自动预填，缺失字段仍可手动补充。
         const parsed = parseMetaText(result.metaText, 'first-line')
@@ -181,7 +232,7 @@ function onZip(file: File): void {
           author: parsed.author,
         }
       }
-      if (result.skipped > 0) {
+      if (result.skipped > 0 && message.value === '') {
         message.value = `已忽略 ${result.skipped} 个非图片文件`
       }
       void refreshCover()
@@ -216,8 +267,8 @@ function onImages(files: File[]): void {
   if (accepted.length === 0) return
   // 文件夹与多图入口默认按文件名自然排序，已有顺序保持不变。
   const sorted = sortByNaturalName(accepted, (tile) => tile.name)
-  statuses.value = {}
   applyTiles([...tiles.value, ...sorted])
+  restoreOrder()
   void refreshCover()
 }
 
@@ -305,13 +356,14 @@ function startPolling(id: number): void {
 
 // 手动重试失败的图片，随后恢复轮询。
 async function retryFailed(): Promise<void> {
-  if (retrying.value || postId.value === 0) return
+  const target = postId.value
+  if (retrying.value || target === 0) return
   retrying.value = true
   message.value = ''
   try {
-    const result = await retryPost(postId.value)
+    const result = await retryPost(target)
     phase.value = result.status === 'queued' ? 'queued' : 'failed'
-    startPolling(postId.value)
+    startPolling(target)
   } catch (error) {
     pushError(error instanceof ApiError ? error.message : '重试失败，请稍后重试')
   } finally {
@@ -323,11 +375,26 @@ function resetProgress(): void {
   postId.value = 0
   phase.value = 'idle'
   statuses.value = {}
-  resumed.value = null
   serverProgress.value = null
   message.value = ''
   stopPolling()
   clearTask(storage)
+}
+
+// discardSnapshot 放弃上次任务的续传入口，允许直接开新任务。
+function discardSnapshot(): void {
+  const abandoned = snapshot.value?.postId ?? postId.value
+  snapshot.value = null
+  clearTask(storage)
+  stopPolling()
+  postId.value = 0
+  phase.value = 'idle'
+  statuses.value = {}
+  serverProgress.value = null
+  message.value =
+    tiles.value.length === 0
+      ? '已放弃上次任务，可以重新选择图片'
+      : `已放弃任务 #${abandoned}，发布会创建新的任务`
 }
 
 function clearAll(): void {
@@ -340,20 +407,32 @@ function clearAll(): void {
   metaText.value = ''
   metaSource.value = ''
   draft.value = { title: '', description: '', tags: [], author: '' }
+  snapshot.value = null
   resetProgress()
 }
 
 // 建任务：已存在任务或上次未完成任务时复用，避免重复建帖。
 async function ensureTask(): Promise<number | null> {
-  if (postId.value > 0) return postId.value
-  if (resumed.value && resumed.value.imageCount === tiles.value.length) {
-    postId.value = resumed.value.postId
+  if (postId.value > 0) {
+    const current = snapshot.value
+    if (current) {
+      const local: SnapshotFile[] = tiles.value.map((tile) => ({ name: tile.name, size: tile.size }))
+      const matched = matchSnapshotFiles(current.files, local)
+      if ('error' in matched) {
+        pushError(`${matched.error}。如需放弃上次任务，点「放弃此任务」`)
+        return null
+      }
+    }
     return postId.value
   }
-  if (resumed.value) {
-    // 文件数量对不上，说明换了一批图，旧任务不再续传。
-    clearTask(storage)
-    resumed.value = null
+  const saved = snapshot.value
+  if (saved) {
+    const local: SnapshotFile[] = tiles.value.map((tile) => ({ name: tile.name, size: tile.size }))
+    const matched = matchSnapshotFiles(saved.files, local)
+    if (!('error' in matched)) {
+      postId.value = saved.postId
+      return postId.value
+    }
   }
   const created = await createPost({
     title: draft.value.title.trim(),
@@ -365,16 +444,14 @@ async function ensureTask(): Promise<number | null> {
     tags: draft.value.tags,
   })
   postId.value = created.id
-  saveTask(storage, {
-    postId: created.id,
-    imageCount: tiles.value.length,
-    fileNames: tiles.value.map((tile) => tile.name),
-    createdAt: Date.now(),
-  })
+  const files: SnapshotFile[] = tiles.value.map((tile) => ({ name: tile.name, size: tile.size }))
+  const next: TaskSnapshot = { postId: created.id, imageCount: files.length, files, createdAt: Date.now() }
+  snapshot.value = next
+  saveTask(storage, next)
   return postId.value
 }
 
-// 发布：建任务 → 按服务端进度补传 → 提交入队。
+// 发布：建任务 → 按服务端进度补传 → 提交入队，快照保留以便刷新后查看与重试。
 async function publish(): Promise<void> {
   if (busy.value) return
   message.value = ''
@@ -399,11 +476,9 @@ async function publish(): Promise<void> {
     const progress = await fetchProgress(id)
     statuses.value = initialStatuses(progress)
     if (progress.status !== 'uploading') {
-      // 任务已进入队列，交给服务端继续处理。
+      // 任务已进入队列或已结束，交给服务端继续处理，这里只展示进度。
       phase.value = progress.status === 'failed' ? 'failed' : 'queued'
       applyServerProgress(progress)
-      clearTask(storage)
-      resumed.value = null
       startPolling(id)
       return
     }
@@ -411,7 +486,6 @@ async function publish(): Promise<void> {
     const planned = planUploads(progress, tiles.value.length)
     if ('error' in planned) {
       phase.value = 'idle'
-      postId.value = 0
       pushError(planned.error)
       return
     }
@@ -432,14 +506,13 @@ async function publish(): Promise<void> {
     }
 
     const committed = await commitPost(id)
-    clearTask(storage)
-    resumed.value = null
     phase.value = committed.status === 'queued' ? 'queued' : 'failed'
     if (committed.missing && committed.missing.length > 0) {
       pushError('还有图片未上传完整，请继续上传')
       phase.value = 'idle'
       return
     }
+    snapshot.value = loadTask(storage)
     startPolling(id)
   } catch (error) {
     phase.value = 'idle'
@@ -495,23 +568,35 @@ onBeforeUnmount(() => {
       </p>
 
       <div
-        v-if="resumed && tiles.length === 0"
-        class="mb-4 rounded-md border border-line bg-surface px-3 py-2 text-sm"
+        v-if="viewingTask && snapshot"
+        class="mb-4 rounded-lg border border-line bg-surface p-4"
         role="status"
       >
-        <span class="font-medium">上次有未完成的任务 #{{ resumed.postId }}</span>
-        <span class="text-muted">
-          （{{ resumed.imageCount }} 张，文件：{{ resumed.fileNames.slice(0, 2).join('、')
-          }}{{ resumed.fileNames.length > 2 ? ' 等' : '' }}）。重新选择同一批文件后会接着补传已缺的图片。
-        </span>
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p class="text-sm font-semibold">上次任务 #{{ snapshot.postId }}</p>
+            <p class="mt-0.5 text-xs text-muted">
+              {{ snapshot.imageCount }} 张，文件：
+              {{ snapshot.files.slice(0, 2).map((file) => file.name).join('、')
+              }}{{ snapshot.files.length > 2 ? ' 等' : '' }}。重新选择同一批文件会按原序号续传。
+            </p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              class="h-9 rounded-md border border-line px-3 text-sm font-medium transition hover:border-muted/40 hover:bg-canvas"
+              @click="discardSnapshot"
+            >
+              放弃此任务
+            </button>
+          </div>
+        </div>
       </div>
 
       <div class="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-surface px-4 py-3">
         <div>
           <p class="text-sm font-medium">画质模式</p>
-          <p class="mt-0.5 text-xs text-muted">
-            {{ mode === 'document' ? 'document 原图，单图上限 20MB' : 'photo 省流量，单图上限 10MB' }}
-          </p>
+          <p class="mt-0.5 text-xs text-muted">{{ modeLimitText }}</p>
         </div>
         <div class="flex rounded-md border border-line p-0.5" role="group" aria-label="画质模式">
           <button
@@ -598,47 +683,50 @@ onBeforeUnmount(() => {
             @error="pushError"
           />
         </div>
-
-        <div v-if="serverProgress" class="mt-4">
-          <ProgressPanel :progress="serverProgress" :retrying="retrying" @retry="retryFailed" />
-        </div>
-
-        <div class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-surface px-4 py-3">
-          <div class="min-w-0">
-            <p class="tnum text-sm font-medium">
-              <template v-if="postId > 0">任务 #{{ postId }} · {{ uploadedCount }} / {{ imageCount }} 张已提交</template>
-              <template v-else>共 {{ imageCount }} 张 · 封面 {{ coverTile?.name ?? '—' }} · {{ formatBytes(totalSize) }}</template>
-            </p>
-            <p v-if="phaseText" class="mt-0.5 text-xs text-muted">{{ phaseText }}</p>
-          </div>
-          <div class="flex items-center gap-2">
-            <button
-              v-if="finished"
-              type="button"
-              class="h-10 rounded-md border border-line px-3 text-sm font-medium transition hover:border-muted/40 hover:bg-canvas"
-              @click="clearAll"
-            >
-              再发一组
-            </button>
-            <button
-              v-else-if="phase === 'failed' || phase === 'queued'"
-              type="button"
-              class="h-10 rounded-md border border-line px-3 text-sm font-medium transition hover:border-muted/40 hover:bg-canvas"
-              @click="resetProgress"
-            >
-              重新开始
-            </button>
-            <button
-              type="button"
-              class="h-10 rounded-md bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
-              :disabled="busy || phase === 'queued' || finished"
-              @click="publish"
-            >
-              {{ busy ? '正在上传…' : finished ? '存图完成' : resumed && tiles.length > 0 && postId === 0 ? '继续上传' : '发布' }}
-            </button>
-          </div>
-        </div>
       </template>
+
+      <div v-if="serverProgress" class="mt-4">
+        <ProgressPanel :progress="serverProgress" :retrying="retrying" @retry="retryFailed" />
+      </div>
+
+      <div
+        v-if="tiles.length > 0"
+        class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-surface px-4 py-3"
+      >
+        <div class="min-w-0">
+          <p class="tnum text-sm font-medium">
+            <template v-if="postId > 0">任务 #{{ postId }} · {{ uploadedCount }} / {{ imageCount }} 张已提交</template>
+            <template v-else>共 {{ imageCount }} 张 · 封面 {{ coverTile?.name ?? '—' }} · {{ formatBytes(totalSize) }}</template>
+          </p>
+          <p v-if="phaseText" class="mt-0.5 text-xs text-muted">{{ phaseText }}</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button
+            v-if="finished"
+            type="button"
+            class="h-10 rounded-md border border-line px-3 text-sm font-medium transition hover:border-muted/40 hover:bg-canvas"
+            @click="clearAll"
+          >
+            再发一组
+          </button>
+          <button
+            v-else-if="phase === 'failed' || phase === 'queued'"
+            type="button"
+            class="h-10 rounded-md border border-line px-3 text-sm font-medium transition hover:border-muted/40 hover:bg-canvas"
+            @click="discardSnapshot"
+          >
+            重新开始
+          </button>
+          <button
+            type="button"
+            class="h-10 rounded-md bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+            :disabled="busy || phase === 'queued' || finished"
+            @click="publish"
+          >
+            {{ busy ? '正在上传…' : finished ? '存图完成' : serverProgress?.status === 'uploading' ? '继续上传' : '发布' }}
+          </button>
+        </div>
+      </div>
     </main>
   </div>
 </template>
