@@ -39,6 +39,15 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	gin.SetMode(gin.ReleaseMode)
 	router := api.NewRouter(version, commit)
 
-	log.Printf("服务启动：监听 %s，数据目录 %s，版本 %s", cfg.Addr, cfg.DataDir, version)
-	return router.Run(cfg.Addr)
+	// 只记录版本信息，监听地址与数据目录属于本地部署细节，不写入日志。
+	log.Printf("服务启动：版本 %s（提交 %s）", version, commit)
+
+	if err := router.Run(cfg.Addr); err != nil {
+		// 监听失败的错误会带上地址等原始配置，这里统一替换为固定描述。
+		return errServerStart
+	}
+	return nil
 }
+
+// errServerStart 是启动失败时对外的固定说明，避免回显配置取值。
+var errServerStart = errors.New("HTTP 服务启动失败，请检查监听地址是否可用")
