@@ -280,6 +280,42 @@ func TestGatewayUsesModeSpecificMIME(t *testing.T) {
 	}
 }
 
+func TestGatewayRejectsNonImageMIME(t *testing.T) {
+	provider := &fakeStreamProvider{}
+	provider.open = func(context.Context, string) (storage.Stream, error) {
+		return storage.Stream{
+			Body:        io.NopCloser(strings.NewReader("<html>not an image</html>")),
+			ContentType: "text/html; charset=utf-8",
+			Size:        0,
+		}, nil
+	}
+	env := newGatewayEnv(t, 4, provider)
+	photoCode := env.publishPost(t, "html12345", "image/jpeg", "photo", true, false)
+	documentCode := env.publishPost(t, "docmime12", "text/html", "document", true, false)
+
+	for _, testCase := range []struct {
+		name string
+		code string
+	}{
+		{"photo 模式上游返回 HTML", photoCode},
+		{"document 模式入库类型为 HTML", documentCode},
+	} {
+		response, body := getImage(t, env.server.URL+"/i/"+testCase.code)
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("%s 状态码 = %d，期望 200", testCase.name, response.StatusCode)
+		}
+		if got := response.Header.Get("Content-Type"); got != octetStream {
+			t.Errorf("%s Content-Type = %q，期望 %q", testCase.name, got, octetStream)
+		}
+		if got := response.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Errorf("%s 缺少 nosniff，实际 %q", testCase.name, got)
+		}
+		if string(body) != "<html>not an image</html>" {
+			t.Errorf("%s 响应体被篡改: %q", testCase.name, body)
+		}
+	}
+}
+
 func TestGatewayStreamsFirstChunkImmediately(t *testing.T) {
 	pipeReader, pipeWriter := io.Pipe()
 	provider := &fakeStreamProvider{}

@@ -21,7 +21,21 @@ const (
 	// shortCodeMinLen 与 shortCodeMaxLen 限定合法短码长度。
 	shortCodeMinLen = 8
 	shortCodeMaxLen = 12
+	// octetStream 是未识别类型时的兜底响应类型，避免把上游任意内容当同源资源执行。
+	octetStream = "application/octet-stream"
 )
+
+// safeContentType 只放行受支持的图片类型（与上传白名单一致），其余统一回落为二进制流。
+func safeContentType(candidate string) string {
+	value := strings.ToLower(strings.TrimSpace(candidate))
+	if index := strings.IndexByte(value, ';'); index >= 0 {
+		value = strings.TrimSpace(value[:index])
+	}
+	if allowedImageTypes[value] {
+		return value
+	}
+	return octetStream
+}
 
 // imageGateway 按短码把公开图片流式转发给访客。
 type imageGateway struct {
@@ -66,6 +80,7 @@ func validShortCode(code string) bool {
 // notFound 统一返回 404，并禁止上游与中间层缓存这个结果。
 func notFound(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
+	c.Header("X-Content-Type-Options", "nosniff")
 	c.JSON(http.StatusNotFound, gin.H{"error": "图片不存在"})
 }
 
@@ -115,6 +130,7 @@ func (g *imageGateway) handle(c *gin.Context) {
 			g.logger.Print("图片转发失败：上游不可用")
 		}
 		c.Header("Cache-Control", "no-store")
+		c.Header("X-Content-Type-Options", "nosniff")
 		c.JSON(http.StatusBadGateway, gin.H{"error": "图片暂不可用"})
 		return
 	}
@@ -127,13 +143,10 @@ func (g *imageGateway) handle(c *gin.Context) {
 			contentType = upstream
 		}
 	}
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-
-	c.Header("Content-Type", contentType)
+	c.Header("Content-Type", safeContentType(contentType))
 	c.Header("Cache-Control", imageCacheControl)
 	c.Header("Content-Disposition", "inline")
+	c.Header("X-Content-Type-Options", "nosniff")
 	if stream.Size > 0 {
 		c.Header("Content-Length", strconv.FormatInt(stream.Size, 10))
 	}
