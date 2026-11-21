@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -244,5 +245,29 @@ func TestProbeRunsTargetsInParallel(t *testing.T) {
 	}
 	if elapsed >= 550*time.Millisecond {
 		t.Errorf("总耗时 %s，期望并行执行接近单侧耗时", elapsed)
+	}
+}
+
+// TestProbeDoesNotFollowRedirects 确认自检不跟随跳转，重定向目标收不到任何请求。
+func TestProbeDoesNotFollowRedirects(t *testing.T) {
+	var targetCalls int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&targetCalls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"id":42}}`))
+	}))
+	defer target.Close()
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+r.URL.Path, http.StatusFound)
+	}))
+	defer redirector.Close()
+
+	result := Probe(context.Background(), probeOptions(redirector.URL, "123:token", "@sese", redirector.URL, "tp"))
+	if got := atomic.LoadInt32(&targetCalls); got != 0 {
+		t.Fatalf("重定向目标收到 %d 次请求，期望 0 次", got)
+	}
+	if result.Telegram.Status != ProbeFailed || result.Telegraph.Status != ProbeFailed {
+		t.Errorf("结果 = %+v，跟随关闭后应判定失败", result)
 	}
 }

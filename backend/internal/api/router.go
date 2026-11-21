@@ -90,7 +90,7 @@ func NewRouter(deps Deps) *gin.Engine {
 	admin.POST("/posts/:id/commit", commitPostHandler(deps))
 	admin.GET("/settings", settingsHandler(deps))
 	admin.PUT("/settings", limitBody(maxSettingsBodyBytes), updateSettingsHandler(deps))
-	admin.POST("/settings/connectivity", connectivityHandler(deps))
+	admin.POST("/settings/test-connection", testConnectionHandler(deps))
 	admin.GET("/telegraph/status", telegraphStatusHandler(deps))
 	admin.POST("/settings/telegraph/create-account", limitBody(maxTelegraphBodyBytes), telegraphAccountHandler(deps))
 	admin.GET("/posts/:id/progress", progressHandler(deps))

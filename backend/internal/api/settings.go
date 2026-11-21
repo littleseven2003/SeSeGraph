@@ -92,15 +92,14 @@ func settingsHandler(deps Deps) gin.HandlerFunc {
 }
 
 // settingsPatchRequest 是设置更新请求体，未出现的字段保持不变，空串表示清除数据库值。
+// 上游地址（api_base）不在请求体内：它决定令牌发往何处，只能由环境变量或官方默认值提供。
 type settingsPatchRequest struct {
 	Telegram *struct {
 		Token     *string `json:"token"`
 		ChannelID *string `json:"channel_id"`
-		APIBase   *string `json:"api_base"`
 	} `json:"telegram"`
 	Telegraph *struct {
 		AuthorName *string `json:"author_name"`
-		APIBase    *string `json:"api_base"`
 	} `json:"telegraph"`
 }
 
@@ -110,11 +109,9 @@ func (r settingsPatchRequest) toPatch() settings.Patch {
 	if r.Telegram != nil {
 		patch.TelegramToken = r.Telegram.Token
 		patch.TelegramChannel = r.Telegram.ChannelID
-		patch.TelegramAPIBase = r.Telegram.APIBase
 	}
 	if r.Telegraph != nil {
 		patch.TelegraphAuthor = r.Telegraph.AuthorName
-		patch.TelegraphAPIBase = r.Telegraph.APIBase
 	}
 	return patch
 }
@@ -170,9 +167,9 @@ func updateSettingsHandler(deps Deps) gin.HandlerFunc {
 	}
 }
 
-// connectivityHandler 并行检测 Telegram 与 Telegraph，返回状态与耗时。
+// testConnectionHandler 并行检测 Telegram 与 Telegraph，返回状态与耗时。
 // 只做只读请求，不向频道发送内容，也不回显任何凭据。
-func connectivityHandler(deps Deps) gin.HandlerFunc {
+func testConnectionHandler(deps Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if deps.Settings == nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器内部错误"})

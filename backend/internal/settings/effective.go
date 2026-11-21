@@ -3,7 +3,6 @@ package settings
 import (
 	"context"
 	"errors"
-	"net/url"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -97,67 +96,65 @@ func NewResolver(store *Store, env Env) *Resolver {
 	return &Resolver{store: store, env: env}
 }
 
-// resolve 按「环境变量、数据库、默认值」的顺序解析单项配置。
-func (r *Resolver) resolve(ctx context.Context, envValue, key, fallback string) (Value, error) {
-	if value := strings.TrimSpace(envValue); value != "" {
-		return Value{Value: value, Source: SourceEnv}, nil
+// snapshot 读取一次配置表，调用方在同一份数据上解析全部字段。
+func (r *Resolver) snapshot(ctx context.Context) (map[string]string, error) {
+	if r.store == nil {
+		return map[string]string{}, nil
 	}
-	if r.store != nil {
-		stored, ok, err := r.store.Get(ctx, key)
-		if err != nil {
-			return Value{}, err
-		}
-		if ok {
-			if value := strings.TrimSpace(stored); value != "" {
-				return Value{Value: value, Source: SourceStored}, nil
-			}
-		}
-	}
-	if fallback != "" {
-		return Value{Value: fallback, Source: SourceDefault}, nil
-	}
-	return Value{Source: SourceNone}, nil
+	return r.store.Snapshot(ctx)
 }
 
-// Effective 解析当前生效配置。
-func (r *Resolver) Effective(ctx context.Context) (Effective, error) {
-	var effective Effective
-	fields := []struct {
-		dst      *Value
-		envValue string
-		key      string
-		fallback string
-	}{
-		{&effective.TelegramToken, r.env.TelegramToken, KeyTelegramToken, ""},
-		{&effective.TelegramChannel, r.env.TelegramChannel, KeyTelegramChannel, ""},
-		{&effective.TelegramAPIBase, r.env.TelegramAPIBase, KeyTelegramAPIBase, DefaultTelegramAPIBase},
-		{&effective.TelegraphToken, r.env.TelegraphToken, KeyTelegraphToken, ""},
-		{&effective.TelegraphAuthor, r.env.TelegraphAuthor, KeyTelegraphAuthorName, ""},
-		{&effective.TelegraphAPIBase, r.env.TelegraphAPIBase, KeyTelegraphAPIBase, DefaultTelegraphAPIBase},
+// resolve 按「环境变量、数据库快照、默认值」的顺序解析单项配置。
+func resolve(envValue string, stored map[string]string, key, fallback string) Value {
+	if value := strings.TrimSpace(envValue); value != "" {
+		return Value{Value: value, Source: SourceEnv}
 	}
-	for _, field := range fields {
-		resolved, resolveErr := r.resolve(ctx, field.envValue, field.key, field.fallback)
-		if resolveErr != nil {
-			return Effective{}, resolveErr
-		}
-		*field.dst = resolved
+	if value := strings.TrimSpace(stored[key]); value != "" {
+		return Value{Value: value, Source: SourceStored}
+	}
+	if fallback != "" {
+		return Value{Value: fallback, Source: SourceDefault}
+	}
+	return Value{Source: SourceNone}
+}
+
+// resolveEndpoint 解析上游地址：只接受环境变量或官方默认值。
+// 上游地址决定令牌发往何处，因此不接受运行期写入，避免把已有凭据导向任意主机。
+func resolveEndpoint(envValue, fallback string) Value {
+	if value := strings.TrimSpace(envValue); value != "" {
+		return Value{Value: value, Source: SourceEnv}
+	}
+	return Value{Value: fallback, Source: SourceDefault}
+}
+
+// Effective 在单次配置快照上解析当前生效配置。
+func (r *Resolver) Effective(ctx context.Context) (Effective, error) {
+	stored, err := r.snapshot(ctx)
+	if err != nil {
+		return Effective{}, err
+	}
+	effective := Effective{
+		TelegramToken:    resolve(r.env.TelegramToken, stored, KeyTelegramToken, ""),
+		TelegramChannel:  resolve(r.env.TelegramChannel, stored, KeyTelegramChannel, ""),
+		TelegramAPIBase:  resolveEndpoint(r.env.TelegramAPIBase, DefaultTelegramAPIBase),
+		TelegraphToken:   resolve(r.env.TelegraphToken, stored, KeyTelegraphToken, ""),
+		TelegraphAuthor:  resolve(r.env.TelegraphAuthor, stored, KeyTelegraphAuthorName, ""),
+		TelegraphAPIBase: resolveEndpoint(r.env.TelegraphAPIBase, DefaultTelegraphAPIBase),
 	}
 	return effective, nil
 }
 
 // Patch 描述一次设置更新：nil 表示不变，空串表示清除数据库值并回落到环境变量或默认值。
+// 上游地址不在可写字段内：它决定令牌发往何处，只由环境变量或官方默认值提供。
 type Patch struct {
-	TelegramToken    *string
-	TelegramChannel  *string
-	TelegramAPIBase  *string
-	TelegraphAuthor  *string
-	TelegraphAPIBase *string
+	TelegramToken   *string
+	TelegramChannel *string
+	TelegraphAuthor *string
 }
 
 // Empty 报告补丁是否没有任何字段。
 func (p Patch) Empty() bool {
-	return p.TelegramToken == nil && p.TelegramChannel == nil && p.TelegramAPIBase == nil &&
-		p.TelegraphAuthor == nil && p.TelegraphAPIBase == nil
+	return p.TelegramToken == nil && p.TelegramChannel == nil && p.TelegraphAuthor == nil
 }
 
 // Update 校验并写入配置。任何字段不合法或与环境变量冲突时整体不写入。
@@ -202,9 +199,7 @@ func (r *Resolver) Update(ctx context.Context, patch Patch) error {
 
 	apply(patch.TelegramToken, current.TelegramToken, KeyTelegramToken, "telegram.token", validateCredential)
 	apply(patch.TelegramChannel, current.TelegramChannel, KeyTelegramChannel, "telegram.channel_id", validateChannel)
-	apply(patch.TelegramAPIBase, current.TelegramAPIBase, KeyTelegramAPIBase, "telegram.api_base", validateAPIBase)
 	apply(patch.TelegraphAuthor, current.TelegraphAuthor, KeyTelegraphAuthorName, "telegraph.author_name", validateAuthor)
-	apply(patch.TelegraphAPIBase, current.TelegraphAPIBase, KeyTelegraphAPIBase, "telegraph.api_base", validateAPIBase)
 
 	if len(invalid) > 0 {
 		return &FieldProblem{Fields: invalid}
@@ -212,17 +207,8 @@ func (r *Resolver) Update(ctx context.Context, patch Patch) error {
 	if len(conflicts) > 0 {
 		return &FieldConflict{Fields: conflicts}
 	}
-	for _, key := range deletes {
-		if err := r.store.Delete(ctx, key); err != nil {
-			return err
-		}
-	}
-	if len(values) > 0 {
-		if err := r.store.SetMany(ctx, values); err != nil {
-			return err
-		}
-	}
-	return nil
+	// 删除与写入在同一事务内完成，任一步失败都不会留下半套配置。
+	return r.store.Replace(ctx, values, deletes)
 }
 
 // validateCredential 校验令牌的形态：非空、无空白字符、长度受限。
@@ -248,27 +234,6 @@ func validateChannel(value string) error {
 // validateAuthor 校验作者名，允许留空。
 func validateAuthor(value string) error {
 	if utf8.RuneCountInString(value) > maxAuthorRunes {
-		return ErrInvalidValue
-	}
-	return nil
-}
-
-// validateAPIBase 校验上游地址：只接受 http/https，且不能带查询串、片段或内嵌凭据。
-func validateAPIBase(value string) error {
-	if value == "" || utf8.RuneCountInString(value) > maxAPIBaseRunes {
-		return ErrInvalidValue
-	}
-	if strings.ContainsAny(value, " \t\r\n") {
-		return ErrInvalidValue
-	}
-	parsed, err := url.Parse(value)
-	if err != nil || parsed.Host == "" {
-		return ErrInvalidValue
-	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return ErrInvalidValue
-	}
-	if parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || strings.Contains(value, "#") {
 		return ErrInvalidValue
 	}
 	return nil

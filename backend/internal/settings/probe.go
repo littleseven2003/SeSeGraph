@@ -70,6 +70,10 @@ func Probe(ctx context.Context, opts ProbeOptions) ProbeResult {
 	if client == nil {
 		client = &http.Client{}
 	}
+	// 自检不跟随重定向：令牌随请求发出，跳转到其他主机等同于泄露凭据。
+	probeClient := *client
+	probeClient.CheckRedirect = stopRedirect
+	client = &probeClient
 
 	var telegram, telegraph ProbeTarget
 	var wg sync.WaitGroup
@@ -226,6 +230,11 @@ func telegramCall(ctx context.Context, client *http.Client, timeout time.Duratio
 		}
 	}
 	return nil
+}
+
+// stopRedirect 让检测请求把 3xx 当作最终响应，不携带凭据跳转到新地址。
+func stopRedirect(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
 }
 
 // decodeLimited 限制响应体大小后解码，避免异常上游把内存吃满。

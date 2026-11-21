@@ -65,3 +65,58 @@ func TestStoreWithoutHandle(t *testing.T) {
 		t.Error("缺少数据库时写入应报错")
 	}
 }
+
+func TestStoreSnapshotReadsAll(t *testing.T) {
+	store := newStore(t)
+	ctx := context.Background()
+	if err := store.SetMany(ctx, map[string]string{
+		KeyTelegramToken:  "123:token",
+		KeyTelegraphToken: "tp-token",
+	}); err != nil {
+		t.Fatalf("写入失败: %v", err)
+	}
+
+	values, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatalf("快照失败: %v", err)
+	}
+	if values[KeyTelegramToken] != "123:token" || values[KeyTelegraphToken] != "tp-token" {
+		t.Errorf("快照 = %v，期望包含两项配置", values)
+	}
+}
+
+func TestStoreReplaceRollsBackOnFailure(t *testing.T) {
+	store := newStore(t)
+	ctx := context.Background()
+	if err := store.Set(ctx, KeyTelegramToken, "old-token"); err != nil {
+		t.Fatalf("准备数据失败: %v", err)
+	}
+
+	// 用触发器让第二项写入失败，验证删除与写入整体回滚。
+	if _, err := store.handle.ExecContext(ctx,
+		`CREATE TRIGGER fail_boom BEFORE INSERT ON settings
+		 WHEN NEW.key = 'boom' BEGIN SELECT RAISE(ABORT, 'fail'); END`); err != nil {
+		t.Fatalf("创建触发器失败: %v", err)
+	}
+
+	err := store.Replace(ctx,
+		map[string]string{KeyTelegraphAuthorName: "SeSe", "boom": "x"},
+		[]string{KeyTelegramToken})
+	if err == nil {
+		t.Fatal("写入失败时应返回错误")
+	}
+
+	values, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatalf("快照失败: %v", err)
+	}
+	if values[KeyTelegramToken] != "old-token" {
+		t.Errorf("被删除的配置未回滚: %v", values)
+	}
+	if _, ok := values[KeyTelegraphAuthorName]; ok {
+		t.Errorf("失败事务的写入不应落库: %v", values)
+	}
+	if _, ok := values["boom"]; ok {
+		t.Errorf("失败项不应落库: %v", values)
+	}
+}

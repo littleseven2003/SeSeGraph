@@ -53,27 +53,46 @@ func TestUpdateClearsStoredValueToFallback(t *testing.T) {
 	ctx := context.Background()
 	resolver := newResolver(t, Env{})
 
-	if err := resolver.Update(ctx, Patch{TelegramAPIBase: ptr("http://127.0.0.1:9090")}); err != nil {
+	if err := resolver.Update(ctx, Patch{TelegraphAuthor: ptr("SeSe")}); err != nil {
 		t.Fatalf("写入失败: %v", err)
 	}
 	effective, _ := resolver.Effective(ctx)
-	if effective.TelegramAPIBase.Source != SourceStored {
-		t.Fatalf("地址 = %+v，期望数据库值", effective.TelegramAPIBase)
+	if effective.TelegraphAuthor.Source != SourceStored {
+		t.Fatalf("作者名 = %+v，期望数据库值", effective.TelegraphAuthor)
 	}
 
-	// 空串表示清除数据库值并回落到默认地址。
-	if err := resolver.Update(ctx, Patch{TelegramAPIBase: ptr("")}); err != nil {
+	// 空串表示清除数据库值。
+	if err := resolver.Update(ctx, Patch{TelegraphAuthor: ptr("")}); err != nil {
 		t.Fatalf("清除应成功: %v", err)
 	}
 	effective, _ = resolver.Effective(ctx)
-	if effective.TelegramAPIBase.Value != DefaultTelegramAPIBase || effective.TelegramAPIBase.Source != SourceDefault {
-		t.Errorf("地址 = %+v，期望回落到默认值", effective.TelegramAPIBase)
+	if effective.TelegraphAuthor.Set() || effective.TelegraphAuthor.Source != SourceNone {
+		t.Errorf("作者名 = %+v，期望清空", effective.TelegraphAuthor)
+	}
+}
+
+// TestEffectiveIgnoresStoredEndpoint 确认上游地址只取环境变量或官方默认值，
+// 历史遗留的数据库地址不会改变令牌的发送目的地。
+func TestEffectiveIgnoresStoredEndpoint(t *testing.T) {
+	ctx := context.Background()
+	store := newStore(t)
+	resolver := NewResolver(store, Env{})
+	if err := store.Set(ctx, "telegram.api_base", "http://127.0.0.1:1"); err != nil {
+		t.Fatalf("写入失败: %v", err)
+	}
+	if err := store.Set(ctx, "telegraph.api_base", "http://127.0.0.1:1"); err != nil {
+		t.Fatalf("写入失败: %v", err)
 	}
 
-	// 环境变量提供的字段不能用空串清除。
-	envResolver := newResolver(t, Env{TelegramAPIBase: "http://127.0.0.1:9090"})
-	if err := envResolver.Update(ctx, Patch{TelegramAPIBase: ptr("")}); !errors.Is(err, ErrInvalidValue) && err == nil {
-		t.Error("环境变量字段的空串清除应被拒绝")
+	effective, err := resolver.Effective(ctx)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if effective.TelegramAPIBase.Source != SourceDefault || effective.TelegramAPIBase.Value != DefaultTelegramAPIBase {
+		t.Errorf("Telegram 地址 = %+v，期望忽略数据库值", effective.TelegramAPIBase)
+	}
+	if effective.TelegraphAPIBase.Source != SourceDefault || effective.TelegraphAPIBase.Value != DefaultTelegraphAPIBase {
+		t.Errorf("Telegraph 地址 = %+v，期望忽略数据库值", effective.TelegraphAPIBase)
 	}
 }
 
@@ -109,8 +128,6 @@ func TestUpdateValidatesValues(t *testing.T) {
 	}{
 		{Patch{TelegramToken: ptr("bad token")}, "telegram.token"},
 		{Patch{TelegramChannel: ptr("not a channel")}, "telegram.channel_id"},
-		{Patch{TelegramAPIBase: ptr("ftp://example.com")}, "telegram.api_base"},
-		{Patch{TelegraphAPIBase: ptr("https://example.com/?a=1")}, "telegraph.api_base"},
 		{Patch{TelegraphAuthor: ptr(string(make([]rune, 101)))}, "telegraph.author_name"},
 	}
 	for _, tc := range cases {

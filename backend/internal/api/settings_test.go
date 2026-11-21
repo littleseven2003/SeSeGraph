@@ -51,7 +51,7 @@ func TestSettingsRequireAuth(t *testing.T) {
 	}{
 		{http.MethodGet, "/api/settings"},
 		{http.MethodPut, "/api/settings"},
-		{http.MethodPost, "/api/settings/connectivity"},
+		{http.MethodPost, "/api/settings/test-connection"},
 	}
 	for _, tc := range cases {
 		if rec := env.do(t, tc.method, tc.path, "", nil); rec.Code != http.StatusUnauthorized {
@@ -109,7 +109,7 @@ func TestSettingsWriteUpdatesView(t *testing.T) {
 	cookie := env.setup(t)
 
 	payload := `{"telegram":{"token":"123:new-secret","channel_id":"@sese_channel"},` +
-		`"telegraph":{"author_name":"SeSe","api_base":"https://telegra.ph"}}`
+		`"telegraph":{"author_name":"SeSe"}}`
 	rec := env.do(t, http.MethodPut, "/api/settings", payload, cookie)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("状态码 = %d，响应: %s", rec.Code, rec.Body.String())
@@ -126,12 +126,15 @@ func TestSettingsWriteUpdatesView(t *testing.T) {
 	if !body.Telegram.TokenSet || body.Telegram.ChannelID != "@sese_channel" {
 		t.Errorf("Telegram = %+v，期望保存后的值", body.Telegram)
 	}
-	if body.Telegraph.AuthorName != "SeSe" || body.Telegraph.APIBase != "https://telegra.ph" {
-		t.Errorf("Telegraph = %+v，期望保存后的值", body.Telegraph)
+	if body.Telegraph.AuthorName != "SeSe" {
+		t.Errorf("Telegraph = %+v，期望保存后的作者名", body.Telegraph)
+	}
+	if body.Telegraph.APIBase != settings.DefaultTelegraphAPIBase || body.Telegraph.APIBaseSource != settings.SourceDefault {
+		t.Errorf("Telegraph 地址 = %+v，期望保持默认值", body.Telegraph)
 	}
 
-	// 空串清除数据库值后回落到默认地址。
-	rec = env.do(t, http.MethodPut, "/api/settings", `{"telegraph":{"api_base":""}}`, cookie)
+	// 空串清除数据库值。
+	rec = env.do(t, http.MethodPut, "/api/settings", `{"telegraph":{"author_name":""}}`, cookie)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("清除状态码 = %d，响应: %s", rec.Code, rec.Body.String())
 	}
@@ -139,8 +142,8 @@ func TestSettingsWriteUpdatesView(t *testing.T) {
 	if err := decodeJSON(read.Body.Bytes(), &body); err != nil {
 		t.Fatalf("响应不是合法 JSON: %v", err)
 	}
-	if body.Telegraph.APIBase != settings.DefaultTelegraphAPIBase || body.Telegraph.APIBaseSource != settings.SourceDefault {
-		t.Errorf("Telegraph 地址 = %+v，期望回落到默认值", body.Telegraph)
+	if body.Telegraph.AuthorName != "" || body.Telegraph.AuthorSource != settings.SourceNone {
+		t.Errorf("作者名 = %+v，期望已清空", body.Telegraph)
 	}
 }
 
@@ -192,8 +195,8 @@ func TestSettingsRejectsInvalidValues(t *testing.T) {
 
 	cases := []string{
 		`{"telegram":{"channel_id":"not a channel"}}`,
-		`{"telegram":{"api_base":"ftp://example.com"}}`,
-		`{"telegraph":{"api_base":"https://example.com/path?token=1"}}`,
+		`{"telegram":{"token":"bad token"}}`,
+		`{"telegraph":{"author_name":"` + strings.Repeat("a", 101) + `"}}`,
 	}
 	for _, payload := range cases {
 		rec := env.do(t, http.MethodPut, "/api/settings", payload, cookie)
@@ -205,6 +208,21 @@ func TestSettingsRejectsInvalidValues(t *testing.T) {
 	rec := env.do(t, http.MethodPut, "/api/settings", `{}`, cookie)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("空补丁状态码 = %d，期望 400", rec.Code)
+	}
+
+	// 上游地址不在可写字段内：提交后被忽略，不影响令牌发送目的地。
+	rec = env.do(t, http.MethodPut, "/api/settings",
+		`{"telegram":{"api_base":"http://127.0.0.1:1"},"telegraph":{"api_base":"http://127.0.0.1:1"}}`, cookie)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("仅提交地址状态码 = %d，期望 400", rec.Code)
+	}
+	read := env.do(t, http.MethodGet, "/api/settings", "", cookie)
+	var view settingsBody
+	if err := decodeJSON(read.Body.Bytes(), &view); err != nil {
+		t.Fatalf("响应不是合法 JSON: %v", err)
+	}
+	if view.Telegram.APIBase != settings.DefaultTelegramAPIBase || view.Telegraph.APIBase != settings.DefaultTelegraphAPIBase {
+		t.Errorf("地址 = %+v / %+v，期望保持官方默认值", view.Telegram, view.Telegraph)
 	}
 
 	oversized := `{"telegram":{"token":"` + strings.Repeat("a", maxSettingsBodyBytes) + `"}}`
@@ -263,7 +281,7 @@ func TestConnectivityReportsBothTargets(t *testing.T) {
 	})
 	cookie := env.setup(t)
 
-	rec := env.do(t, http.MethodPost, "/api/settings/connectivity", "", cookie)
+	rec := env.do(t, http.MethodPost, "/api/settings/test-connection", "", cookie)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("状态码 = %d，响应: %s", rec.Code, rec.Body.String())
 	}
@@ -286,7 +304,7 @@ func TestConnectivityUnconfigured(t *testing.T) {
 	env, _ := newSettingsEnv(t, settings.Env{})
 	cookie := env.setup(t)
 
-	rec := env.do(t, http.MethodPost, "/api/settings/connectivity", "", cookie)
+	rec := env.do(t, http.MethodPost, "/api/settings/test-connection", "", cookie)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("状态码 = %d，响应: %s", rec.Code, rec.Body.String())
 	}
