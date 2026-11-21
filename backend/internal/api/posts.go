@@ -18,6 +18,8 @@ const (
 	maxImageCount       = 500
 	// maxCoverBytes 是封面缩略图解码后的上限，浏览器生成约 20–40KB。
 	maxCoverBytes = 128 << 10
+	// maxCreatePostBodyBytes 是建任务请求体的上限，先于 JSON 解码生效。
+	maxCreatePostBodyBytes = 256 << 10
 )
 
 // createPostRequest 是新建帖子的请求体。
@@ -35,6 +37,11 @@ func createPostHandler(deps Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req createPostRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "请求体过大"})
+				return
+			}
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式不正确"})
 			return
 		}

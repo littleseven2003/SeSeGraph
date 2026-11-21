@@ -105,6 +105,27 @@ func TestCreatePostSavesCover(t *testing.T) {
 	}
 }
 
+func TestCreatePostRejectsOversizedBody(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	cookie := env.setup(t)
+
+	huge := strings.Repeat("a", maxCreatePostBodyBytes*2)
+	body := `{"title":"超大请求","image_count":1,"description":"` + huge + `"}`
+
+	rec := env.do(t, http.MethodPost, "/api/posts", body, cookie)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("状态码 = %d，期望 413", rec.Code)
+	}
+
+	var total int
+	if err := env.handle.QueryRow("SELECT COUNT(*) FROM posts").Scan(&total); err != nil {
+		t.Fatalf("统计帖子失败: %v", err)
+	}
+	if total != 0 {
+		t.Errorf("超限请求不应创建帖子，实际 %d 条", total)
+	}
+}
+
 func TestCreatePostRejectsOversizedCover(t *testing.T) {
 	env := newTestEnv(t, testSetupToken)
 	cookie := env.setup(t)

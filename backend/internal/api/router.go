@@ -59,7 +59,7 @@ func NewRouter(deps Deps) *gin.Engine {
 	admin.GET("/posts", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"items": []any{}})
 	})
-	admin.POST("/posts", createPostHandler(deps))
+	admin.POST("/posts", limitBody(maxCreatePostBodyBytes), createPostHandler(deps))
 	admin.POST("/posts/:id/images", uploadImageHandler(deps))
 	admin.POST("/posts/:id/commit", commitPostHandler(deps))
 
