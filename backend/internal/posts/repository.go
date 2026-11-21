@@ -6,18 +6,25 @@ import (
 	"database/sql"
 	"errors"
 	"math/big"
+	"os"
+	"path/filepath"
+	"time"
 )
 
 // 帖子状态取值。
 const (
-	StatusUploading = "uploading"
-	StatusQueued    = "queued"
-	StatusFailed    = "failed"
+	StatusUploading  = "uploading"
+	StatusQueued     = "queued"
+	StatusPublishing = "publishing"
+	StatusCompleted  = "completed"
+	StatusFailed     = "failed"
 )
 
 // 图片状态取值。
 const (
 	ImageStatusUploaded = "uploaded"
+	ImageStatusStored   = "stored"
+	ImageStatusFailed   = "failed"
 )
 
 var (
@@ -321,4 +328,114 @@ func newShortCode() (string, error) {
 		buf[i] = alphabet[index.Int64()]
 	}
 	return string(buf), nil
+}
+
+// RecoverPublishing 把中断在上传中的帖子重置为待处理，返回受影响条数。
+func (r *Repository) RecoverPublishing(ctx context.Context) (int64, error) {
+	result, err := r.handle.ExecContext(ctx,
+		`UPDATE posts SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE status = ?`,
+		StatusQueued, StatusPublishing)
+	if err != nil {
+		return 0, errors.New("恢复中断任务失败")
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, errors.New("恢复中断任务失败")
+	}
+	return affected, nil
+}
+
+// ClaimNext 领取最早的一条待处理帖子并标记为上传中。
+func (r *Repository) ClaimNext(ctx context.Context) (int64, bool, error) {
+	tx, err := r.handle.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, false, errors.New("开启领取事务失败")
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var id int64
+	err = tx.QueryRowContext(ctx,
+		`SELECT id FROM posts WHERE status = ? ORDER BY id LIMIT 1`, StatusQueued).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, errors.New("读取待处理帖子失败")
+	}
+
+	result, err := tx.ExecContext(ctx,
+		`UPDATE posts SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = ?`,
+		StatusPublishing, id, StatusQueued)
+	if err != nil {
+		return 0, false, errors.New("领取任务失败")
+	}
+	affected, err := result.RowsAffected()
+	if err != nil || affected == 0 {
+		return 0, false, nil
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, false, errors.New("领取任务失败")
+	}
+	return id, true, nil
+}
+
+// CleanupOrphans 删除临时目录中超过保留期且不再被数据库引用的文件。
+// 数据库仍引用的文件即使很旧也保留，避免误删待上传内容。
+func (r *Repository) CleanupOrphans(ctx context.Context, dataDir string, retention time.Duration, now time.Time) (int, error) {
+	rows, err := r.handle.QueryContext(ctx,
+		`SELECT temp_file_path FROM post_images WHERE temp_file_path <> ''`)
+	if err != nil {
+		return 0, errors.New("读取临时文件记录失败")
+	}
+	referenced := make(map[string]struct{})
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			rows.Close()
+			return 0, errors.New("读取临时文件记录失败")
+		}
+		referenced[filepath.ToSlash(path)] = struct{}{}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, errors.New("读取临时文件记录失败")
+	}
+
+	root := filepath.Join(dataDir, TempDir)
+	cutoff := now.Add(-retention)
+	removed := 0
+	walkErr := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		relative, relErr := filepath.Rel(dataDir, path)
+		if relErr != nil {
+			return nil
+		}
+		relative = filepath.ToSlash(relative)
+		if _, ok := referenced[relative]; ok {
+			return nil
+		}
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			return nil
+		}
+		if info.ModTime().After(cutoff) {
+			return nil
+		}
+		if removeErr := os.Remove(path); removeErr == nil {
+			removed++
+		}
+		return nil
+	})
+	if walkErr != nil && !errors.Is(walkErr, os.ErrNotExist) {
+		return removed, errors.New("清理临时文件失败")
+	}
+	return removed, nil
 }
