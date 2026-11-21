@@ -55,9 +55,11 @@ func NewTelegram(cfg TelegramConfig) (*Telegram, error) {
 	if base == "" {
 		base = DefaultAPIBase
 	}
-	client := cfg.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: defaultTimeout}
+	client := &http.Client{Timeout: defaultTimeout, CheckRedirect: blockRedirects}
+	if cfg.HTTPClient != nil {
+		cloned := *cfg.HTTPClient
+		cloned.CheckRedirect = blockRedirects
+		client = &cloned
 	}
 	photoMax := cfg.PhotoMaxBytes
 	if photoMax <= 0 {
@@ -109,42 +111,46 @@ func (t *Telegram) Upload(ctx context.Context, req UploadRequest) (UploadResult,
 		return UploadResult{}, ErrTooLarge
 	}
 
-	body, contentType, writeErr := t.streamBody(req, field, limit)
+	body, contentType, writeDone := t.streamBody(req, field, limit)
 
 	endpoint := t.apiBase + "/bot" + t.token + "/" + method
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
 	if err != nil {
+		// 请求未能构造时关闭管道，让写入协程及时退出。
+		_ = body.Close()
 		return UploadResult{}, ErrUpstream
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 
 	response, err := t.client.Do(httpReq)
 	if err != nil {
-		// 请求体在流式写入阶段就失败时（例如超过上限），优先返回对应的业务错误。
-		if streamErr := writeErr(); streamErr != nil && errors.Is(streamErr, ErrTooLarge) {
+		// 关闭读端让写入协程结束，再取它的结果判断是否是超限。
+		_ = body.Close()
+		var writeErr error
+		select {
+		case writeErr = <-writeDone:
+		case <-ctx.Done():
+			return UploadResult{}, ctx.Err()
+		}
+		if errors.Is(writeErr, ErrTooLarge) {
 			return UploadResult{}, ErrTooLarge
 		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return UploadResult{}, ctxErr
 		}
-		return UploadResult{}, t.sanitizeError(err)
+		return UploadResult{}, errTransport
 	}
 	defer func() {
 		_, _ = io.Copy(io.Discard, response.Body)
 		_ = response.Body.Close()
+		_ = body.Close()
 	}()
-
-	if streamErr := writeErr(); streamErr != nil {
-		if errors.Is(streamErr, ErrTooLarge) {
-			return UploadResult{}, ErrTooLarge
-		}
-		return UploadResult{}, ErrUpstream
-	}
 
 	var payload apiResponse
 	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&payload); err != nil {
 		return UploadResult{}, ErrUpstream
 	}
+	// 上游提前返回的限流或错误优先于写入结果，避免被管道错误覆盖。
 	if !payload.OK {
 		return UploadResult{}, t.errorFor(payload)
 	}
@@ -153,22 +159,24 @@ func (t *Telegram) Upload(ctx context.Context, req UploadRequest) (UploadResult,
 }
 
 // streamBody 在后台把请求体写入管道，从而避免占用整块内存。
-func (t *Telegram) streamBody(req UploadRequest, field string, limit int64) (io.Reader, string, func() error) {
+func (t *Telegram) streamBody(req UploadRequest, field string, limit int64) (*io.PipeReader, string, <-chan error) {
 	reader, writer := io.Pipe()
 	form := multipart.NewWriter(writer)
 	contentType := form.FormDataContentType()
 
-	var writeErr error
+	done := make(chan error, 1)
 	go func() {
+		var writeErr error
 		defer func() {
 			if err := form.Close(); err != nil && writeErr == nil {
 				writeErr = err
 			}
 			if writeErr != nil {
 				_ = writer.CloseWithError(writeErr)
-				return
+			} else {
+				_ = writer.Close()
 			}
-			_ = writer.Close()
+			done <- writeErr
 		}()
 
 		if err := form.WriteField("chat_id", t.chatID); err != nil {
@@ -196,7 +204,7 @@ func (t *Telegram) streamBody(req UploadRequest, field string, limit int64) (io.
 		}
 	}()
 
-	return reader, contentType, func() error { return writeErr }
+	return reader, contentType, done
 }
 
 type apiResponse struct {
@@ -233,9 +241,12 @@ func (t *Telegram) errorFor(payload apiResponse) error {
 	return fmt.Errorf("%w：上游返回 %d", ErrUpstream, payload.ErrorCode)
 }
 
-// sanitizeError 去掉错误文本里可能出现的请求地址与令牌。
-func (t *Telegram) sanitizeError(err error) error {
-	return errors.New(strings.ReplaceAll(err.Error(), t.token, "***"))
+// errTransport 是所有网络层失败的统一对外说明，不携带地址、令牌或原始错误。
+var errTransport = fmt.Errorf("%w：网络请求未完成", ErrUpstream)
+
+// blockRedirects 禁止跟随重定向，避免把带令牌的请求带到其他地址。
+func blockRedirects(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
 }
 
 func (t *Telegram) resultFrom(raw json.RawMessage, mode string) (UploadResult, error) {

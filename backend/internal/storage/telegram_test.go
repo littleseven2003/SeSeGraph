@@ -360,3 +360,79 @@ func TestTelegramSuccessResultHasNoURL(t *testing.T) {
 		t.Errorf("远端标识不应包含地址或令牌: %q", result.FileID)
 	}
 }
+
+func TestTelegramDoesNotFollowRedirects(t *testing.T) {
+	var followed atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		followed.Add(1)
+		_, _ = io.WriteString(w, `{"ok":true,"result":{"message_id":1}}`)
+	}))
+	defer target.Close()
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/stolen", http.StatusFound)
+	}))
+	defer redirector.Close()
+
+	provider, err := NewTelegram(TelegramConfig{Token: testToken, ChatID: testChatID, APIBase: redirector.URL})
+	if err != nil {
+		t.Fatalf("创建提供方失败: %v", err)
+	}
+
+	_, err = provider.Upload(context.Background(), UploadRequest{Mode: ModePhoto, Reader: strings.NewReader("x")})
+	if err == nil {
+		t.Fatal("重定向响应不应被视为成功")
+	}
+	if followed.Load() != 0 {
+		t.Errorf("不应跟随重定向，目标被访问 %d 次", followed.Load())
+	}
+	if strings.Contains(err.Error(), testToken) {
+		t.Errorf("错误信息泄露令牌: %s", err.Error())
+	}
+}
+
+func TestTelegramTransportErrorIsSanitized(t *testing.T) {
+	provider, err := NewTelegram(TelegramConfig{
+		Token:   testToken,
+		ChatID:  testChatID,
+		APIBase: "http://127.0.0.1:1",
+	})
+	if err != nil {
+		t.Fatalf("创建提供方失败: %v", err)
+	}
+
+	_, err = provider.Upload(context.Background(), UploadRequest{Mode: ModePhoto, Reader: strings.NewReader("x")})
+	if !errors.Is(err, ErrUpstream) {
+		t.Fatalf("错误 = %v，期望 ErrUpstream", err)
+	}
+	message := err.Error()
+	for _, secret := range []string{testToken, "127.0.0.1", "http://", "https://", testChatID} {
+		if strings.Contains(message, secret) {
+			t.Errorf("错误信息泄露 %q: %s", secret, message)
+		}
+	}
+}
+
+func TestTelegramEarlyRateLimitIsPreserved(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 不读取请求体，直接返回限流响应，模拟上游提前拒绝。
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"ok":false,"error_code":429,"parameters":{"retry_after":37}}`)
+	}))
+	defer server.Close()
+
+	provider, err := NewTelegram(TelegramConfig{Token: testToken, ChatID: testChatID, APIBase: server.URL})
+	if err != nil {
+		t.Fatalf("创建提供方失败: %v", err)
+	}
+
+	payload := strings.Repeat("x", 512<<10)
+	_, err = provider.Upload(context.Background(), UploadRequest{Mode: ModeDocument, Reader: strings.NewReader(payload)})
+	var limited *RateLimitError
+	if !errors.As(err, &limited) {
+		t.Fatalf("错误 = %v，期望保留 RateLimitError", err)
+	}
+	if limited.RetryAfter != 37*time.Second {
+		t.Errorf("RetryAfter = %s，期望 37s", limited.RetryAfter)
+	}
+}
