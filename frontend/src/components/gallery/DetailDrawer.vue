@@ -45,7 +45,8 @@ const shareReady = computed(() => shareUrl.value !== '')
 const previewValues = computed(() => ({
   title: props.detail?.title ?? '标题',
   description: props.detail?.description ?? '说明',
-  url: shareUrl.value !== '' ? shareUrl.value : '{{url}}',
+  // 预览用示例链接，避免模板里的 {{url}} 原样显示成未替换的占位符。
+  url: shareUrl.value !== '' ? shareUrl.value : 'https://telegra.ph/Example-1',
   count: props.detail?.images.length ?? 0,
   tags: props.detail?.tags ?? [],
 }))
