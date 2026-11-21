@@ -190,14 +190,16 @@ func TestEditorUpdatesUnpublishedPostLocally(t *testing.T) {
 
 func TestEditorRequiresPublishedURLAndTitle(t *testing.T) {
 	env, _ := newEditorEnv(t, 2, "初始说明")
-	editor, err := NewEditor(env.repo, func(context.Context) (PageAPI, error) {
-		return env.pages, nil
-	}, "  ")
-	if err != nil {
-		t.Fatalf("创建编辑器失败: %v", err)
-	}
-	if err := editor.Update(context.Background(), 1, Metadata{Title: "标题"}); !errors.Is(err, ErrPublicURLMissing) {
-		t.Errorf("缺少公开地址的错误 = %v，期望 ErrPublicURLMissing", err)
+	for _, publicURL := range []string{"  ", "http://images.example.com", "https://images.example.com/?x=1"} {
+		editor, err := NewEditor(env.repo, func(context.Context) (PageAPI, error) {
+			return env.pages, nil
+		}, publicURL)
+		if err != nil {
+			t.Fatalf("创建编辑器失败: %v", err)
+		}
+		if err := editor.Update(context.Background(), 1, Metadata{Title: "标题"}); !errors.Is(err, ErrPublicURLInvalid) {
+			t.Errorf("公开地址 %q 的错误 = %v，期望 ErrPublicURLInvalid", publicURL, err)
+		}
 	}
 
 	normal, err := NewEditor(env.repo, func(context.Context) (PageAPI, error) {

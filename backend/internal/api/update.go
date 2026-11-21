@@ -64,7 +64,10 @@ func updatePostHandler(deps Deps) gin.HandlerFunc {
 		case errors.Is(err, publisher.ErrPageCountChanged):
 			c.JSON(http.StatusConflict, gin.H{"error": "修改后分页数量会变化，请调整说明长度"})
 			return
-		case errors.Is(err, publisher.ErrPublicURLMissing):
+		case errors.Is(err, publisher.ErrPublishInProgress), errors.Is(err, posts.ErrPublishBusy):
+			c.JSON(http.StatusConflict, gin.H{"error": "帖子正在发布流程中，请稍后再编辑"})
+			return
+		case errors.Is(err, publisher.ErrPublicURLInvalid):
 			c.JSON(http.StatusConflict, gin.H{"error": "需要先配置公开 HTTPS 地址"})
 			return
 		case errors.Is(err, telegraph.ErrNotConfigured):

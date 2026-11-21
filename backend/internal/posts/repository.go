@@ -44,6 +44,8 @@ var (
 	ErrNotUploading = errors.New("当前状态不允许继续上传")
 	// ErrAlreadyQueued 表示帖子已经入队，重复提交视为成功。
 	ErrAlreadyQueued = errors.New("帖子已入队")
+	// ErrPublishBusy 表示帖子正在发布队列中或已有可复用的远端页面，暂不可本地改写。
+	ErrPublishBusy = errors.New("帖子正在发布流程中")
 )
 
 // Post 是帖子元数据。
@@ -335,16 +337,30 @@ func (r *Repository) MarkPublished(ctx context.Context, postID int64, paths, url
 
 // UpdateMetadata 更新标题、说明与作者名，不改动发布状态、发布时间与页面路径。
 func (r *Repository) UpdateMetadata(ctx context.Context, postID int64, title, description, authorName string) error {
+	// 状态条件与读取分开校验：写入时再确认一次，避免读取后被发布队列改走旧元数据。
+	// 允许：普通草稿、已发布帖（远端已更新）、没有页面路径的失败帖。
 	result, err := r.handle.ExecContext(ctx,
 		`UPDATE posts SET title = ?, description = ?, author_name = ?, updated_at = CURRENT_TIMESTAMP
-		 WHERE id = ?`, title, description, authorName, postID)
+		 WHERE id = ?
+		   AND (publish_state IN (?, ?)
+		        OR (publish_state = ? AND (telegraph_paths = '[]' OR telegraph_paths = '')))`,
+		title, description, authorName, postID,
+		PublishIdle, PublishPublished, PublishFailed)
 	if err != nil {
 		return errors.New("更新帖子失败")
 	}
-	if affected, _ := result.RowsAffected(); affected == 0 {
+	if affected, _ := result.RowsAffected(); affected > 0 {
+		return nil
+	}
+
+	var exists int
+	if err := r.handle.QueryRowContext(ctx, `SELECT COUNT(*) FROM posts WHERE id = ?`, postID).Scan(&exists); err != nil {
+		return errors.New("更新帖子失败")
+	}
+	if exists == 0 {
 		return ErrNotFound
 	}
-	return nil
+	return ErrPublishBusy
 }
 
 // PublishInfo 读取发布所需的元数据、存图列表与已保存的页面路径。

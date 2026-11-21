@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/littleseven2003/SeSeGraph/backend/internal/config"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/telegraph"
 )
@@ -13,8 +14,11 @@ import (
 // ErrPageCountChanged 表示修改后的内容会改变分页数量，无法沿用既有页面路径。
 var ErrPageCountChanged = errors.New("修改后分页数量会变化")
 
-// ErrPublicURLMissing 表示已发布帖缺少可拼接图片的公开地址。
-var ErrPublicURLMissing = errors.New("需要先配置公开 HTTPS 地址")
+// ErrPublishInProgress 表示帖子正在发布队列中或已有远端页面，暂不可本地改写。
+var ErrPublishInProgress = errors.New("帖子正在发布流程中")
+
+// ErrPublicURLInvalid 表示已发布帖缺少可拼接图片的合法 HTTPS 公开地址。
+var ErrPublicURLInvalid = errors.New("需要先配置公开 HTTPS 地址")
 
 // Metadata 是帖子可在线编辑的元数据。
 type Metadata struct {
@@ -60,11 +64,20 @@ func (e *Editor) Update(ctx context.Context, postID int64, meta Metadata) error 
 	if err != nil {
 		return err
 	}
-	if info.State != posts.PublishPublished || len(info.Paths) == 0 {
+	switch {
+	case info.State == posts.PublishPublished && len(info.Paths) > 0:
+		// 已发布且有远端页面：走下面的逐页编辑。
+	case info.State == posts.PublishIdle,
+		info.State == posts.PublishFailed && len(info.Paths) == 0,
+		info.State == posts.PublishPublished && len(info.Paths) == 0:
+		// 没有可复用的远端页面，只改本地记录。
 		return e.repo.UpdateMetadata(ctx, postID, meta.Title, meta.Description, meta.AuthorName)
+	default:
+		// 待发布、发布中，或已有页面路径的失败帖：发布器可能已读走旧元数据。
+		return ErrPublishInProgress
 	}
-	if e.publicURL == "" {
-		return ErrPublicURLMissing
+	if !config.PublicURLIsHTTPS(e.publicURL) {
+		return ErrPublicURLInvalid
 	}
 
 	pageAPI, err := e.pages(ctx)

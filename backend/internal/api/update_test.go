@@ -274,3 +274,103 @@ func TestUpdatePublishedPostNeedsTelegraph(t *testing.T) {
 		t.Errorf("未配置时不应改动本地记录: %+v", detail)
 	}
 }
+
+// TestUpdatePostRejectsBusyPublishStates 验证发布队列中的帖子不会被本地改写。
+func TestUpdatePostRejectsBusyPublishStates(t *testing.T) {
+	cases := []struct {
+		name  string
+		state string
+		paths string
+	}{
+		{"待发布", posts.PublishPending, "[]"},
+		{"发布中", posts.PublishPublishing, "[]"},
+		{"失败但有页面", posts.PublishFailed, `["Page-1"]`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env, pages := newEditEnv(t)
+			cookie := env.setup(t)
+			postID := publishedPost(t, env)
+			if _, err := env.handle.ExecContext(context.Background(),
+				`UPDATE posts SET publish_state = ?, telegraph_paths = ? WHERE id = ?`,
+				tc.state, tc.paths, postID); err != nil {
+				t.Fatalf("准备状态失败: %v", err)
+			}
+
+			rec := env.do(t, http.MethodPut, "/api/posts/"+formatID(postID), updateBody("不应写入", "不应写入", ""), cookie)
+			if rec.Code != http.StatusConflict {
+				t.Fatalf("状态码 = %d，期望 409，响应: %s", rec.Code, rec.Body.String())
+			}
+			if paths, _ := pages.snapshot(); len(paths) != 0 {
+				t.Errorf("状态不允许时不应调用上游，实际 %v", paths)
+			}
+			detail, err := env.posts.GalleryDetail(context.Background(), postID)
+			if err != nil {
+				t.Fatalf("读取详情失败: %v", err)
+			}
+			if detail.Title != "旧标题" {
+				t.Errorf("状态不允许时不应改动本地记录: %+v", detail)
+			}
+		})
+	}
+}
+
+// TestUpdateFailedPostWithoutPagesAllowsLocalEdit 验证没有页面路径的失败帖仍可编辑。
+func TestUpdateFailedPostWithoutPagesAllowsLocalEdit(t *testing.T) {
+	env, pages := newEditEnv(t)
+	cookie := env.setup(t)
+	postID := publishedPost(t, env)
+	if _, err := env.handle.ExecContext(context.Background(),
+		`UPDATE posts SET publish_state = ?, telegraph_paths = '[]' WHERE id = ?`,
+		posts.PublishFailed, postID); err != nil {
+		t.Fatalf("准备状态失败: %v", err)
+	}
+
+	rec := env.do(t, http.MethodPut, "/api/posts/"+formatID(postID), updateBody("失败后标题", "失败后说明", ""), cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("状态码 = %d，期望 200，响应: %s", rec.Code, rec.Body.String())
+	}
+	if paths, _ := pages.snapshot(); len(paths) != 0 {
+		t.Errorf("没有页面路径时不应调用上游，实际 %v", paths)
+	}
+	detail, err := env.posts.GalleryDetail(context.Background(), postID)
+	if err != nil {
+		t.Fatalf("读取详情失败: %v", err)
+	}
+	if detail.Title != "失败后标题" {
+		t.Errorf("本地记录未更新: %+v", detail)
+	}
+}
+
+// TestUpdatePublishedPostRequiresHTTPSPublicURL 验证非 HTTPS 公开地址会在调用上游前被拒绝。
+func TestUpdatePublishedPostRequiresHTTPSPublicURL(t *testing.T) {
+	for _, publicURL := range []string{"http://img.example.com", "https://img.example.com/?x=1"} {
+		pages := &fakePageAPI{}
+		env := newTestEnvWith(t, testSetupToken, func(deps *Deps, _ *sql.DB) {
+			editor, err := publisher.NewEditor(deps.Posts, func(context.Context) (publisher.PageAPI, error) {
+				return pages, nil
+			}, publicURL)
+			if err != nil {
+				t.Fatalf("创建编辑器失败: %v", err)
+			}
+			deps.Editor = editor
+		})
+		cookie := env.setup(t)
+		postID := publishedPost(t, env)
+
+		rec := env.do(t, http.MethodPut, "/api/posts/"+formatID(postID), updateBody("新标题", "新说明", ""), cookie)
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("公开地址 %q 的状态码 = %d，期望 409，响应: %s", publicURL, rec.Code, rec.Body.String())
+		}
+		if paths, _ := pages.snapshot(); len(paths) != 0 {
+			t.Errorf("公开地址 %q 不应调用上游，实际 %v", publicURL, paths)
+		}
+		detail, err := env.posts.GalleryDetail(context.Background(), postID)
+		if err != nil {
+			t.Fatalf("读取详情失败: %v", err)
+		}
+		if detail.Title != "旧标题" || detail.Description != "旧说明" {
+			t.Errorf("公开地址 %q 校验失败时不应改动本地记录: %+v", publicURL, detail)
+		}
+	}
+}
