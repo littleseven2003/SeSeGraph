@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -317,5 +318,112 @@ func TestCreatePostWithoutTags(t *testing.T) {
 	}
 	if len(tags) != 0 {
 		t.Errorf("标签 = %v，期望空列表", tags)
+	}
+}
+
+// mustStoredImage 建一条已存图记录，返回短码。
+func mustStoredImage(t *testing.T, repo *Repository, postID int64, order int) string {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := repo.AttachImage(ctx, Image{
+		PostID: postID, SortOrder: order, Status: ImageStatusUploaded,
+		MimeType: "image/png", FileSize: 10, TempFilePath: "tmp/x.part",
+	}); err != nil {
+		t.Fatalf("保存图片记录失败: %v", err)
+	}
+	images, err := repo.ListImages(ctx, postID)
+	if err != nil {
+		t.Fatalf("读取图片失败: %v", err)
+	}
+	for _, image := range images {
+		if image.SortOrder != order {
+			continue
+		}
+		if err := repo.MarkImageStored(ctx, image.ID, "remote-file-"+strconv.Itoa(order), 1, "telegram"); err != nil {
+			t.Fatalf("标记存图失败: %v", err)
+		}
+		return image.ShortCode
+	}
+	t.Fatalf("没有找到序号 %d 的图片", order)
+	return ""
+}
+
+func TestPublicImageRequiresCompletedPostAndStoredImage(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+
+	postID, err := repo.Create(ctx, Post{Title: "公开图", ImageCount: 1, UploadMode: "document"})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+	shortCode := mustStoredImage(t, repo, postID, 1)
+
+	// 帖未完成时不可转发。
+	if _, err := repo.PublicImage(ctx, shortCode); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("未完成帖应返回 ErrNotFound，实际: %v", err)
+	}
+
+	if err := repo.MarkPostFinished(ctx, postID, StatusCompleted, ""); err != nil {
+		t.Fatalf("标记完成失败: %v", err)
+	}
+	image, err := repo.PublicImage(ctx, shortCode)
+	if err != nil {
+		t.Fatalf("公开图片查询失败: %v", err)
+	}
+	if image.RemoteFileID != "remote-file-1" || image.UploadMode != "document" || image.MIMEType != "image/png" {
+		t.Errorf("字段不符: %+v", image)
+	}
+}
+
+func TestPublicImageRejectsDisabledPost(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+
+	postID, err := repo.Create(ctx, Post{Title: "禁用图", ImageCount: 1})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+	shortCode := mustStoredImage(t, repo, postID, 1)
+	if err := repo.MarkPostFinished(ctx, postID, StatusCompleted, ""); err != nil {
+		t.Fatalf("标记完成失败: %v", err)
+	}
+	if _, err := repo.handle.ExecContext(ctx, `UPDATE posts SET is_disabled = 1 WHERE id = ?`, postID); err != nil {
+		t.Fatalf("禁用帖子失败: %v", err)
+	}
+
+	if _, err := repo.PublicImage(ctx, shortCode); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("禁用帖应返回 ErrNotFound，实际: %v", err)
+	}
+}
+
+func TestPublicImageRejectsUnstoredAndUnknown(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+
+	postID, err := repo.Create(ctx, Post{Title: "未存图", ImageCount: 1})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+	if _, err := repo.AttachImage(ctx, Image{
+		PostID: postID, SortOrder: 1, Status: ImageStatusUploaded,
+		MimeType: "image/jpeg", TempFilePath: "tmp/y.part",
+	}); err != nil {
+		t.Fatalf("保存图片记录失败: %v", err)
+	}
+	images, err := repo.ListImages(ctx, postID)
+	if err != nil || len(images) != 1 {
+		t.Fatalf("读取图片失败: %v", err)
+	}
+	if err := repo.MarkPostFinished(ctx, postID, StatusCompleted, ""); err != nil {
+		t.Fatalf("标记完成失败: %v", err)
+	}
+	if _, err := repo.PublicImage(ctx, images[0].ShortCode); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("未存图应返回 ErrNotFound，实际: %v", err)
+	}
+	if _, err := repo.PublicImage(ctx, "doesnotexist"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("未知短码应返回 ErrNotFound，实际: %v", err)
+	}
+	if _, err := repo.PublicImage(ctx, ""); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("空短码应返回 ErrNotFound，实际: %v", err)
 	}
 }

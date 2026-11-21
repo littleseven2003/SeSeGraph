@@ -49,6 +49,15 @@ type Post struct {
 	Tags           []string
 }
 
+// PublicImage 是网关可以对外转发的图片信息，仅包含必要字段。
+type PublicImage struct {
+	ImageID      int64
+	PostID       int64
+	RemoteFileID string
+	MIMEType     string
+	UploadMode   string
+}
+
 // Image 是帖子中的单张图片记录。
 type Image struct {
 	ID           int64
@@ -162,6 +171,29 @@ func (r *Repository) Get(ctx context.Context, id int64) (*Post, error) {
 		return nil, errors.New("读取帖子失败")
 	}
 	return post, nil
+}
+
+// PublicImage 按短码查询公开图片：帖已完成且未禁用，图片已存图并有远端标识。
+// 任一条件不满足都返回 ErrNotFound，让网关在请求上游前就返回 404。
+func (r *Repository) PublicImage(ctx context.Context, shortCode string) (*PublicImage, error) {
+	if shortCode == "" {
+		return nil, ErrNotFound
+	}
+	image := &PublicImage{}
+	err := r.handle.QueryRowContext(ctx,
+		`SELECT i.id, i.post_id, i.remote_file_id, i.mime_type, p.upload_mode
+		 FROM post_images i JOIN posts p ON p.id = i.post_id
+		 WHERE i.short_code = ? AND i.status = ? AND i.remote_file_id <> ''
+		   AND p.is_disabled = 0 AND p.status = ?`,
+		shortCode, ImageStatusStored, StatusCompleted,
+	).Scan(&image.ImageID, &image.PostID, &image.RemoteFileID, &image.MIMEType, &image.UploadMode)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, errors.New("读取图片记录失败")
+	}
+	return image, nil
 }
 
 // SetCover 更新帖子封面路径。
