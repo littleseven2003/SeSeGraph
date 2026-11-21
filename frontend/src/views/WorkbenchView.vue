@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import DropZone from '../components/workbench/DropZone.vue'
 import ImageGrid from '../components/workbench/ImageGrid.vue'
 import MetaPanel from '../components/workbench/MetaPanel.vue'
-import { createPost } from '../api/posts.ts'
+import { commitPost, createPost, fetchProgress, uploadImage } from '../api/posts.ts'
 import { ApiError } from '../api/client.ts'
 import { makeCover } from '../utils/cover.ts'
 import { MAX_IMAGE_COUNT, baseName, checkFile, formatBytes, mimeForName, type UploadMode } from '../utils/image.ts'
 import { parseMetaText, type PostMeta } from '../utils/meta.ts'
+import { browserStorage, clearTask, loadTask, saveTask, type StorageLike, type TaskSnapshot } from '../utils/task-store.ts'
+import { acceptedCount, initialStatuses, planUploads, type UploadStatus } from '../utils/upload.ts'
 import { DEFAULT_META_FILENAMES, unpackZip } from '../utils/zip.ts'
 import {
   assignSortOrders,
@@ -20,6 +22,11 @@ import {
   type WorkbenchTile,
 } from '../utils/workbench.ts'
 
+// 上传阶段：只有收尾后按钮才会重新可用。
+type Phase = 'idle' | 'creating' | 'uploading' | 'queued' | 'failed'
+
+const storage: StorageLike | null = browserStorage()
+
 const mode = ref<UploadMode>('photo')
 const tiles = ref<WorkbenchTile[]>([])
 const coverId = ref('')
@@ -28,15 +35,39 @@ const message = ref('')
 const metaText = ref('')
 const metaSource = ref('')
 const coverPreview = ref('')
-const coverBytes = ref(0)
 const coverDataUrl = ref('')
+const coverBytes = ref(0)
 const draft = ref<PostMeta>({ title: '', description: '', tags: [], author: '' })
-const creating = ref(false)
-const createdId = ref(0)
+const postId = ref(0)
+const phase = ref<Phase>('idle')
+const statuses = ref<Record<number, UploadStatus>>({})
+const resumed = ref<TaskSnapshot | null>(null)
 
 const imageCount = computed(() => tiles.value.length)
 const totalSize = computed(() => totalBytes(tiles.value))
 const coverTile = computed(() => tiles.value.find((tile) => tile.id === coverId.value))
+const uploadedCount = computed(() => acceptedCount(statuses.value))
+const busy = computed(() => phase.value === 'creating' || phase.value === 'uploading')
+const locked = computed(() => postId.value > 0 || busy.value)
+const phaseText = computed(() => {
+  switch (phase.value) {
+    case 'creating':
+      return '正在创建任务…'
+    case 'uploading':
+      return `正在上传 ${uploadedCount.value} / ${imageCount.value}`
+    case 'queued':
+      return '已加入上传队列，关闭网页后服务端会继续处理'
+    case 'failed':
+      return '上传中断，重新选择同一批文件后可以继续'
+    default:
+      return ''
+  }
+})
+
+onMounted(() => {
+  // 上次未完成的任务：提示重新选择同一批文件续传。
+  resumed.value = loadTask(storage)
+})
 
 function pushError(text: string): void {
   message.value = text
@@ -60,7 +91,7 @@ function releaseTiles(items: WorkbenchTile[]): void {
   }
 }
 
-// 重建封面缩略图：宽度 400px 的 WebP，仅用于列表展示与建任务请求体。
+// 重建封面缩略图：宽度 400px 的 WebP，同时用于列表展示与建任务请求体。
 async function refreshCover(): Promise<void> {
   const tile = coverTile.value
   if (!tile) {
@@ -108,6 +139,7 @@ function onZip(file: File): void {
       )
       metaText.value = unpacked.metaText
       metaSource.value = unpacked.metaText === '' ? '' : unpacked.metaName
+      statuses.value = {}
       applyTiles(next)
       if (unpacked.metaText !== '') {
         // 包内存在说明文件时自动预填，缺失字段仍可手动补充。
@@ -152,20 +184,26 @@ function onImages(files: File[]): void {
     accepted.push(addTile(baseName(file.name), file, file.size))
   }
   if (accepted.length === 0) return
+  statuses.value = {}
   applyTiles([...tiles.value, ...accepted])
   void refreshCover()
 }
 
 function onMove(payload: { from: number; to: number }): void {
+  if (locked.value) return
   applyTiles(moveItem(tiles.value, payload.from, payload.to))
+  statuses.value = {}
 }
 
 function onRemove(id: string): void {
+  if (locked.value) return
   const removed = tiles.value.find((tile) => tile.id === id)
+  statuses.value = {}
   applyTiles(removeItem(tiles.value, id))
   if (removed) URL.revokeObjectURL(removed.previewUrl)
   if (tiles.value.length === 0) {
     coverPreview.value = ''
+    coverDataUrl.value = ''
     coverBytes.value = 0
   } else {
     void refreshCover()
@@ -178,45 +216,19 @@ function onSelectCover(id: string): void {
 }
 
 function onSortByName(): void {
+  if (locked.value) return
+  statuses.value = {}
   applyTiles(sortByName(tiles.value))
   void refreshCover()
 }
 
-// 创建任务：先落元数据与封面，逐张上传在后续步骤完成。
-async function submitMetadata(): Promise<void> {
-  if (creating.value) return
-  if (tiles.value.length === 0) {
-    pushError('请先选择图片')
-    return
-  }
-  const title = draft.value.title.trim()
-  if (title === '') {
-    pushError('请填写总标题')
-    return
-  }
-  if (coverDataUrl.value === '') {
-    pushError('封面还在生成，请稍后重试')
-    return
-  }
-  creating.value = true
+function resetProgress(): void {
+  postId.value = 0
+  phase.value = 'idle'
+  statuses.value = {}
+  resumed.value = null
   message.value = ''
-  try {
-    const created = await createPost({
-      title,
-      description: draft.value.description,
-      author_name: draft.value.author.trim(),
-      upload_mode: mode.value,
-      image_count: tiles.value.length,
-      cover_thumbnail: coverDataUrl.value,
-      tags: draft.value.tags,
-    })
-    createdId.value = created.id
-    message.value = `任务 #${created.id} 已创建，元数据与封面已保存`
-  } catch (error) {
-    pushError(error instanceof ApiError ? error.message : '创建任务失败，请稍后重试')
-  } finally {
-    creating.value = false
-  }
+  clearTask(storage)
 }
 
 function clearAll(): void {
@@ -224,12 +236,112 @@ function clearAll(): void {
   tiles.value = []
   coverId.value = ''
   coverPreview.value = ''
+  coverDataUrl.value = ''
   coverBytes.value = 0
   metaText.value = ''
   metaSource.value = ''
-  message.value = ''
   draft.value = { title: '', description: '', tags: [], author: '' }
-  createdId.value = 0
+  resetProgress()
+}
+
+// 建任务：已存在任务或上次未完成任务时复用，避免重复建帖。
+async function ensureTask(): Promise<number | null> {
+  if (postId.value > 0) return postId.value
+  if (resumed.value && resumed.value.imageCount === tiles.value.length) {
+    postId.value = resumed.value.postId
+    return postId.value
+  }
+  if (resumed.value) {
+    // 文件数量对不上，说明换了一批图，旧任务不再续传。
+    clearTask(storage)
+    resumed.value = null
+  }
+  const created = await createPost({
+    title: draft.value.title.trim(),
+    description: draft.value.description,
+    author_name: draft.value.author.trim(),
+    upload_mode: mode.value,
+    image_count: tiles.value.length,
+    cover_thumbnail: coverDataUrl.value,
+    tags: draft.value.tags,
+  })
+  postId.value = created.id
+  saveTask(storage, {
+    postId: created.id,
+    imageCount: tiles.value.length,
+    fileNames: tiles.value.map((tile) => tile.name),
+    createdAt: Date.now(),
+  })
+  return postId.value
+}
+
+// 发布：建任务 → 按服务端进度补传 → 提交入队。
+async function publish(): Promise<void> {
+  if (busy.value) return
+  message.value = ''
+  if (tiles.value.length === 0) {
+    pushError('请先选择图片')
+    return
+  }
+  if (draft.value.title.trim() === '') {
+    pushError('请填写总标题')
+    return
+  }
+  if (coverDataUrl.value === '' && postId.value === 0) {
+    pushError('封面还在生成，请稍后重试')
+    return
+  }
+
+  phase.value = 'creating'
+  try {
+    const id = await ensureTask()
+    if (id === null) return
+
+    const progress = await fetchProgress(id)
+    statuses.value = initialStatuses(progress)
+    if (progress.status !== 'uploading') {
+      // 任务已进入队列，交给服务端继续处理。
+      phase.value = progress.status === 'failed' ? 'failed' : 'queued'
+      clearTask(storage)
+      resumed.value = null
+      return
+    }
+
+    const planned = planUploads(progress, tiles.value.length)
+    if ('error' in planned) {
+      phase.value = 'idle'
+      postId.value = 0
+      pushError(planned.error)
+      return
+    }
+
+    phase.value = 'uploading'
+    for (const item of planned.plan.pending) {
+      const tile = tiles.value[item.index]
+      statuses.value = { ...statuses.value, [item.sortOrder]: 'uploading' }
+      try {
+        await uploadImage(id, item.sortOrder, tile.blob, tile.mime)
+        statuses.value = { ...statuses.value, [item.sortOrder]: 'uploaded' }
+      } catch (error) {
+        statuses.value = { ...statuses.value, [item.sortOrder]: 'failed' }
+        phase.value = 'failed'
+        pushError(error instanceof ApiError ? error.message : `${tile.name} 上传失败，请稍后继续`)
+        return
+      }
+    }
+
+    const committed = await commitPost(id)
+    clearTask(storage)
+    resumed.value = null
+    phase.value = committed.status === 'queued' ? 'queued' : 'failed'
+    if (committed.missing && committed.missing.length > 0) {
+      pushError('还有图片未上传完整，请继续上传')
+      phase.value = 'idle'
+    }
+  } catch (error) {
+    phase.value = 'idle'
+    pushError(error instanceof ApiError ? error.message : '发布失败，请稍后重试')
+  }
 }
 
 onBeforeUnmount(() => releaseTiles(tiles.value))
@@ -260,7 +372,7 @@ onBeforeUnmount(() => releaseTiles(tiles.value))
             >{{ imageCount }} 张 · {{ formatBytes(totalSize) }}</span
           >
           <button
-            v-if="tiles.length > 0"
+            v-if="tiles.length > 0 && !locked"
             type="button"
             class="h-9 rounded-md border border-line px-3 text-sm font-medium transition hover:border-muted/40 hover:bg-canvas"
             @click="clearAll"
@@ -276,7 +388,19 @@ onBeforeUnmount(() => releaseTiles(tiles.value))
         {{ message }}
       </p>
 
-      <DropZone :disabled="working" @zip="onZip" @images="onImages" @error="pushError" />
+      <div
+        v-if="resumed && tiles.length === 0"
+        class="mb-4 rounded-md border border-line bg-surface px-3 py-2 text-sm"
+        role="status"
+      >
+        <span class="font-medium">上次有未完成的任务 #{{ resumed.postId }}</span>
+        <span class="text-muted">
+          （{{ resumed.imageCount }} 张，文件：{{ resumed.fileNames.slice(0, 2).join('、')
+          }}{{ resumed.fileNames.length > 2 ? ' 等' : '' }}）。重新选择同一批文件后会接着补传已缺的图片。
+        </span>
+      </div>
+
+      <DropZone :disabled="working || locked" @zip="onZip" @images="onImages" @error="pushError" />
 
       <div v-if="working" class="mt-3 text-sm text-muted">正在解压压缩包…</div>
 
@@ -295,8 +419,9 @@ onBeforeUnmount(() => releaseTiles(tiles.value))
                 ]"
                 :key="option.value"
                 type="button"
-                class="h-8 rounded px-2.5 text-xs font-medium transition"
+                class="h-8 rounded px-2.5 text-xs font-medium transition disabled:opacity-50"
                 :class="mode === option.value ? 'bg-brand text-brand-ink' : 'text-muted hover:bg-canvas'"
+                :disabled="locked"
                 @click="mode = option.value as UploadMode"
               >
                 {{ option.label }}
@@ -304,7 +429,8 @@ onBeforeUnmount(() => releaseTiles(tiles.value))
             </div>
             <button
               type="button"
-              class="h-8 rounded-md border border-line px-2.5 text-xs font-medium transition hover:border-muted/40 hover:bg-canvas"
+              class="h-8 rounded-md border border-line px-2.5 text-xs font-medium transition hover:border-muted/40 hover:bg-canvas disabled:opacity-50"
+              :disabled="locked"
               @click="onSortByName"
             >
               按文件名排序
@@ -317,7 +443,8 @@ onBeforeUnmount(() => releaseTiles(tiles.value))
             <ImageGrid
               :items="tiles"
               :cover-id="coverId"
-              :disabled="working"
+              :statuses="statuses"
+              :disabled="working || locked"
               @move="onMove"
               @remove="onRemove"
               @select-cover="onSelectCover"
@@ -354,24 +481,37 @@ onBeforeUnmount(() => releaseTiles(tiles.value))
             v-model="draft"
             :meta-text="metaText"
             :meta-source="metaSource"
-            :disabled="working || creating || createdId > 0"
+            :disabled="locked"
             @error="pushError"
           />
         </div>
 
         <div class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-surface px-4 py-3">
-          <p class="text-xs text-muted">
-            <template v-if="createdId > 0">任务 #{{ createdId }} 已保存，逐张上传将在后续步骤完成。</template>
-            <template v-else>共 {{ imageCount }} 张，选中封面 {{ coverTile?.name ?? '—' }}，{{ formatBytes(totalSize) }}</template>
-          </p>
-          <button
-            type="button"
-            class="h-10 rounded-md bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
-            :disabled="creating || createdId > 0 || working"
-            @click="submitMetadata"
-          >
-            {{ creating ? '正在创建…' : createdId > 0 ? '任务已创建' : '创建任务' }}
-          </button>
+          <div class="min-w-0">
+            <p class="tnum text-sm font-medium">
+              <template v-if="postId > 0">任务 #{{ postId }} · {{ uploadedCount }} / {{ imageCount }} 张已提交</template>
+              <template v-else>共 {{ imageCount }} 张 · 封面 {{ coverTile?.name ?? '—' }} · {{ formatBytes(totalSize) }}</template>
+            </p>
+            <p v-if="phaseText" class="mt-0.5 text-xs text-muted">{{ phaseText }}</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button
+              v-if="phase === 'failed' || phase === 'queued'"
+              type="button"
+              class="h-10 rounded-md border border-line px-3 text-sm font-medium transition hover:border-muted/40 hover:bg-canvas"
+              @click="resetProgress"
+            >
+              重新开始
+            </button>
+            <button
+              type="button"
+              class="h-10 rounded-md bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+              :disabled="busy || phase === 'queued'"
+              @click="publish"
+            >
+              {{ busy ? '正在上传…' : resumed && tiles.length > 0 && postId === 0 ? '继续上传' : '发布' }}
+            </button>
+          </div>
         </div>
       </template>
     </main>

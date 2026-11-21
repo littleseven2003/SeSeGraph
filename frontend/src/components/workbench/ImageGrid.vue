@@ -1,14 +1,35 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { formatBytes } from '../../utils/image.ts'
+import type { UploadStatus } from '../../utils/upload.ts'
 import type { WorkbenchTile } from '../../utils/workbench.ts'
 
 // 图片列表：支持拖拽重排、点选封面、剔除单张。
 const props = defineProps<{
   items: WorkbenchTile[]
   coverId: string
+  /** 各序号的上传状态，未出现表示待上传 */
+  statuses?: Record<number, UploadStatus>
   disabled?: boolean
 }>()
+
+const STATUS_TEXT: Record<UploadStatus, string> = {
+  pending: '待上传',
+  uploading: '上传中',
+  uploaded: '已上传',
+  failed: '上传失败',
+}
+
+const STATUS_CLASS: Record<UploadStatus, string> = {
+  pending: 'bg-ink/60 text-white',
+  uploading: 'bg-brand text-brand-ink',
+  uploaded: 'bg-accent text-white',
+  failed: 'bg-danger text-white',
+}
+
+function statusOf(sortOrder: number): UploadStatus {
+  return props.statuses?.[sortOrder] ?? 'pending'
+}
 const emit = defineEmits<{
   (event: 'select-cover', id: string): void
   (event: 'remove', id: string): void
@@ -74,6 +95,11 @@ function moveBy(index: number, delta: number): void {
           v-if="item.id === props.coverId"
           class="absolute right-2 top-2 rounded bg-brand px-1.5 py-0.5 text-xs font-medium text-brand-ink"
           >封面</span
+        >
+        <span
+          class="absolute bottom-2 left-2 rounded px-1.5 py-0.5 text-[11px] font-medium"
+          :class="STATUS_CLASS[statusOf(item.sortOrder)]"
+          >{{ STATUS_TEXT[statusOf(item.sortOrder)] }}</span
         >
       </div>
 
