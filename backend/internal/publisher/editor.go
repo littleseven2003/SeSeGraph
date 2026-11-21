@@ -1,0 +1,105 @@
+package publisher
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"sync"
+
+	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/telegraph"
+)
+
+// ErrPageCountChanged 表示修改后的内容会改变分页数量，无法沿用既有页面路径。
+var ErrPageCountChanged = errors.New("修改后分页数量会变化")
+
+// ErrPublicURLMissing 表示已发布帖缺少可拼接图片的公开地址。
+var ErrPublicURLMissing = errors.New("需要先配置公开 HTTPS 地址")
+
+// Metadata 是帖子可在线编辑的元数据。
+type Metadata struct {
+	Title       string
+	Description string
+	AuthorName  string
+}
+
+// Editor 把已发布帖的标题、说明与作者同步到全部远端页面，
+// 只有所有页面更新成功后才写入本地元数据。
+type Editor struct {
+	repo      *posts.Repository
+	pages     func(ctx context.Context) (PageAPI, error)
+	publicURL string
+	mu        sync.Mutex
+}
+
+// NewEditor 创建编辑器。pages 允许运行期完成建号后再取客户端。
+func NewEditor(repo *posts.Repository, pages func(ctx context.Context) (PageAPI, error), publicURL string) (*Editor, error) {
+	if repo == nil || pages == nil {
+		return nil, errors.New("编辑器缺少必要依赖")
+	}
+	return &Editor{
+		repo:      repo,
+		pages:     pages,
+		publicURL: strings.TrimRight(strings.TrimSpace(publicURL), "/"),
+	}, nil
+}
+
+// Update 更新元数据：未发布的帖子只改本地记录；
+// 已发布的帖子按原有页面路径逐页编辑，全部成功后才写入本地。
+func (e *Editor) Update(ctx context.Context, postID int64, meta Metadata) error {
+	meta.Title = strings.TrimSpace(meta.Title)
+	meta.AuthorName = strings.TrimSpace(meta.AuthorName)
+	if meta.Title == "" {
+		return telegraph.ErrInvalidInput
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	info, err := e.repo.PublishInfo(ctx, postID)
+	if err != nil {
+		return err
+	}
+	if info.State != posts.PublishPublished || len(info.Paths) == 0 {
+		return e.repo.UpdateMetadata(ctx, postID, meta.Title, meta.Description, meta.AuthorName)
+	}
+	if e.publicURL == "" {
+		return ErrPublicURLMissing
+	}
+
+	pageAPI, err := e.pages(ctx)
+	if err != nil {
+		return err
+	}
+
+	// 沿用发布时的正文结构，只替换说明与作者。
+	pages, err := telegraph.Paginate(buildBody(e.publicURL, meta.Description, info.Images))
+	if err != nil {
+		return err
+	}
+	if len(pages) != len(info.Paths) {
+		return ErrPageCountChanged
+	}
+
+	urls := pageURLs(info.Paths)
+	for index, page := range pages {
+		prevURL, nextURL := "", ""
+		if index > 0 {
+			prevURL = urls[index-1]
+		}
+		if index < len(urls)-1 {
+			nextURL = urls[index+1]
+		}
+		content := append(append([]telegraph.Node{}, page.Body...),
+			telegraph.NavNodes(prevURL, nextURL, page.Index, page.Total)...)
+		if _, err := pageAPI.EditPage(ctx, info.Paths[index], telegraph.PageRequest{
+			Title:      pageTitle(meta.Title, page),
+			AuthorName: meta.AuthorName,
+			Content:    content,
+		}); err != nil {
+			return err
+		}
+	}
+
+	return e.repo.UpdateMetadata(ctx, postID, meta.Title, meta.Description, meta.AuthorName)
+}

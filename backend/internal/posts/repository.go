@@ -333,6 +333,20 @@ func (r *Repository) MarkPublished(ctx context.Context, postID int64, paths, url
 	return nil
 }
 
+// UpdateMetadata 更新标题、说明与作者名，不改动发布状态、发布时间与页面路径。
+func (r *Repository) UpdateMetadata(ctx context.Context, postID int64, title, description, authorName string) error {
+	result, err := r.handle.ExecContext(ctx,
+		`UPDATE posts SET title = ?, description = ?, author_name = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ?`, title, description, authorName, postID)
+	if err != nil {
+		return errors.New("更新帖子失败")
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // PublishInfo 读取发布所需的元数据、存图列表与已保存的页面路径。
 func (r *Repository) PublishInfo(ctx context.Context, postID int64) (*PublishInfo, error) {
 	info := &PublishInfo{PostID: postID}

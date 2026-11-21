@@ -22,6 +22,7 @@ type fakePages struct {
 	createCalls  int
 	editCalls    int
 	failCreateAt int
+	failEditAt   int
 	created      []telegraph.PageRequest
 	edited       []telegraph.PageRequest
 	editedPaths  []string
@@ -43,6 +44,9 @@ func (f *fakePages) EditPage(_ context.Context, path string, request telegraph.P
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.editCalls++
+	if f.failEditAt > 0 && f.editCalls == f.failEditAt {
+		return telegraph.Page{}, telegraph.ErrUpstream
+	}
 	f.edited = append(f.edited, request)
 	f.editedPaths = append(f.editedPaths, path)
 	return telegraph.Page{Path: path, URL: "https://telegra.ph/" + path}, nil
@@ -52,6 +56,16 @@ func (f *fakePages) counts() (int, int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.createCalls, f.editCalls
+}
+
+// resetCounts 清空调用记录，便于在发布完成后单独统计编辑。
+func (f *fakePages) resetCounts() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.createCalls = 0
+	f.editCalls = 0
+	f.edited = nil
+	f.editedPaths = nil
 }
 
 func (f *fakePages) clearFailure() {

@@ -125,7 +125,7 @@ func (p *Publisher) publish(ctx context.Context, postID int64, pageAPI PageAPI) 
 		return errors.New("没有可发布的存图记录")
 	}
 
-	body := p.buildBody(info)
+	body := buildBody(p.publicURL, info.Description, info.Images)
 	pages, err := telegraph.Paginate(body)
 	if err != nil {
 		return err
@@ -139,7 +139,7 @@ func (p *Publisher) publish(ctx context.Context, postID int64, pageAPI PageAPI) 
 			continue
 		}
 		created, err := pageAPI.CreatePage(ctx, telegraph.PageRequest{
-			Title:      p.pageTitle(info.Title, page),
+			Title:      pageTitle(info.Title, page),
 			AuthorName: info.AuthorName,
 			Content:    page.Body,
 		})
@@ -155,7 +155,7 @@ func (p *Publisher) publish(ctx context.Context, postID int64, pageAPI PageAPI) 
 		}
 	}
 
-	urls := p.pageURLs(paths)
+	urls := pageURLs(paths)
 
 	// 全部页面就绪后补互链：首页只有下一页、末页只有上一页。
 	if len(pages) > 1 {
@@ -172,7 +172,7 @@ func (p *Publisher) publish(ctx context.Context, postID int64, pageAPI PageAPI) 
 				return err
 			}
 			if _, err := pageAPI.EditPage(ctx, paths[index], telegraph.PageRequest{
-				Title:      p.pageTitle(info.Title, page),
+				Title:      pageTitle(info.Title, page),
 				AuthorName: info.AuthorName,
 				Content:    content,
 			}); err != nil {
@@ -185,20 +185,20 @@ func (p *Publisher) publish(ctx context.Context, postID int64, pageAPI PageAPI) 
 }
 
 // buildBody 生成正文节点：说明段落与逐张图片。
-func (p *Publisher) buildBody(info *posts.PublishInfo) []telegraph.Node {
-	nodes := make([]telegraph.Node, 0, len(info.Images)+4)
-	for _, line := range strings.Split(info.Description, "\n") {
+func buildBody(publicURL, description string, images []posts.Image) []telegraph.Node {
+	nodes := make([]telegraph.Node, 0, len(images)+4)
+	for _, line := range strings.Split(description, "\n") {
 		line = strings.TrimSpace(line)
 		if line != "" {
 			nodes = append(nodes, telegraph.Paragraph(line))
 		}
 	}
-	for index, image := range info.Images {
+	for index, image := range images {
 		nodes = append(nodes, telegraph.Node{
 			Tag: "figure",
 			Children: []any{
 				telegraph.Node{Tag: "img", Attrs: map[string]string{
-					"src": p.publicURL + imagePathPattern + image.ShortCode,
+					"src": publicURL + imagePathPattern + image.ShortCode,
 				}},
 				telegraph.Node{Tag: "figcaption", Children: []any{fmt.Sprintf("第 %d 张", index+1)}},
 			},
@@ -208,7 +208,7 @@ func (p *Publisher) buildBody(info *posts.PublishInfo) []telegraph.Node {
 }
 
 // pageTitle 在多页时补上 (i/n) 标记。
-func (p *Publisher) pageTitle(title string, page telegraph.PageBody) string {
+func pageTitle(title string, page telegraph.PageBody) string {
 	if page.Total <= 1 {
 		return title
 	}
@@ -216,7 +216,7 @@ func (p *Publisher) pageTitle(title string, page telegraph.PageBody) string {
 }
 
 // pageURLs 把页面路径转换成对外链接。
-func (p *Publisher) pageURLs(paths []string) []string {
+func pageURLs(paths []string) []string {
 	urls := make([]string, 0, len(paths))
 	for _, path := range paths {
 		urls = append(urls, defaultPageBase+strings.TrimPrefix(path, "/"))
