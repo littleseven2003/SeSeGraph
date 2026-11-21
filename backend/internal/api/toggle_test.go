@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
@@ -172,6 +173,31 @@ func TestTogglePostRequiresTargetState(t *testing.T) {
 	}
 	if publicFlag(t, env, postID) != true {
 		t.Error("非法请求不应改动公开标记")
+	}
+}
+
+// TestTogglePostRejectsOversizedBody 确认撤回请求体走统一限量中间件，超出上限直接 413。
+func TestTogglePostRejectsOversizedBody(t *testing.T) {
+	env, _ := newToggleEnv(t)
+	cookie := env.setup(t)
+	postID := publishedPost(t, env)
+
+	padded := `{"disabled":true,"pad":"` + strings.Repeat("a", maxToggleBodyBytes) + `"}`
+	rec := env.do(t, http.MethodPatch, "/api/posts/"+formatID(postID)+"/toggle", padded, cookie)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("超限请求体状态码 = %d，期望 413，响应: %s", rec.Code, rec.Body.String())
+	}
+
+	if publicFlag(t, env, postID) != true {
+		t.Error("超限请求不应改动公开标记")
+	}
+	listRec := env.do(t, http.MethodGet, "/api/posts", "", cookie)
+	var page galleryListBody
+	if err := decodeJSON(listRec.Body.Bytes(), &page); err != nil {
+		t.Fatalf("响应不是合法 JSON: %v", err)
+	}
+	if len(page.Items) != 1 || page.Items[0].Disabled {
+		t.Errorf("超限请求改动了撤回状态: %+v", page.Items)
 	}
 }
 

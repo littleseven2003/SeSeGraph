@@ -27,7 +27,16 @@ func togglePostHandler(deps Deps) gin.HandlerFunc {
 		}
 
 		var req setDisabledRequest
-		if err := c.ShouldBindJSON(&req); err != nil || req.Disabled == nil {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "请求体过大"})
+				return
+			}
+			c.JSON(http.StatusBadRequest, gin.H{"error": "需要明确指定 disabled 目标状态"})
+			return
+		}
+		if req.Disabled == nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "需要明确指定 disabled 目标状态"})
 			return
 		}

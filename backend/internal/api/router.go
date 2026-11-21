@@ -42,6 +42,9 @@ type Deps struct {
 // maxAuthBodyBytes 是登录与初始化请求体的上限，超出的请求不会被解码。
 const maxAuthBodyBytes = 4096
 
+// maxToggleBodyBytes 是撤回与恢复请求体的上限，只承载一个布尔目标状态。
+const maxToggleBodyBytes = 256
+
 // setupTokenHeader 是初始化凭证的请求头名称。
 const setupTokenHeader = "X-Setup-Token"
 
@@ -76,7 +79,7 @@ func NewRouter(deps Deps) *gin.Engine {
 	admin.GET("/posts", listPostsHandler(deps))
 	admin.GET("/posts/:id", postDetailHandler(deps))
 	admin.PUT("/posts/:id", limitBody(maxCreatePostBodyBytes), updatePostHandler(deps))
-	admin.PATCH("/posts/:id/toggle", togglePostHandler(deps))
+	admin.PATCH("/posts/:id/toggle", limitBody(maxToggleBodyBytes), togglePostHandler(deps))
 	admin.GET("/tags", tagsHandler(deps))
 	admin.GET("/thumbs/:filename", thumbHandler(deps))
 	admin.POST("/posts", limitBody(maxCreatePostBodyBytes), createPostHandler(deps))
