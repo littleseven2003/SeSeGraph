@@ -18,6 +18,9 @@ import {
   saveShareTemplate,
   shouldRevealOnTap,
   shouldShowBlur,
+  toggleActionLabel,
+  toggleConfirmText,
+  toggleHint,
   updateFailureText,
   validateMetadata,
   readBlurPreference,
@@ -250,4 +253,14 @@ test('updateFailureText 提示分页变化与其他编辑错误', () => {
   assert.equal(updateFailureText(502, '更新失败'), '更新 Telegraph 页面失败，本地记录未改动')
   assert.equal(updateFailureText(400, '标题不能为空'), '标题不能为空')
   assert.equal(updateFailureText(500, ''), '保存失败，请稍后重试')
+})
+
+test('撤回与恢复的按钮、提示与确认文案', () => {
+  assert.equal(toggleActionLabel(false), '撤回')
+  assert.equal(toggleActionLabel(true), '恢复访问')
+  assert.match(toggleHint(false), /立即返回 404/)
+  assert.match(toggleHint(true), /已撤回/)
+  assert.match(toggleHint(true), /缓存/)
+  assert.match(toggleConfirmText(false), /确认撤回/)
+  assert.match(toggleConfirmText(true), /恢复/)
 })

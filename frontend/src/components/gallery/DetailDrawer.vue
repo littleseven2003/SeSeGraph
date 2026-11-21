@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { updatePost, type PostDetail } from '../../api/gallery.ts'
+import { togglePost, updatePost, type PostDetail } from '../../api/gallery.ts'
 import { ApiError } from '../../api/client.ts'
 import {
   DEFAULT_SHARE_TEMPLATE,
@@ -15,6 +15,9 @@ import {
   renderShareText,
   saveShareTemplate,
   statusLabel,
+  toggleActionLabel,
+  toggleConfirmText,
+  toggleHint,
   updateFailureText,
   validateMetadata,
   type MetadataDraft,
@@ -26,7 +29,7 @@ const props = defineProps<{
   error: string
 }>()
 
-const emit = defineEmits<{ close: []; retry: []; saved: [] }>()
+const emit = defineEmits<{ close: []; retry: []; saved: []; toggled: [] }>()
 
 const closeButton = ref<HTMLButtonElement | null>(null)
 const panel = ref<HTMLElement | null>(null)
@@ -38,7 +41,12 @@ const editing = ref(false)
 const saving = ref(false)
 const editError = ref('')
 const draft = ref<MetadataDraft>({ title: '', description: '', authorName: '' })
+const toggling = ref(false)
+const confirmToggle = ref(false)
+const toggleError = ref('')
 let previousFocus: HTMLElement | null = null
+// 记录当前已加载的帖子编号，刷新同一帖时不清掉操作反馈。
+let activeId: number | null = null
 
 const status = computed(() =>
   props.detail === null
@@ -109,6 +117,28 @@ async function copy(text: string, label: string): Promise<void> {
     }
   }
   feedback.value = copied ? label + '已复制' : '复制失败，请手动选择'
+}
+
+function askToggle(): void {
+  if (props.detail === null || toggling.value) return
+  toggleError.value = ''
+  confirmToggle.value = true
+}
+
+async function doToggle(): Promise<void> {
+  if (props.detail === null || toggling.value) return
+  toggling.value = true
+  toggleError.value = ''
+  try {
+    const result = await togglePost(props.detail.id)
+    confirmToggle.value = false
+    feedback.value = result.disabled ? '已撤回该帖' : '已恢复该帖访问'
+    emit('toggled')
+  } catch (cause) {
+    toggleError.value = cause instanceof ApiError ? updateFailureText(cause.status, cause.message) : '操作失败，请稍后重试'
+  } finally {
+    toggling.value = false
+  }
 }
 
 function startEdit(): void {
@@ -234,10 +264,14 @@ onBeforeUnmount(() => {
 
 watch(
   () => props.detail?.id,
-  () => {
+  (next) => {
+    if (next === undefined || next === activeId) return
+    activeId = next
+    confirmToggle.value = false
     feedback.value = ''
     editing.value = false
     editError.value = ''
+    toggleError.value = ''
   },
 )
 </script>
@@ -260,10 +294,21 @@ watch(
           <button
             v-if="detail !== null && !editing"
             type="button"
-            class="h-9 rounded-md border border-line px-3 text-xs font-medium transition hover:bg-canvas"
+            class="h-9 rounded-md border border-line px-3 text-xs font-medium transition hover:bg-canvas disabled:opacity-60"
+            :disabled="toggling"
             @click="startEdit"
           >
             编辑
+          </button>
+          <button
+            v-if="detail !== null && !editing"
+            type="button"
+            class="h-9 rounded-md border px-3 text-xs font-medium transition disabled:opacity-60"
+            :class="detail.disabled ? 'border-accent/40 text-accent hover:bg-accent/10' : 'border-line text-danger hover:bg-danger-soft'"
+            :disabled="toggling"
+            @click="askToggle"
+          >
+            {{ toggling ? '处理中…' : toggleActionLabel(detail.disabled) }}
           </button>
           <button
             ref="closeButton"
@@ -344,6 +389,36 @@ watch(
         </form>
 
         <template v-else-if="detail !== null">
+          <div v-if="confirmToggle" class="mb-3 rounded-md border border-line bg-canvas px-3 py-2">
+            <p class="text-xs text-ink">{{ toggleConfirmText(detail.disabled) }}</p>
+            <div class="mt-2 flex items-center gap-2">
+              <button
+                type="button"
+                class="h-8 rounded-md bg-brand px-2.5 text-xs font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+                :disabled="toggling"
+                @click="doToggle"
+              >
+                确认
+              </button>
+              <button
+                type="button"
+                class="h-8 rounded-md border border-line px-2.5 text-xs font-medium transition hover:bg-surface"
+                :disabled="toggling"
+                @click="confirmToggle = false"
+              >
+                取消
+              </button>
+              <span v-if="toggleError !== ''" class="text-xs text-danger">{{ toggleError }}</span>
+            </div>
+          </div>
+
+          <p
+            v-if="detail.disabled"
+            class="mb-3 rounded-md border border-danger/25 bg-danger-soft px-3 py-2 text-xs text-danger"
+          >
+            {{ toggleHint(true) }}
+          </p>
+
           <div class="flex flex-wrap items-center gap-2">
             <span class="rounded px-1.5 py-0.5 text-xs font-medium" :class="toneClass">{{ status.label }}</span>
             <span class="text-xs text-muted tnum">{{ detail.image_count }} 张图</span>

@@ -129,6 +129,11 @@ async function loadDetail(): Promise<void> {
   }
 }
 
+function onToggled(): void {
+  void loadDetail()
+  void loadList(page.value)
+}
+
 function onSaved(): void {
   // 保存成功后刷新详情与列表，标题与发布时间可能变化。
   void loadDetail()
@@ -399,6 +404,7 @@ onBeforeUnmount(() => {
       @close="closeDetail"
       @retry="loadDetail"
       @saved="onSaved"
+      @toggled="onToggled"
     />
   </div>
 </template>

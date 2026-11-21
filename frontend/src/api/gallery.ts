@@ -109,3 +109,9 @@ export async function updatePost(id: number, meta: PostMetadata): Promise<PostMe
   })
   return (await response.json()) as PostMetadata
 }
+
+// togglePost 切换单帖熔断：禁用后短码立即 404，恢复沿用原有公开授权。
+export async function togglePost(id: number): Promise<{ id: number; disabled: boolean; public: boolean }> {
+  const response = await galleryRequest('/api/posts/' + String(id) + '/toggle', { method: 'PATCH' })
+  return (await response.json()) as { id: number; disabled: boolean; public: boolean }
+}

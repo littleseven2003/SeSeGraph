@@ -291,3 +291,20 @@ export function updateFailureText(status: number, message: string): string {
   if (status === 502) return '更新 Telegraph 页面失败，本地记录未改动'
   return message !== '' ? message : '保存失败，请稍后重试'
 }
+
+/** toggleActionLabel 返回按钮文案。 */
+export function toggleActionLabel(disabled: boolean): string {
+  return disabled ? '恢复访问' : '撤回'
+}
+
+/** toggleHint 返回撤回/恢复的状态说明，含已缓存副本的客观提示。 */
+export function toggleHint(disabled: boolean): string {
+  return disabled
+    ? '已撤回：源站短码立即返回 404，已缓存的副本可能仍显示一段时间。'
+    : '撤回后该帖短码立即返回 404，重新开启即恢复访问。'
+}
+
+/** toggleConfirmText 返回二次确认文案。 */
+export function toggleConfirmText(disabled: boolean): string {
+  return disabled ? '恢复后分享链接重新可用，确认恢复？' : '撤回后分享链接立即失效，确认撤回？'
+}
