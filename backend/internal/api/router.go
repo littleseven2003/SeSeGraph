@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/subtle"
 	"errors"
+	"io/fs"
 	"log"
 	"net/http"
 	"strings"
@@ -19,6 +20,7 @@ type Deps struct {
 	Sessions   *auth.Sessions
 	SetupToken string
 	Logger     *log.Logger
+	WebFS      fs.FS
 }
 
 // maxAuthBodyBytes 是登录与初始化请求体的上限，超出的请求不会被解码。
@@ -54,6 +56,10 @@ func NewRouter(deps Deps) *gin.Engine {
 	admin.GET("/posts", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"items": []any{}})
 	})
+
+	if deps.WebFS != nil {
+		router.NoRoute(spaHandler(deps.WebFS))
+	}
 
 	return router
 }

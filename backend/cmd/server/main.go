@@ -15,6 +15,7 @@ import (
 	"github.com/littleseven2003/SeSeGraph/backend/internal/auth"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/config"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/db"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/web"
 )
 
 // 构建时通过 -ldflags 注入，未注入时使用开发默认值。
@@ -66,12 +67,18 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		return err
 	}
 
+	assets, err := web.Assets()
+	if err != nil {
+		return errAssets
+	}
+
 	router := api.NewRouter(api.Deps{
 		Version:    version,
 		Commit:     commit,
 		Auth:       authService,
 		Sessions:   auth.NewSessions(secret, auth.DefaultSessionTTL, isHTTPS(cfg.PublicURL)),
 		SetupToken: readSetupToken(lookupEnv),
+		WebFS:      assets,
 	})
 
 	// 只记录版本信息，监听地址与数据目录属于本地部署细节，不写入日志。
@@ -126,3 +133,6 @@ var errDatabase = errors.New("数据库初始化失败，请检查数据目录�
 
 // errAdminEnv 说明环境变量中的管理员凭据不符合要求，同样不回显取值。
 var errAdminEnv = errors.New("环境变量中的管理员账号或密码不符合要求")
+
+// errAssets 表示嵌入的前端资源无法读取。
+var errAssets = errors.New("前端资源加载失败")
