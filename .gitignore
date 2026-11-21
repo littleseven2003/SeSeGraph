@@ -11,10 +11,15 @@ data/
 
 # 依赖与构建产物
 node_modules/
+.pnpm-store/
 dist/
 bin/
 *.exe
 *.test
+
+# 前端嵌入目录：只保留占位文件，构建产物不入库
+/backend/internal/web/assets/*
+!/backend/internal/web/assets/.keep
 
 # 本地测试与个人配置（可能含凭据、个人域名或频道信息）
 .local/
