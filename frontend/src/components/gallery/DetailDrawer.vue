@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import type { PostDetail } from '../../api/gallery.ts'
+import { updatePost, type PostDetail } from '../../api/gallery.ts'
+import { ApiError } from '../../api/client.ts'
 import {
   DEFAULT_SHARE_TEMPLATE,
   SHARE_PLACEHOLDERS,
@@ -9,10 +10,14 @@ import {
   formatPublishedAt,
   imageShareUrl,
   postShareUrl,
+  metadataFromDetail,
   readShareTemplate,
   renderShareText,
   saveShareTemplate,
   statusLabel,
+  updateFailureText,
+  validateMetadata,
+  type MetadataDraft,
 } from '../../utils/gallery.ts'
 
 const props = defineProps<{
@@ -21,7 +26,7 @@ const props = defineProps<{
   error: string
 }>()
 
-const emit = defineEmits<{ close: []; retry: [] }>()
+const emit = defineEmits<{ close: []; retry: []; saved: [] }>()
 
 const closeButton = ref<HTMLButtonElement | null>(null)
 const panel = ref<HTMLElement | null>(null)
@@ -29,6 +34,10 @@ const feedback = ref('')
 const shareTemplate = ref(DEFAULT_SHARE_TEMPLATE)
 const templateDraft = ref(DEFAULT_SHARE_TEMPLATE)
 const templateNotice = ref('')
+const editing = ref(false)
+const saving = ref(false)
+const editError = ref('')
+const draft = ref<MetadataDraft>({ title: '', description: '', authorName: '' })
 let previousFocus: HTMLElement | null = null
 
 const status = computed(() =>
@@ -100,6 +109,47 @@ async function copy(text: string, label: string): Promise<void> {
     }
   }
   feedback.value = copied ? label + '已复制' : '复制失败，请手动选择'
+}
+
+function startEdit(): void {
+  if (props.detail === null) return
+  draft.value = metadataFromDetail(props.detail)
+  editError.value = ''
+  editing.value = true
+}
+
+function cancelEdit(): void {
+  editing.value = false
+  editError.value = ''
+}
+
+async function saveEdit(): Promise<void> {
+  if (props.detail === null || saving.value) return
+  const message = validateMetadata(draft.value)
+  if (message !== '') {
+    editError.value = message
+    return
+  }
+  saving.value = true
+  editError.value = ''
+  try {
+    await updatePost(props.detail.id, {
+      title: draft.value.title.trim(),
+      description: draft.value.description,
+      author_name: draft.value.authorName.trim(),
+    })
+    editing.value = false
+    feedback.value = '已保存'
+    emit('saved')
+  } catch (cause) {
+    if (cause instanceof ApiError) {
+      editError.value = updateFailureText(cause.status, cause.message)
+    } else {
+      editError.value = '保存失败，请稍后重试'
+    }
+  } finally {
+    saving.value = false
+  }
 }
 
 function copyShareText(): void {
@@ -186,6 +236,8 @@ watch(
   () => props.detail?.id,
   () => {
     feedback.value = ''
+    editing.value = false
+    editError.value = ''
   },
 )
 </script>
@@ -204,17 +256,27 @@ watch(
           <p class="text-xs font-medium tracking-wide text-muted">图集详情</p>
           <h2 class="mt-1 truncate text-base font-semibold">{{ detail?.title ?? '正在读取…' }}</h2>
         </div>
-        <button
-          ref="closeButton"
-          type="button"
-          class="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-line text-muted transition hover:bg-canvas"
-          aria-label="关闭详情"
-          @click="emit('close')"
-        >
+        <div class="flex shrink-0 items-center gap-2">
+          <button
+            v-if="detail !== null && !editing"
+            type="button"
+            class="h-9 rounded-md border border-line px-3 text-xs font-medium transition hover:bg-canvas"
+            @click="startEdit"
+          >
+            编辑
+          </button>
+          <button
+            ref="closeButton"
+            type="button"
+            class="flex h-9 w-9 items-center justify-center rounded-md border border-line text-muted transition hover:bg-canvas"
+            aria-label="关闭详情"
+            @click="emit('close')"
+          >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4">
             <path d="M6 6l12 12M18 6L6 18" stroke-linecap="round" />
           </svg>
-        </button>
+          </button>
+        </div>
       </header>
 
       <div class="flex-1 overflow-y-auto px-5 py-4">
@@ -230,6 +292,56 @@ watch(
             重试
           </button>
         </div>
+
+        <form v-else-if="detail !== null && editing" class="space-y-3" @submit.prevent="saveEdit">
+          <label class="block">
+            <span class="text-xs font-medium text-muted">标题</span>
+            <input
+              v-model="draft.title"
+              type="text"
+              class="mt-1 h-9 w-full rounded-md border border-line bg-canvas px-2 text-sm outline-none transition focus:border-brand focus:bg-surface"
+            />
+          </label>
+          <label class="block">
+            <span class="text-xs font-medium text-muted">说明</span>
+            <textarea
+              v-model="draft.description"
+              rows="4"
+              class="mt-1 w-full rounded-md border border-line bg-canvas px-2 py-1.5 text-sm leading-relaxed outline-none transition focus:border-brand focus:bg-surface"
+            ></textarea>
+          </label>
+          <label class="block">
+            <span class="text-xs font-medium text-muted">作者</span>
+            <input
+              v-model="draft.authorName"
+              type="text"
+              class="mt-1 h-9 w-full rounded-md border border-line bg-canvas px-2 text-sm outline-none transition focus:border-brand focus:bg-surface"
+            />
+          </label>
+
+          <p class="text-xs text-muted">
+            已发布帖会先更新所有 Telegraph 页面，全部成功后才保存本地记录；分页数量会变化时会被拒绝。
+          </p>
+          <p v-if="editError !== ''" class="text-xs text-danger" aria-live="polite">{{ editError }}</p>
+
+          <div class="flex items-center gap-2">
+            <button
+              type="submit"
+              class="h-9 rounded-md bg-brand px-3 text-xs font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+              :disabled="saving"
+            >
+              {{ saving ? '正在保存…' : '保存' }}
+            </button>
+            <button
+              type="button"
+              class="h-9 rounded-md border border-line px-3 text-xs font-medium transition hover:bg-canvas"
+              :disabled="saving"
+              @click="cancelEdit"
+            >
+              取消
+            </button>
+          </div>
+        </form>
 
         <template v-else-if="detail !== null">
           <div class="flex flex-wrap items-center gap-2">

@@ -56,8 +56,14 @@ export interface GalleryQuery {
   pageSize: number
 }
 
-async function galleryRequest(path: string): Promise<Response> {
-  const response = await fetch(path, { credentials: 'same-origin' })
+export interface PostMetadata {
+  title: string
+  description: string
+  author_name: string
+}
+
+async function galleryRequest(path: string, init?: RequestInit): Promise<Response> {
+  const response = await fetch(path, { credentials: 'same-origin', ...init })
   if (!response.ok) {
     let message = '请求失败，请稍后重试'
     try {
@@ -92,4 +98,14 @@ export async function fetchPostDetail(id: number): Promise<PostDetail> {
 export async function fetchTags(): Promise<TagCount[]> {
   const body = (await (await galleryRequest('/api/tags')).json()) as { items: TagCount[] }
   return body.items
+}
+
+// updatePost 更新标题、说明与作者；已发布帖会先同步远端页面再落本地。
+export async function updatePost(id: number, meta: PostMetadata): Promise<PostMetadata> {
+  const response = await galleryRequest('/api/posts/' + String(id), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(meta),
+  })
+  return (await response.json()) as PostMetadata
 }

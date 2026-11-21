@@ -10,6 +10,7 @@ import {
   createLatestGuard,
   focusStep,
   imageShareUrl,
+  metadataFromDetail,
   normalizeShareTemplate,
   pageWindow,
   postShareUrl,
@@ -17,6 +18,8 @@ import {
   saveShareTemplate,
   shouldRevealOnTap,
   shouldShowBlur,
+  updateFailureText,
+  validateMetadata,
   readBlurPreference,
   renderShareText,
   saveBlurPreference,
@@ -218,4 +221,33 @@ test('封面悬停去模糊限定在支持悬停的设备且键盘绑定可见�
   assert.ok(source.includes('.is-blurred:focus-visible img'), '键盘去模糊应绑定按钮的可见焦点')
   assert.equal(source.includes(':focus-within'), false, '不应再用 focus-within 触发去模糊')
   assert.ok(source.includes(":class=\"showBlur ? 'is-blurred' : ''\""), '模糊类应挂在卡片按钮上')
+})
+
+test('metadataFromDetail 填充编辑草稿', () => {
+  const draft = metadataFromDetail({ title: '标题', description: '说明', author_name: 'SeSe' })
+  assert.deepEqual(draft, { title: '标题', description: '说明', authorName: 'SeSe' })
+})
+
+test('validateMetadata 校验长度与空标题', () => {
+  assert.equal(validateMetadata({ title: '', description: '', authorName: '' }), '标题不能为空')
+  assert.equal(validateMetadata({ title: '   ', description: '', authorName: '' }), '标题不能为空')
+  assert.equal(validateMetadata({ title: '标'.repeat(200), description: '', authorName: '' }), '')
+  assert.equal(validateMetadata({ title: '标'.repeat(201), description: '', authorName: '' }), '标题不超过 200 字')
+  assert.equal(validateMetadata({ title: '标题', description: '说'.repeat(5000), authorName: '' }), '')
+  assert.equal(validateMetadata({ title: '标题', description: '说'.repeat(5001), authorName: '' }), '说明不超过 5000 字')
+  assert.equal(validateMetadata({ title: '标题', description: '', authorName: '作'.repeat(100) }), '')
+  assert.equal(validateMetadata({ title: '标题', description: '', authorName: '作'.repeat(101) }), '作者名不超过 100 字')
+})
+
+test('updateFailureText 提示分页变化与其他编辑错误', () => {
+  assert.equal(
+    updateFailureText(409, '修改后分页数量会变化，请调整说明长度'),
+    '修改后分页数量会变化，请调整说明长度；请增减说明长度后重试',
+  )
+  assert.equal(updateFailureText(409, '帖子正在发布流程中，请稍后再编辑'), '帖子正在发布流程中，请稍后再编辑')
+  assert.equal(updateFailureText(401, '未登录'), '登录已失效，请重新登录后再编辑')
+  assert.equal(updateFailureText(503, 'Telegraph 未配置'), 'Telegraph 未配置，已发布帖暂不能编辑')
+  assert.equal(updateFailureText(502, '更新失败'), '更新 Telegraph 页面失败，本地记录未改动')
+  assert.equal(updateFailureText(400, '标题不能为空'), '标题不能为空')
+  assert.equal(updateFailureText(500, ''), '保存失败，请稍后重试')
 })

@@ -129,6 +129,12 @@ async function loadDetail(): Promise<void> {
   }
 }
 
+function onSaved(): void {
+  // 保存成功后刷新详情与列表，标题与发布时间可能变化。
+  void loadDetail()
+  void loadList(page.value)
+}
+
 function closeDetail(): void {
   // 关闭后作废在途请求，避免旧详情回填到下一次打开。
   detailGuard.begin()
@@ -392,6 +398,7 @@ onBeforeUnmount(() => {
       :error="detailError"
       @close="closeDetail"
       @retry="loadDetail"
+      @saved="onSaved"
     />
   </div>
 </template>

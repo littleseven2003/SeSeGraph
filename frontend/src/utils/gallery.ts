@@ -244,3 +244,50 @@ export function shouldShowBlur(blurred: boolean, revealed: boolean): boolean {
 export function shouldRevealOnTap(input: { blurred: boolean; touch: boolean; revealed: boolean }): boolean {
   return input.blurred && input.touch && !input.revealed
 }
+
+/** MetadataDraft 是编辑表单的字段。 */
+export interface MetadataDraft {
+  title: string
+  description: string
+  authorName: string
+}
+
+/** METADATA_LIMITS 与后端校验保持一致。 */
+export const METADATA_LIMITS = { title: 200, description: 5000, author: 100 } as const
+
+/** countRunes 按字符数统计，避免中文被当成两个长度。 */
+function countRunes(value: string): number {
+  return Array.from(value).length
+}
+
+/** metadataFromDetail 用详情填充编辑草稿。 */
+export function metadataFromDetail(detail: { title: string; description: string; author_name: string }): MetadataDraft {
+  return {
+    title: detail.title,
+    description: detail.description,
+    authorName: detail.author_name,
+  }
+}
+
+/** validateMetadata 返回空串表示可以提交。 */
+export function validateMetadata(draft: MetadataDraft): string {
+  const title = draft.title.trim()
+  if (title === '') return '标题不能为空'
+  if (countRunes(title) > METADATA_LIMITS.title) return '标题不超过 200 字'
+  if (countRunes(draft.description) > METADATA_LIMITS.description) return '说明不超过 5000 字'
+  if (countRunes(draft.authorName.trim()) > METADATA_LIMITS.author) return '作者名不超过 100 字'
+  return ''
+}
+
+/** updateFailureText 把接口错误转成编辑表单里可读的提示。 */
+export function updateFailureText(status: number, message: string): string {
+  if (status === 409) {
+    // 服务端文案已说明原因，分页变化时再补一句处理建议。
+    if (message.includes('分页')) return message + '；请增减说明长度后重试'
+    return message
+  }
+  if (status === 401) return '登录已失效，请重新登录后再编辑'
+  if (status === 503) return 'Telegraph 未配置，已发布帖暂不能编辑'
+  if (status === 502) return '更新 Telegraph 页面失败，本地记录未改动'
+  return message !== '' ? message : '保存失败，请稍后重试'
+}
