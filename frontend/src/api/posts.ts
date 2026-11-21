@@ -100,3 +100,15 @@ export async function fetchProgress(postId: number): Promise<ServerProgress> {
   const response = await adminRequest(`/api/posts/${postId}/progress`)
   return (await response.json()) as ServerProgress
 }
+
+export interface RetryResult {
+  id: number
+  status: string
+  retried: number
+}
+
+// retryPost 把失败的图片重新排入队列。
+export async function retryPost(postId: number): Promise<RetryResult> {
+  const response = await adminRequest(`/api/posts/${postId}/retry`, { method: 'POST' })
+  return (await response.json()) as RetryResult
+}

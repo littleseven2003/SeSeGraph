@@ -3,12 +3,14 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import DropZone from '../components/workbench/DropZone.vue'
 import ImageGrid from '../components/workbench/ImageGrid.vue'
 import MetaPanel from '../components/workbench/MetaPanel.vue'
-import { commitPost, createPost, fetchProgress, uploadImage } from '../api/posts.ts'
+import ProgressPanel from '../components/workbench/ProgressPanel.vue'
+import { commitPost, createPost, fetchProgress, retryPost, uploadImage, type ServerProgress } from '../api/posts.ts'
 import { ApiError } from '../api/client.ts'
 import { makeCover } from '../utils/cover.ts'
 import { MAX_IMAGE_COUNT, baseName, checkFile, formatBytes, mimeForName, type UploadMode } from '../utils/image.ts'
 import { parseMetaText, type PostMeta } from '../utils/meta.ts'
 import { browserStorage, clearTask, loadTask, saveTask, type StorageLike, type TaskSnapshot } from '../utils/task-store.ts'
+import { isActiveStatus } from '../utils/progress.ts'
 import { acceptedCount, initialStatuses, planUploads, type UploadStatus } from '../utils/upload.ts'
 import { DEFAULT_META_FILENAMES, unpackZip } from '../utils/zip.ts'
 import {
@@ -42,6 +44,10 @@ const postId = ref(0)
 const phase = ref<Phase>('idle')
 const statuses = ref<Record<number, UploadStatus>>({})
 const resumed = ref<TaskSnapshot | null>(null)
+const serverProgress = ref<ServerProgress | null>(null)
+const retrying = ref(false)
+const pollIntervalMs = 2000
+let pollTimer: number | undefined
 
 const imageCount = computed(() => tiles.value.length)
 const totalSize = computed(() => totalBytes(tiles.value))
@@ -49,7 +55,14 @@ const coverTile = computed(() => tiles.value.find((tile) => tile.id === coverId.
 const uploadedCount = computed(() => acceptedCount(statuses.value))
 const busy = computed(() => phase.value === 'creating' || phase.value === 'uploading')
 const locked = computed(() => postId.value > 0 || busy.value)
+const finished = computed(() => serverProgress.value?.status === 'completed')
 const phaseText = computed(() => {
+  if (serverProgress.value?.status === 'completed') {
+    return '存图完成，图片已进入频道，可以关闭网页'
+  }
+  if (serverProgress.value?.status === 'failed') {
+    return '部分图片存图失败，可在下方重试'
+  }
   switch (phase.value) {
     case 'creating':
       return '正在创建任务…'
@@ -222,12 +235,79 @@ function onSortByName(): void {
   void refreshCover()
 }
 
+function stopPolling(): void {
+  if (pollTimer !== undefined) {
+    window.clearInterval(pollTimer)
+    pollTimer = undefined
+  }
+}
+
+// 用服务端状态刷新图格标记，已存图与已落盘都视为完成。
+function applyServerProgress(progress: ServerProgress): void {
+  serverProgress.value = progress
+  const next: Record<number, UploadStatus> = { ...statuses.value }
+  for (const image of progress.images) {
+    if (image.status === 'stored' || image.status === 'uploaded') {
+      next[image.sort_order] = 'uploaded'
+    } else if (image.status === 'failed') {
+      next[image.sort_order] = 'failed'
+    } else {
+      next[image.sort_order] = 'pending'
+    }
+  }
+  statuses.value = next
+}
+
+async function refreshProgress(id: number): Promise<void> {
+  try {
+    const progress = await fetchProgress(id)
+    applyServerProgress(progress)
+    if (!isActiveStatus(progress.status)) {
+      stopPolling()
+      if (progress.status === 'completed') {
+        message.value = '存图完成，图片已进入频道'
+      } else if (progress.status === 'failed') {
+        message.value = '部分图片存图失败，可以点击重试'
+      }
+    }
+  } catch {
+    // 轮询失败时保持上次状态，下一轮继续
+  }
+}
+
+// 轮询服务端进度，任务活跃期间每 2 秒刷新一次。
+function startPolling(id: number): void {
+  stopPolling()
+  void refreshProgress(id)
+  pollTimer = window.setInterval(() => {
+    void refreshProgress(id)
+  }, pollIntervalMs)
+}
+
+// 手动重试失败的图片，随后恢复轮询。
+async function retryFailed(): Promise<void> {
+  if (retrying.value || postId.value === 0) return
+  retrying.value = true
+  message.value = ''
+  try {
+    const result = await retryPost(postId.value)
+    phase.value = result.status === 'queued' ? 'queued' : 'failed'
+    startPolling(postId.value)
+  } catch (error) {
+    pushError(error instanceof ApiError ? error.message : '重试失败，请稍后重试')
+  } finally {
+    retrying.value = false
+  }
+}
+
 function resetProgress(): void {
   postId.value = 0
   phase.value = 'idle'
   statuses.value = {}
   resumed.value = null
+  serverProgress.value = null
   message.value = ''
+  stopPolling()
   clearTask(storage)
 }
 
@@ -302,8 +382,10 @@ async function publish(): Promise<void> {
     if (progress.status !== 'uploading') {
       // 任务已进入队列，交给服务端继续处理。
       phase.value = progress.status === 'failed' ? 'failed' : 'queued'
+      applyServerProgress(progress)
       clearTask(storage)
       resumed.value = null
+      startPolling(id)
       return
     }
 
@@ -337,14 +419,19 @@ async function publish(): Promise<void> {
     if (committed.missing && committed.missing.length > 0) {
       pushError('还有图片未上传完整，请继续上传')
       phase.value = 'idle'
+      return
     }
+    startPolling(id)
   } catch (error) {
     phase.value = 'idle'
     pushError(error instanceof ApiError ? error.message : '发布失败，请稍后重试')
   }
 }
 
-onBeforeUnmount(() => releaseTiles(tiles.value))
+onBeforeUnmount(() => {
+  stopPolling()
+  releaseTiles(tiles.value)
+})
 </script>
 
 <template>
@@ -486,6 +573,10 @@ onBeforeUnmount(() => releaseTiles(tiles.value))
           />
         </div>
 
+        <div v-if="serverProgress" class="mt-4">
+          <ProgressPanel :progress="serverProgress" :retrying="retrying" @retry="retryFailed" />
+        </div>
+
         <div class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-surface px-4 py-3">
           <div class="min-w-0">
             <p class="tnum text-sm font-medium">
@@ -496,7 +587,15 @@ onBeforeUnmount(() => releaseTiles(tiles.value))
           </div>
           <div class="flex items-center gap-2">
             <button
-              v-if="phase === 'failed' || phase === 'queued'"
+              v-if="finished"
+              type="button"
+              class="h-10 rounded-md border border-line px-3 text-sm font-medium transition hover:border-muted/40 hover:bg-canvas"
+              @click="clearAll"
+            >
+              再发一组
+            </button>
+            <button
+              v-else-if="phase === 'failed' || phase === 'queued'"
               type="button"
               class="h-10 rounded-md border border-line px-3 text-sm font-medium transition hover:border-muted/40 hover:bg-canvas"
               @click="resetProgress"
@@ -506,10 +605,10 @@ onBeforeUnmount(() => releaseTiles(tiles.value))
             <button
               type="button"
               class="h-10 rounded-md bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
-              :disabled="busy || phase === 'queued'"
+              :disabled="busy || phase === 'queued' || finished"
               @click="publish"
             >
-              {{ busy ? '正在上传…' : resumed && tiles.length > 0 && postId === 0 ? '继续上传' : '发布' }}
+              {{ busy ? '正在上传…' : finished ? '存图完成' : resumed && tiles.length > 0 && postId === 0 ? '继续上传' : '发布' }}
             </button>
           </div>
         </div>
