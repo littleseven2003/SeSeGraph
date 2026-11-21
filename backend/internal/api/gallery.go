@@ -22,15 +22,15 @@ var thumbNamePattern = regexp.MustCompile(`^[0-9]+\.webp$`)
 type galleryItemResponse struct {
 	ID             int64    `json:"id"`
 	Title          string   `json:"title"`
-	CoverThumbPath string   `json:"cover_thumb_path,omitempty"`
-	CoverURL       string   `json:"cover_url,omitempty"`
+	CoverThumbPath string   `json:"cover_thumb_path"`
+	CoverURL       string   `json:"cover_url"`
 	ImageCount     int      `json:"image_count"`
 	Status         string   `json:"status"`
 	PublishState   string   `json:"publish_state"`
 	Public         bool     `json:"public"`
 	Disabled       bool     `json:"disabled"`
 	Tags           []string `json:"tags"`
-	TelegraphURLs  []string `json:"telegraph_urls,omitempty"`
+	TelegraphURLs  []string `json:"telegraph_urls"`
 	CreatedAt      string   `json:"created_at"`
 	UpdatedAt      string   `json:"updated_at"`
 }

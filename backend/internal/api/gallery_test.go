@@ -187,3 +187,37 @@ func TestPostDetailReturnsImagesAndLinks(t *testing.T) {
 		t.Errorf("非法编号状态码 = %d，期望 400", invalid.Code)
 	}
 }
+
+func TestGalleryFieldsAlwaysPresent(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	cookie := env.setup(t)
+	galleryPost(t, env, "无封面帖子", "")
+
+	rec := env.do(t, http.MethodGet, "/api/posts", "", cookie)
+	var raw struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := decodeJSON(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("响应不是合法 JSON: %v", err)
+	}
+	if len(raw.Items) != 1 {
+		t.Fatalf("条数 = %d，期望 1", len(raw.Items))
+	}
+	for _, key := range []string{"cover_url", "cover_thumb_path", "tags", "telegraph_urls"} {
+		if _, ok := raw.Items[0][key]; !ok {
+			t.Errorf("列表缺少字段 %q", key)
+		}
+	}
+
+	postID := int64(raw.Items[0]["id"].(float64))
+	rec = env.do(t, http.MethodGet, "/api/posts/"+formatID(postID), "", cookie)
+	var detail map[string]any
+	if err := decodeJSON(rec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("响应不是合法 JSON: %v", err)
+	}
+	for _, key := range []string{"images", "telegraph_paths", "telegraph_urls", "tags", "cover_url"} {
+		if _, ok := detail[key]; !ok {
+			t.Errorf("详情缺少字段 %q", key)
+		}
+	}
+}
