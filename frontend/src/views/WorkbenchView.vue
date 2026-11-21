@@ -2,8 +2,12 @@
 import { computed, onBeforeUnmount, ref } from 'vue'
 import DropZone from '../components/workbench/DropZone.vue'
 import ImageGrid from '../components/workbench/ImageGrid.vue'
+import MetaPanel from '../components/workbench/MetaPanel.vue'
+import { createPost } from '../api/posts.ts'
+import { ApiError } from '../api/client.ts'
 import { makeCover } from '../utils/cover.ts'
 import { MAX_IMAGE_COUNT, baseName, checkFile, formatBytes, mimeForName, type UploadMode } from '../utils/image.ts'
+import { parseMetaText, type PostMeta } from '../utils/meta.ts'
 import { DEFAULT_META_FILENAMES, unpackZip } from '../utils/zip.ts'
 import {
   assignSortOrders,
@@ -25,6 +29,10 @@ const metaText = ref('')
 const metaSource = ref('')
 const coverPreview = ref('')
 const coverBytes = ref(0)
+const coverDataUrl = ref('')
+const draft = ref<PostMeta>({ title: '', description: '', tags: [], author: '' })
+const creating = ref(false)
+const createdId = ref(0)
 
 const imageCount = computed(() => tiles.value.length)
 const totalSize = computed(() => totalBytes(tiles.value))
@@ -57,15 +65,18 @@ async function refreshCover(): Promise<void> {
   const tile = coverTile.value
   if (!tile) {
     coverPreview.value = ''
+    coverDataUrl.value = ''
     coverBytes.value = 0
     return
   }
   try {
     const cover = await makeCover(tile.blob)
     coverPreview.value = cover.dataUrl
+    coverDataUrl.value = cover.dataUrl
     coverBytes.value = cover.bytes
   } catch {
     coverPreview.value = ''
+    coverDataUrl.value = ''
     coverBytes.value = 0
     pushError('封面生成失败，可换一张图片试试')
   }
@@ -96,8 +107,18 @@ function onZip(file: File): void {
         addTile(baseName(image.name), new Blob([image.data.slice()], { type: mimeForName(image.name) }), image.data.length),
       )
       metaText.value = unpacked.metaText
-      metaSource.value = unpacked.metaText === '' ? '' : DEFAULT_META_FILENAMES[0]
+      metaSource.value = unpacked.metaText === '' ? '' : unpacked.metaName
       applyTiles(next)
+      if (unpacked.metaText !== '') {
+        // 包内存在说明文件时自动预填，缺失字段仍可手动补充。
+        const parsed = parseMetaText(unpacked.metaText, 'first-line')
+        draft.value = {
+          title: parsed.title,
+          description: parsed.description,
+          tags: parsed.tags,
+          author: parsed.author,
+        }
+      }
       if (unpacked.skipped > 0) {
         message.value = `已忽略 ${unpacked.skipped} 个非图片文件`
       }
@@ -161,6 +182,43 @@ function onSortByName(): void {
   void refreshCover()
 }
 
+// 创建任务：先落元数据与封面，逐张上传在后续步骤完成。
+async function submitMetadata(): Promise<void> {
+  if (creating.value) return
+  if (tiles.value.length === 0) {
+    pushError('请先选择图片')
+    return
+  }
+  const title = draft.value.title.trim()
+  if (title === '') {
+    pushError('请填写总标题')
+    return
+  }
+  if (coverDataUrl.value === '') {
+    pushError('封面还在生成，请稍后重试')
+    return
+  }
+  creating.value = true
+  message.value = ''
+  try {
+    const created = await createPost({
+      title,
+      description: draft.value.description,
+      author_name: draft.value.author.trim(),
+      upload_mode: mode.value,
+      image_count: tiles.value.length,
+      cover_thumbnail: coverDataUrl.value,
+      tags: draft.value.tags,
+    })
+    createdId.value = created.id
+    message.value = `任务 #${created.id} 已创建，元数据与封面已保存`
+  } catch (error) {
+    pushError(error instanceof ApiError ? error.message : '创建任务失败，请稍后重试')
+  } finally {
+    creating.value = false
+  }
+}
+
 function clearAll(): void {
   releaseTiles(tiles.value)
   tiles.value = []
@@ -170,6 +228,8 @@ function clearAll(): void {
   metaText.value = ''
   metaSource.value = ''
   message.value = ''
+  draft.value = { title: '', description: '', tags: [], author: '' }
+  createdId.value = 0
 }
 
 onBeforeUnmount(() => releaseTiles(tiles.value))
@@ -289,9 +349,30 @@ onBeforeUnmount(() => releaseTiles(tiles.value))
           </aside>
         </div>
 
-        <p v-if="metaText" class="mt-4 text-xs text-muted">
-          已读取包内 {{ metaSource || '说明文件' }}，元信息填写将在下一步接入。
-        </p>
+        <div class="mt-5">
+          <MetaPanel
+            v-model="draft"
+            :meta-text="metaText"
+            :meta-source="metaSource"
+            :disabled="working || creating || createdId > 0"
+            @error="pushError"
+          />
+        </div>
+
+        <div class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-surface px-4 py-3">
+          <p class="text-xs text-muted">
+            <template v-if="createdId > 0">任务 #{{ createdId }} 已保存，逐张上传将在后续步骤完成。</template>
+            <template v-else>共 {{ imageCount }} 张，选中封面 {{ coverTile?.name ?? '—' }}，{{ formatBytes(totalSize) }}</template>
+          </p>
+          <button
+            type="button"
+            class="h-10 rounded-md bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+            :disabled="creating || createdId > 0 || working"
+            @click="submitMetadata"
+          >
+            {{ creating ? '正在创建…' : createdId > 0 ? '任务已创建' : '创建任务' }}
+          </button>
+        </div>
       </template>
     </main>
   </div>

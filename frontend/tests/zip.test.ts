@@ -34,6 +34,7 @@ test('识别 info.txt 并过滤非图片文件', () => {
   const result = unpackZip(archive)
   assert.deepEqual(result.images.map((image) => image.name), ['1.jpg'])
   assert.equal(result.metaText, '标题：测试\n标签：a,b')
+  assert.equal(result.metaName, 'INFO.TXT')
   assert.equal(result.skipped, 2)
 })
 
@@ -51,6 +52,7 @@ test('跳过目录条目与系统附带文件', () => {
 test('自定义元信息文件名', () => {
   const archive = buildArchive({ 'a.jpg': new Uint8Array([1]), 'custom.txt': '自定义说明' })
   assert.equal(unpackZip(archive, ['custom.txt']).metaText, '自定义说明')
+  assert.equal(unpackZip(archive, ['custom.txt']).metaName, 'custom.txt')
   assert.equal(unpackZip(archive).metaText, '')
 })
 

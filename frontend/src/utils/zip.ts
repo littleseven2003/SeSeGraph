@@ -16,6 +16,8 @@ export interface ArchiveImage {
 export interface UnpackedArchive {
   images: ArchiveImage[]
   metaText: string
+  /** 命中的元信息文件名，未命中时为空串 */
+  metaName: string
   /** 被跳过的条目数量，用于界面提示 */
   skipped: number
 }
@@ -38,6 +40,7 @@ export function unpackZip(data: Uint8Array, metaNames: readonly string[] = DEFAU
 
   const images: ArchiveImage[] = []
   let metaBytes: Uint8Array | null = null
+  let metaName = ''
   let skipped = 0
 
   for (const [name, bytes] of Object.entries(files)) {
@@ -47,6 +50,7 @@ export function unpackZip(data: Uint8Array, metaNames: readonly string[] = DEFAU
     }
     if (metaBytes === null && wanted.has(baseName(name).toLowerCase())) {
       metaBytes = bytes
+      metaName = baseName(name)
       continue
     }
     skipped += 1
@@ -55,6 +59,7 @@ export function unpackZip(data: Uint8Array, metaNames: readonly string[] = DEFAU
   return {
     images: sortByNaturalName(images, (image) => image.name),
     metaText: metaBytes ? new TextDecoder('utf-8').decode(metaBytes) : '',
+    metaName,
     skipped,
   }
 }

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -140,4 +141,72 @@ func TestCreatePostRejectsOversizedCover(t *testing.T) {
 
 func decodeJSON(data []byte, target any) error {
 	return json.Unmarshal(data, target)
+}
+
+func TestCreatePostStoresTags(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	cookie := env.setup(t)
+
+	body := `{"title":"带标签","image_count":1,"tags":[" 写真 ","写真","海边",""]}`
+	rec := env.do(t, http.MethodPost, "/api/posts", body, cookie)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("状态码 = %d，期望 201，响应: %s", rec.Code, rec.Body.String())
+	}
+
+	var created struct {
+		ID   int64    `json:"id"`
+		Tags []string `json:"tags"`
+	}
+	if err := decodeJSON(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("响应不是合法 JSON: %v", err)
+	}
+	if len(created.Tags) != 2 || created.Tags[0] != "写真" || created.Tags[1] != "海边" {
+		t.Errorf("返回标签 = %v，期望去空白去重后的 [写真 海边]", created.Tags)
+	}
+
+	progress := env.do(t, http.MethodGet, "/api/posts/"+strconv.FormatInt(created.ID, 10)+"/progress", "", cookie)
+	if progress.Code != http.StatusOK {
+		t.Fatalf("进度状态码 = %d，期望 200", progress.Code)
+	}
+	var detail struct {
+		Tags []string `json:"tags"`
+	}
+	if err := decodeJSON(progress.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("进度响应不是合法 JSON: %v", err)
+	}
+	if len(detail.Tags) != 2 {
+		t.Errorf("进度标签 = %v，期望 2 个", detail.Tags)
+	}
+}
+
+func TestCreatePostRejectsTooManyTags(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	cookie := env.setup(t)
+
+	tags := make([]string, 0, maxTagCount+1)
+	for index := 0; index < maxTagCount+1; index++ {
+		tags = append(tags, `"t`+strconv.Itoa(index)+`"`)
+	}
+	body := `{"title":"标签过多","image_count":1,"tags":[` + strings.Join(tags, ",") + `]}`
+	rec := env.do(t, http.MethodPost, "/api/posts", body, cookie)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("状态码 = %d，期望 400，响应: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "标签数量") {
+		t.Errorf("错误文案未说明标签数量: %s", rec.Body.String())
+	}
+}
+
+func TestCreatePostRejectsOverlongTag(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	cookie := env.setup(t)
+
+	body := `{"title":"标签过长","image_count":1,"tags":["` + strings.Repeat("长", maxTagRunes+1) + `"]}`
+	rec := env.do(t, http.MethodPost, "/api/posts", body, cookie)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("状态码 = %d，期望 400，响应: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "标签不超过") {
+		t.Errorf("错误文案未说明标签长度: %s", rec.Body.String())
+	}
 }

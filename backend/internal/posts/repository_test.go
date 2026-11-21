@@ -248,3 +248,74 @@ func TestAttachAndEnqueueInterleave(t *testing.T) {
 		}
 	}
 }
+
+func TestCreatePostStoresTags(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+
+	id, err := repo.Create(ctx, Post{
+		Title:      "带标签的帖子",
+		ImageCount: 1,
+		Tags:       []string{"写真", "海边"},
+	})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+
+	tags, err := repo.ListTags(ctx, id)
+	if err != nil {
+		t.Fatalf("读取标签失败: %v", err)
+	}
+	if len(tags) != 2 || tags[0] != "写真" || tags[1] != "海边" {
+		t.Errorf("标签 = %v，期望 [写真 海边]", tags)
+	}
+}
+
+func TestCreatePostReusesExistingTagRow(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+
+	first, err := repo.Create(ctx, Post{Title: "第一篇", ImageCount: 1, Tags: []string{"合集"}})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+	second, err := repo.Create(ctx, Post{Title: "第二篇", ImageCount: 1, Tags: []string{"合集"}})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+
+	for _, id := range []int64{first, second} {
+		tags, err := repo.ListTags(ctx, id)
+		if err != nil {
+			t.Fatalf("读取标签失败: %v", err)
+		}
+		if len(tags) != 1 || tags[0] != "合集" {
+			t.Errorf("帖子 %d 标签 = %v，期望 [合集]", id, tags)
+		}
+	}
+
+	var tagRows int
+	if err := repo.handle.QueryRowContext(ctx, `SELECT COUNT(*) FROM tags`).Scan(&tagRows); err != nil {
+		t.Fatalf("统计标签失败: %v", err)
+	}
+	if tagRows != 1 {
+		t.Errorf("标签表行数 = %d，期望 1（复用已有标签）", tagRows)
+	}
+}
+
+func TestCreatePostWithoutTags(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+
+	id, err := repo.Create(ctx, Post{Title: "无标签", ImageCount: 1})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+	tags, err := repo.ListTags(ctx, id)
+	if err != nil {
+		t.Fatalf("读取标签失败: %v", err)
+	}
+	if len(tags) != 0 {
+		t.Errorf("标签 = %v，期望空列表", tags)
+	}
+}

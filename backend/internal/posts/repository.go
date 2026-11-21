@@ -46,6 +46,7 @@ type Post struct {
 	ImageCount     int
 	UploadMode     string
 	Status         string
+	Tags           []string
 }
 
 // Image 是帖子中的单张图片记录。
@@ -79,7 +80,13 @@ func (r *Repository) Create(ctx context.Context, post Post) (int64, error) {
 	if post.Status == "" {
 		post.Status = StatusUploading
 	}
-	result, err := r.handle.ExecContext(ctx,
+	tx, err := r.handle.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, errors.New("保存帖子失败")
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	result, err := tx.ExecContext(ctx,
 		`INSERT INTO posts (title, description, author_name, cover_thumb_path, image_count, upload_mode, status)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		post.Title, post.Description, post.AuthorName, post.CoverThumbPath, post.ImageCount, post.UploadMode, post.Status,
@@ -87,7 +94,57 @@ func (r *Repository) Create(ctx context.Context, post Post) (int64, error) {
 	if err != nil {
 		return 0, errors.New("保存帖子失败")
 	}
-	return result.LastInsertId()
+	id, err := result.LastInsertId()
+	if err != nil {
+		return 0, errors.New("保存帖子失败")
+	}
+	if err := attachTags(ctx, tx, id, post.Tags); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, errors.New("保存帖子失败")
+	}
+	return id, nil
+}
+
+// attachTags 写入标签关联，标签名重复时复用已有记录。
+func attachTags(ctx context.Context, tx *sql.Tx, postID int64, tags []string) error {
+	for _, tag := range tags {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO tags (name) VALUES (?) ON CONFLICT(name) DO NOTHING`, tag); err != nil {
+			return errors.New("保存标签失败")
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO post_tags (post_id, tag_id) SELECT ?, id FROM tags WHERE name = ?`,
+			postID, tag); err != nil {
+			return errors.New("保存标签失败")
+		}
+	}
+	return nil
+}
+
+// ListTags 按名称顺序返回帖子的标签。
+func (r *Repository) ListTags(ctx context.Context, postID int64) ([]string, error) {
+	rows, err := r.handle.QueryContext(ctx,
+		`SELECT t.name FROM post_tags pt JOIN tags t ON t.id = pt.tag_id
+		 WHERE pt.post_id = ? ORDER BY t.name`, postID)
+	if err != nil {
+		return nil, errors.New("读取标签失败")
+	}
+	defer func() { _ = rows.Close() }()
+
+	tags := make([]string, 0, 4)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, errors.New("读取标签失败")
+		}
+		tags = append(tags, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.New("读取标签失败")
+	}
+	return tags, nil
 }
 
 // Get 读取帖子元数据。

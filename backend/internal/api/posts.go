@@ -16,6 +16,8 @@ const (
 	maxDescriptionRunes = 5000
 	maxAuthorRunes      = 100
 	maxImageCount       = 500
+	maxTagCount         = 20
+	maxTagRunes         = 30
 	// maxCoverBytes 是封面缩略图解码后的上限，浏览器生成约 20–40KB。
 	maxCoverBytes = 128 << 10
 	// maxCreatePostBodyBytes 是建任务请求体的上限，先于 JSON 解码生效。
@@ -24,12 +26,13 @@ const (
 
 // createPostRequest 是新建帖子的请求体。
 type createPostRequest struct {
-	Title          string `json:"title"`
-	Description    string `json:"description"`
-	AuthorName     string `json:"author_name"`
-	UploadMode     string `json:"upload_mode"`
-	ImageCount     int    `json:"image_count"`
-	CoverThumbnail string `json:"cover_thumbnail"`
+	Title          string   `json:"title"`
+	Description    string   `json:"description"`
+	AuthorName     string   `json:"author_name"`
+	UploadMode     string   `json:"upload_mode"`
+	ImageCount     int      `json:"image_count"`
+	CoverThumbnail string   `json:"cover_thumbnail"`
+	Tags           []string `json:"tags"`
 }
 
 // createPostHandler 保存帖子元数据与可选封面，随后由上传接口补齐图片。
@@ -65,6 +68,12 @@ func createPostHandler(deps Deps) gin.HandlerFunc {
 			return
 		}
 
+		tags, tagErr := normalizeTags(req.Tags)
+		if tagErr != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": tagErr})
+			return
+		}
+
 		cover, decodeErr := decodeCover(req.CoverThumbnail)
 		if decodeErr != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "封面缩略图不合法或过大"})
@@ -82,6 +91,7 @@ func createPostHandler(deps Deps) gin.HandlerFunc {
 			ImageCount:  req.ImageCount,
 			UploadMode:  mode,
 			Status:      posts.StatusUploading,
+			Tags:        tags,
 		})
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "创建帖子失败"})
@@ -104,6 +114,7 @@ func createPostHandler(deps Deps) gin.HandlerFunc {
 		c.JSON(http.StatusCreated, gin.H{
 			"id":               id,
 			"title":            title,
+			"tags":             tags,
 			"status":           posts.StatusUploading,
 			"image_count":      req.ImageCount,
 			"upload_mode":      mode,
@@ -129,4 +140,30 @@ func decodeCover(raw string) ([]byte, error) {
 		return nil, errors.New("封面过大")
 	}
 	return decoded, nil
+}
+
+// normalizeTags 去掉空白与重复标签，同时校验数量与长度。
+// 返回空字符串表示通过。
+func normalizeTags(raw []string) ([]string, string) {
+	seen := make(map[string]bool, len(raw))
+	tags := make([]string, 0, len(raw))
+	for _, item := range raw {
+		tag := strings.TrimSpace(item)
+		if tag == "" {
+			continue
+		}
+		if utf8.RuneCountInString(tag) > maxTagRunes {
+			return nil, "单个标签不超过 30 字"
+		}
+		key := strings.ToLower(tag)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		tags = append(tags, tag)
+	}
+	if len(tags) > maxTagCount {
+		return nil, "标签数量不超过 20 个"
+	}
+	return tags, ""
 }
