@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
@@ -89,21 +91,21 @@ func TestUploadImageStoresFile(t *testing.T) {
 		t.Errorf("响应字段不符: %+v", payload)
 	}
 
-	stored := filepath.Join(env.dataDir, "tmp", strconv.Itoa(int(postID)), "1.bin")
+	images, err := env.posts.ListImages(context.Background(), postID)
+	if err != nil {
+		t.Fatalf("读取图片记录失败: %v", err)
+	}
+	if len(images) != 1 || images[0].FileSize != int64(len(content)) {
+		t.Fatalf("图片记录不符: %+v", images)
+	}
+
+	stored := filepath.Join(env.dataDir, filepath.FromSlash(images[0].TempFilePath))
 	written, err := os.ReadFile(stored)
 	if err != nil {
 		t.Fatalf("落盘文件不存在: %v", err)
 	}
 	if len(written) != len(content) {
 		t.Errorf("落盘大小 = %d，期望 %d", len(written), len(content))
-	}
-
-	images, err := env.posts.ListImages(context.Background(), postID)
-	if err != nil {
-		t.Fatalf("读取图片记录失败: %v", err)
-	}
-	if len(images) != 1 || images[0].FileSize != int64(len(content)) {
-		t.Errorf("图片记录不符: %+v", images)
 	}
 }
 
@@ -195,5 +197,84 @@ func TestUploadImageReplaceKeepsSingleRecord(t *testing.T) {
 	}
 	if images[0].FileSize != int64(len(second)) {
 		t.Errorf("重传后大小 = %d，期望 %d", images[0].FileSize, len(second))
+	}
+}
+
+func TestConcurrentSameSortUploadKeepsOneRecord(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	cookie := env.setup(t)
+	postID := env.createPost(t, cookie, 1, "photo")
+	path := "/api/posts/" + strconv.Itoa(int(postID)) + "/images?sort=1"
+
+	const workers = 8
+	var wg sync.WaitGroup
+	codes := make(chan int, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			payload := append(append([]byte{}, jpegHeader...), []byte(strconv.Itoa(n))...)
+			req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(payload))
+			req.RemoteAddr = "127.0.0.1:54321"
+			req.Header.Set("Content-Type", "image/jpeg")
+			req.AddCookie(cookie)
+			rec := httptest.NewRecorder()
+			env.router.ServeHTTP(rec, req)
+			codes <- rec.Code
+		}(i)
+	}
+	wg.Wait()
+	close(codes)
+
+	for code := range codes {
+		if code != http.StatusOK {
+			t.Errorf("并发上传状态码 = %d，期望 200", code)
+		}
+	}
+
+	images, err := env.posts.ListImages(context.Background(), postID)
+	if err != nil {
+		t.Fatalf("读取图片记录失败: %v", err)
+	}
+	if len(images) != 1 {
+		t.Fatalf("图片记录数 = %d，期望 1（唯一约束生效）", len(images))
+	}
+
+	entries, err := os.ReadDir(filepath.Join(env.dataDir, "tmp", strconv.Itoa(int(postID))))
+	if err != nil {
+		t.Fatalf("读取临时目录失败: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("并发覆盖后应只剩 1 个文件，实际 %d 个", len(entries))
+	}
+	if !strings.HasSuffix(images[0].TempFilePath, entries[0].Name()) {
+		t.Errorf("记录应指向保留的文件，记录=%q 文件=%q", images[0].TempFilePath, entries[0].Name())
+	}
+}
+
+func TestUploadAfterCommitLeavesNoFile(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	cookie := env.setup(t)
+	postID := env.createPost(t, cookie, 1, "photo")
+	path := "/api/posts/" + strconv.Itoa(int(postID)) + "/images?sort=1"
+
+	if rec := env.doRaw(t, http.MethodPost, path, "image/jpeg", jpegHeader, cookie); rec.Code != http.StatusOK {
+		t.Fatalf("上传状态码 = %d", rec.Code)
+	}
+	if rec := env.do(t, http.MethodPost, "/api/posts/"+strconv.Itoa(int(postID))+"/commit", "", cookie); rec.Code != http.StatusOK {
+		t.Fatalf("提交状态码 = %d", rec.Code)
+	}
+
+	rec := env.doRaw(t, http.MethodPost, path, "image/jpeg", append(append([]byte{}, jpegHeader...), 'x'), cookie)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("入队后上传状态码 = %d，期望 409", rec.Code)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(env.dataDir, "tmp", strconv.Itoa(int(postID))))
+	if err != nil {
+		t.Fatalf("读取临时目录失败: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("被拒绝的上传不应留下文件，实际 %d 个", len(entries))
 	}
 }

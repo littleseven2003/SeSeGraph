@@ -2,7 +2,9 @@ package posts
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/littleseven2003/SeSeGraph/backend/internal/db"
@@ -83,7 +85,7 @@ func TestSetCoverAndUpdateStatus(t *testing.T) {
 	}
 }
 
-func TestSaveImageReplacesSameOrder(t *testing.T) {
+func TestAttachImageReplacesSameOrder(t *testing.T) {
 	repo := newTestRepository(t)
 	ctx := context.Background()
 
@@ -92,11 +94,15 @@ func TestSaveImageReplacesSameOrder(t *testing.T) {
 		t.Fatalf("创建帖子失败: %v", err)
 	}
 
-	if err := repo.SaveImage(ctx, Image{PostID: id, SortOrder: 1, MimeType: "image/jpeg", FileSize: 100, TempFilePath: "tmp/1.part", Status: ImageStatusUploaded}); err != nil {
+	if _, err := repo.AttachImage(ctx, Image{PostID: id, SortOrder: 1, MimeType: "image/jpeg", FileSize: 100, TempFilePath: "tmp/1/first.part", Status: ImageStatusUploaded}); err != nil {
 		t.Fatalf("保存图片失败: %v", err)
 	}
-	if err := repo.SaveImage(ctx, Image{PostID: id, SortOrder: 1, MimeType: "image/png", FileSize: 250, TempFilePath: "tmp/1.part", Status: ImageStatusUploaded}); err != nil {
+	previous, err := repo.AttachImage(ctx, Image{PostID: id, SortOrder: 1, MimeType: "image/png", FileSize: 250, TempFilePath: "tmp/1/second.part", Status: ImageStatusUploaded})
+	if err != nil {
 		t.Fatalf("重复保存图片失败: %v", err)
+	}
+	if previous != "tmp/1/first.part" {
+		t.Errorf("应返回被替换的旧路径，实际 %q", previous)
 	}
 
 	images, err := repo.ListImages(ctx, id)
@@ -132,7 +138,7 @@ func TestMissingOrders(t *testing.T) {
 	}
 
 	for _, order := range []int{1, 3} {
-		if err := repo.SaveImage(ctx, Image{PostID: id, SortOrder: order, MimeType: "image/jpeg", Status: ImageStatusUploaded}); err != nil {
+		if _, err := repo.AttachImage(ctx, Image{PostID: id, SortOrder: order, MimeType: "image/jpeg", Status: ImageStatusUploaded}); err != nil {
 			t.Fatalf("保存图片失败: %v", err)
 		}
 	}
@@ -142,5 +148,103 @@ func TestMissingOrders(t *testing.T) {
 	}
 	if len(missing) != 1 || missing[0] != 2 {
 		t.Errorf("缺图序号 = %v，期望 [2]", missing)
+	}
+}
+
+func TestAttachImageRejectsWhenNotUploading(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+
+	id, err := repo.Create(ctx, Post{Title: "已入队", ImageCount: 1})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+	if err := repo.UpdateStatus(ctx, id, StatusQueued); err != nil {
+		t.Fatalf("更新状态失败: %v", err)
+	}
+
+	if _, err := repo.AttachImage(ctx, Image{PostID: id, SortOrder: 1, Status: ImageStatusUploaded}); !errors.Is(err, ErrNotUploading) {
+		t.Fatalf("错误 = %v，期望 ErrNotUploading", err)
+	}
+}
+
+func TestEnqueueMissingAndQueued(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+
+	id, err := repo.Create(ctx, Post{Title: "入队测试", ImageCount: 2})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+
+	missing, err := repo.Enqueue(ctx, id)
+	if err != nil {
+		t.Fatalf("缺图统计失败: %v", err)
+	}
+	if len(missing) != 2 {
+		t.Errorf("缺图 = %v，期望 2 项", missing)
+	}
+
+	for _, order := range []int{1, 2} {
+		if _, err := repo.AttachImage(ctx, Image{PostID: id, SortOrder: order, Status: ImageStatusUploaded, TempFilePath: "tmp/x.part"}); err != nil {
+			t.Fatalf("保存图片失败: %v", err)
+		}
+	}
+	if missing, err := repo.Enqueue(ctx, id); err != nil || len(missing) != 0 {
+		t.Fatalf("入队失败: missing=%v err=%v", missing, err)
+	}
+	if _, err := repo.Enqueue(ctx, id); !errors.Is(err, ErrAlreadyQueued) {
+		t.Errorf("重复入队应返回 ErrAlreadyQueued，实际 %v", err)
+	}
+}
+
+func TestAttachAndEnqueueInterleave(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+
+	for round := 0; round < 20; round++ {
+		id, err := repo.Create(ctx, Post{Title: "交错测试", ImageCount: 1})
+		if err != nil {
+			t.Fatalf("创建帖子失败: %v", err)
+		}
+
+		var (
+			wg          sync.WaitGroup
+			attachErr   error
+			enqueueErr  error
+			enqueueMiss []int
+		)
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, attachErr = repo.AttachImage(ctx, Image{PostID: id, SortOrder: 1, Status: ImageStatusUploaded, TempFilePath: "tmp/x.part"})
+		}()
+		go func() {
+			defer wg.Done()
+			enqueueMiss, enqueueErr = repo.Enqueue(ctx, id)
+		}()
+		wg.Wait()
+
+		if attachErr != nil && !errors.Is(attachErr, ErrNotUploading) {
+			t.Fatalf("第 %d 轮上传错误: %v", round, attachErr)
+		}
+		if enqueueErr != nil && !errors.Is(enqueueErr, ErrAlreadyQueued) {
+			t.Fatalf("第 %d 轮入队错误: %v", round, enqueueErr)
+		}
+
+		stored, err := repo.Get(ctx, id)
+		if err != nil {
+			t.Fatalf("读取帖子失败: %v", err)
+		}
+		images, err := repo.ListImages(ctx, id)
+		if err != nil {
+			t.Fatalf("读取图片失败: %v", err)
+		}
+		if stored.Status == StatusQueued && len(images) != 1 {
+			t.Fatalf("第 %d 轮出现已入队但无图片记录", round)
+		}
+		if stored.Status == StatusQueued && len(enqueueMiss) != 0 {
+			t.Fatalf("第 %d 轮已入队却报告缺图 %v", round, enqueueMiss)
+		}
 	}
 }

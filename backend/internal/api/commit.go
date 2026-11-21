@@ -28,22 +28,24 @@ func commitPostHandler(deps Deps) gin.HandlerFunc {
 			return
 		}
 
-		// 已入队的帖子重复提交视为成功，避免网络重试造成误报。
-		if post.Status == posts.StatusQueued {
+		missing, enqueueErr := deps.Posts.Enqueue(c.Request.Context(), postID)
+		switch {
+		case enqueueErr == nil:
+		case errors.Is(enqueueErr, posts.ErrAlreadyQueued):
+			// 已入队的帖子重复提交视为成功，避免网络重试造成误报。
 			c.JSON(http.StatusOK, gin.H{
 				"id":          post.ID,
 				"status":      posts.StatusQueued,
 				"image_count": post.ImageCount,
 			})
 			return
-		}
-		if post.Status != posts.StatusUploading {
+		case errors.Is(enqueueErr, posts.ErrNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": "帖子不存在"})
+			return
+		case errors.Is(enqueueErr, posts.ErrNotUploading):
 			c.JSON(http.StatusConflict, gin.H{"error": "当前状态不允许提交"})
 			return
-		}
-
-		missing, err := deps.Posts.MissingOrders(c.Request.Context(), postID, post.ImageCount)
-		if err != nil {
+		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "校验图片完整性失败"})
 			return
 		}
@@ -52,11 +54,6 @@ func commitPostHandler(deps Deps) gin.HandlerFunc {
 				"error":   "图片未上传完整",
 				"missing": missing,
 			})
-			return
-		}
-
-		if err := deps.Posts.UpdateStatus(c.Request.Context(), postID, posts.StatusQueued); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "提交任务失败"})
 			return
 		}
 

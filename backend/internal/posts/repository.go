@@ -20,8 +20,14 @@ const (
 	ImageStatusUploaded = "uploaded"
 )
 
-// ErrNotFound 表示帖子或图片记录不存在。
-var ErrNotFound = errors.New("帖子不存在")
+var (
+	// ErrNotFound 表示帖子或图片记录不存在。
+	ErrNotFound = errors.New("帖子不存在")
+	// ErrNotUploading 表示帖子已不在可上传状态。
+	ErrNotUploading = errors.New("当前状态不允许继续上传")
+	// ErrAlreadyQueued 表示帖子已经入队，重复提交视为成功。
+	ErrAlreadyQueued = errors.New("帖子已入队")
+)
 
 // Post 是帖子元数据。
 type Post struct {
@@ -119,38 +125,130 @@ func (r *Repository) UpdateStatus(ctx context.Context, id int64, status string) 
 	return nil
 }
 
-// SaveImage 写入或覆盖某张图片的记录。同一帖子同一序号重复上传时只更新记录。
-func (r *Repository) SaveImage(ctx context.Context, image Image) error {
-	var existingID int64
-	err := r.handle.QueryRowContext(ctx,
-		`SELECT id FROM post_images WHERE post_id = ? AND sort_order = ?`, image.PostID, image.SortOrder,
-	).Scan(&existingID)
-	switch {
-	case err == nil:
-		if _, err := r.handle.ExecContext(ctx,
-			`UPDATE post_images SET mime_type = ?, file_size = ?, temp_file_path = ?, status = ?, error_message = ''
-			 WHERE id = ?`,
-			image.MimeType, image.FileSize, image.TempFilePath, image.Status, existingID,
-		); err != nil {
-			return errors.New("更新图片记录失败")
-		}
-		return nil
-	case errors.Is(err, sql.ErrNoRows):
+// AttachImage 在短事务内复核帖子状态并写入唯一的 (post_id, sort_order) 记录。
+// 返回被替换掉的旧文件路径（与本次路径相同时返回空），由调用方负责删除。
+func (r *Repository) AttachImage(ctx context.Context, image Image) (string, error) {
+	tx, err := r.handle.BeginTx(ctx, nil)
+	if err != nil {
+		return "", errors.New("开启图片事务失败")
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var status string
+	err = tx.QueryRowContext(ctx, `SELECT status FROM posts WHERE id = ?`, image.PostID).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", errors.New("读取帖子状态失败")
+	}
+	if status != StatusUploading {
+		return "", ErrNotUploading
+	}
+
+	var previous string
+	err = tx.QueryRowContext(ctx,
+		`SELECT temp_file_path FROM post_images WHERE post_id = ? AND sort_order = ?`,
+		image.PostID, image.SortOrder).Scan(&previous)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", errors.New("读取图片记录失败")
+	}
+
+	if image.ShortCode == "" {
 		code, codeErr := newShortCode()
 		if codeErr != nil {
-			return codeErr
+			return "", codeErr
 		}
-		if _, err := r.handle.ExecContext(ctx,
-			`INSERT INTO post_images (post_id, sort_order, short_code, mime_type, file_size, temp_file_path, status)
-			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			image.PostID, image.SortOrder, code, image.MimeType, image.FileSize, image.TempFilePath, image.Status,
-		); err != nil {
-			return errors.New("保存图片记录失败")
-		}
-		return nil
-	default:
-		return errors.New("读取图片记录失败")
+		image.ShortCode = code
 	}
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO post_images (post_id, sort_order, short_code, mime_type, file_size, temp_file_path, status)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(post_id, sort_order) DO UPDATE SET
+			mime_type = excluded.mime_type,
+			file_size = excluded.file_size,
+			temp_file_path = excluded.temp_file_path,
+			status = excluded.status,
+			error_message = ''`,
+		image.PostID, image.SortOrder, image.ShortCode, image.MimeType, image.FileSize, image.TempFilePath, image.Status,
+	); err != nil {
+		return "", errors.New("保存图片记录失败")
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", errors.New("提交图片事务失败")
+	}
+	if previous == image.TempFilePath {
+		previous = ""
+	}
+	return previous, nil
+}
+
+// Enqueue 在事务内统计缺图并完成 uploading → queued 的状态转换。
+// 缺图时返回缺失序号且不改动状态。
+func (r *Repository) Enqueue(ctx context.Context, postID int64) ([]int, error) {
+	tx, err := r.handle.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, errors.New("开启入队事务失败")
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var (
+		imageCount int
+		status     string
+	)
+	err = tx.QueryRowContext(ctx, `SELECT image_count, status FROM posts WHERE id = ?`, postID).Scan(&imageCount, &status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, errors.New("读取帖子状态失败")
+	}
+	if status == StatusQueued {
+		return nil, ErrAlreadyQueued
+	}
+	if status != StatusUploading {
+		return nil, ErrNotUploading
+	}
+
+	rows, err := tx.QueryContext(ctx,
+		`SELECT sort_order FROM post_images WHERE post_id = ? AND status = ?`, postID, ImageStatusUploaded)
+	if err != nil {
+		return nil, errors.New("统计已上传图片失败")
+	}
+	uploaded := make(map[int]struct{}, imageCount)
+	for rows.Next() {
+		var order int
+		if err := rows.Scan(&order); err != nil {
+			rows.Close()
+			return nil, errors.New("统计已上传图片失败")
+		}
+		uploaded[order] = struct{}{}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, errors.New("统计已上传图片失败")
+	}
+
+	var missing []int
+	for order := 1; order <= imageCount; order++ {
+		if _, ok := uploaded[order]; !ok {
+			missing = append(missing, order)
+		}
+	}
+	if len(missing) > 0 {
+		return missing, nil
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE posts SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, StatusQueued, postID); err != nil {
+		return nil, errors.New("更新帖子状态失败")
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, errors.New("提交入队事务失败")
+	}
+	return nil, nil
 }
 
 // ListImages 返回帖子的全部图片记录，按序号升序。

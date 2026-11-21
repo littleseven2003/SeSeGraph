@@ -21,8 +21,8 @@ func TestSaveImageStreamWritesFile(t *testing.T) {
 	if saved.FileSize != int64(len(content)) {
 		t.Errorf("大小 = %d，期望 %d", saved.FileSize, len(content))
 	}
-	if saved.Path != "tmp/7/2.bin" {
-		t.Errorf("路径 = %q，期望 tmp/7/2.bin", saved.Path)
+	if !strings.HasPrefix(saved.Path, "tmp/7/2-") || !strings.HasSuffix(saved.Path, ".part") {
+		t.Errorf("路径 = %q，期望 tmp/7/2-*.part", saved.Path)
 	}
 
 	full := filepath.Join(dataDir, filepath.FromSlash(saved.Path))
@@ -35,10 +35,8 @@ func TestSaveImageStreamWritesFile(t *testing.T) {
 	}
 
 	entries, _ := os.ReadDir(filepath.Join(dataDir, TempDir, "7"))
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".part") {
-			t.Errorf("不应残留临时文件: %s", entry.Name())
-		}
+	if len(entries) != 1 {
+		t.Errorf("应只保留一个待关联文件，实际 %d 个", len(entries))
 	}
 }
 

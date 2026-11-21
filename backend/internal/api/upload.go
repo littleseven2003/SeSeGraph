@@ -78,14 +78,28 @@ func uploadImageHandler(deps Deps) gin.HandlerFunc {
 			return
 		}
 
-		if err := deps.Posts.SaveImage(c.Request.Context(), posts.Image{
+		previous, attachErr := deps.Posts.AttachImage(c.Request.Context(), posts.Image{
 			PostID:       postID,
 			SortOrder:    sortOrder,
 			MimeType:     mimeType,
 			FileSize:     saved.FileSize,
 			TempFilePath: saved.Path,
 			Status:       posts.ImageStatusUploaded,
-		}); err != nil {
+		})
+		switch {
+		case attachErr == nil:
+			// 覆盖旧序号后清理被替换的文件。
+			posts.RemoveTempFile(deps.DataDir, previous)
+		case errors.Is(attachErr, posts.ErrNotFound):
+			posts.RemoveTempFile(deps.DataDir, saved.Path)
+			c.JSON(http.StatusNotFound, gin.H{"error": "帖子不存在"})
+			return
+		case errors.Is(attachErr, posts.ErrNotUploading):
+			posts.RemoveTempFile(deps.DataDir, saved.Path)
+			c.JSON(http.StatusConflict, gin.H{"error": "当前状态不允许继续上传"})
+			return
+		default:
+			posts.RemoveTempFile(deps.DataDir, saved.Path)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存图片记录失败"})
 			return
 		}

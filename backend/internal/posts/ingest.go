@@ -71,14 +71,17 @@ func SaveImageStream(dataDir string, postID int64, sortOrder int, body io.Reader
 		return SavedImage{}, ErrWriteInterrupted
 	}
 
-	finalName := filepath.Join(dir, fmt.Sprintf("%d.bin", sortOrder))
-	if err := os.Rename(tempName, finalName); err != nil {
-		_ = os.Remove(tempName)
-		return SavedImage{}, ErrWriteInterrupted
-	}
-
+	// 保留独立文件名，避免同序号并发上传互相覆盖。
 	return SavedImage{
-		Path:     filepath.ToSlash(filepath.Join(TempDir, strconv.FormatInt(postID, 10), fmt.Sprintf("%d.bin", sortOrder))),
+		Path:     filepath.ToSlash(filepath.Join(TempDir, strconv.FormatInt(postID, 10), filepath.Base(tempName))),
 		FileSize: written,
 	}, nil
+}
+
+// RemoveTempFile 删除数据目录下的临时文件，路径来自落盘结果。
+func RemoveTempFile(dataDir, relativePath string) {
+	if relativePath == "" {
+		return
+	}
+	_ = os.Remove(filepath.Join(dataDir, filepath.FromSlash(relativePath)))
 }
