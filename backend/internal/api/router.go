@@ -70,9 +70,8 @@ func NewRouter(deps Deps) *gin.Engine {
 	router.GET("/i/:short_code", gateway.handle)
 
 	admin := router.Group("/api", RequireAuth(deps.Sessions))
-	admin.GET("/posts", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"items": []any{}})
-	})
+	admin.GET("/posts", listPostsHandler(deps))
+	admin.GET("/posts/:id", postDetailHandler(deps))
 	admin.POST("/posts", limitBody(maxCreatePostBodyBytes), createPostHandler(deps))
 	admin.POST("/posts/:id/images", uploadImageHandler(deps))
 	admin.POST("/posts/:id/commit", commitPostHandler(deps))
