@@ -6,7 +6,7 @@
 
 ## 当前状态
 
-仓库处于初始搭建阶段：开源基础文件已就位，业务代码尚未提交。功能列表、部署教程与截图会随各里程碑落地后逐项补齐，未完成项以「开发中」标注，不与实际能力混淆。
+`v0.1.0` 基础框架已可运行：Go 服务内嵌前端构建产物，提供单管理员初始化与登录、受保护的管理首页、健康检查与版本页脚，SQLite 首次启动自动建库。发布工作台、图片网关与部署教程随后续里程碑补齐，未完成项以「开发中」标注，不与实际能力混淆。
 
 ## 功能特性
 
@@ -59,14 +59,26 @@ Bot Token、频道信息与图片原始下载地址不会出现在任何接口�
 ## 开发
 
 ```bash
-# 后端依赖与测试
-cd backend && go mod download && go test ./...
+# 完整构建：安装前端依赖、构建前端并把产物嵌入后端，生成单一可执行文件
+make build VERSION=v0.1.0
 
-# 前端依赖与构建
-cd frontend && pnpm install && pnpm build
+# 运行测试（仅后端，前端类型检查见 make typecheck）
+make test
+
+# 四个目标平台交叉编译，产物在 bin/ 下
+make cross VERSION=v0.1.0
 ```
 
-环境要求：Go 1.22+、Node.js 20+、pnpm 9+、Git。
+首次启动前按 `.env.example` 准备配置；若希望用网页完成首次初始化，需先设置 `ADMIN_SETUP_TOKEN`，也可以直接用 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 通过环境变量建号。
+
+只改前端时可以并行跑开发服务器，`/api` 会代理到本机 `8080`：
+
+```bash
+cd backend && go run ./cmd/server --addr 127.0.0.1:8080 --data ./data
+cd frontend && pnpm dev
+```
+
+环境要求：Go 1.22+、Node.js 22.12+（Vite 8 要求）、pnpm 10+、Git。前端构建产物经 `go:embed` 嵌入二进制，直接部署只需交付单个可执行文件。
 
 ## 目录结构
 
