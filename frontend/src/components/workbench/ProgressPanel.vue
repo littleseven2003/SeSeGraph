@@ -1,14 +1,26 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { imageStatusLabel, needsRetry, postStatusLabel, progressPercent, summaryText } from '../../utils/progress.ts'
+import {
+  canRequestPublish,
+  imageStatusLabel,
+  needsRetry,
+  postStatusLabel,
+  progressPercent,
+  publishActive,
+  publishStateLabel,
+  publishSummary,
+  summaryText,
+} from '../../utils/progress.ts'
 import type { ServerProgress } from '../../api/posts.ts'
 
 // 服务端进度面板：展示整体状态、逐图状态与重试入口。
 const props = defineProps<{
   progress: ServerProgress
   retrying?: boolean
+  publishing?: boolean
 }>()
-const emit = defineEmits<{ (event: 'retry'): void }>()
+const emit = defineEmits<{ (event: 'retry'): void; (event: 'publish'): void }>()
+const canPublish = computed(() => canRequestPublish(props.progress))
 
 const percent = computed(() => progressPercent(props.progress))
 const canRetry = computed(() => needsRetry(props.progress))
@@ -59,6 +71,31 @@ const tone = computed(() => {
         :class="props.progress.status === 'failed' ? 'bg-danger' : 'bg-brand'"
         :style="{ width: `${percent}%` }"
       ></div>
+    </div>
+
+    <div v-if="props.progress.status === 'completed'" class="mt-4 rounded-md border border-line bg-surface px-3 py-2">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p class="text-sm font-medium">Telegraph 发布</p>
+          <p class="mt-0.5 text-xs text-muted">
+            {{ publishSummary(props.progress) }} · 状态：{{ publishStateLabel(props.progress.publish_state) }}
+          </p>
+        </div>
+        <button
+          v-if="canPublish"
+          type="button"
+          class="h-9 rounded-md bg-brand px-3 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+          :disabled="publishActive(props.progress) || props.publishing"
+          @click="emit('publish')"
+        >
+          {{ props.publishing ? '正在提交…' : props.progress.publish_state === 'failed' ? '重新发布' : '发布到 Telegraph' }}
+        </button>
+      </div>
+      <ul v-if="props.progress.telegraph_urls.length > 0" class="mt-2 space-y-1">
+        <li v-for="url in props.progress.telegraph_urls" :key="url" class="text-xs">
+          <a :href="url" target="_blank" rel="noreferrer noopener" class="text-brand underline underline-offset-2">{{ url }}</a>
+        </li>
+      </ul>
     </div>
 
     <ul class="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-3 lg:grid-cols-4">

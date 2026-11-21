@@ -274,6 +274,31 @@ func (r *Repository) MarkPublishFailed(ctx context.Context, postID int64, messag
 	return nil
 }
 
+// PublishStatus 返回发布状态、公开标记与对外链接。
+func (r *Repository) PublishStatus(ctx context.Context, postID int64) (string, []string, bool, error) {
+	var (
+		state  string
+		urls   string
+		public int
+	)
+	err := r.handle.QueryRowContext(ctx,
+		`SELECT publish_state, telegraph_urls, is_public FROM posts WHERE id = ?`, postID,
+	).Scan(&state, &urls, &public)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil, false, ErrNotFound
+	}
+	if err != nil {
+		return "", nil, false, errors.New("读取发布状态失败")
+	}
+	parsed := []string{}
+	if urls != "" {
+		if err := json.Unmarshal([]byte(urls), &parsed); err != nil {
+			parsed = []string{}
+		}
+	}
+	return state, parsed, public == 1, nil
+}
+
 // SavePublishPaths 增量保存已创建的页面路径，进程中断后重试可复用。
 func (r *Repository) SavePublishPaths(ctx context.Context, postID int64, paths []string) error {
 	encoded, err := json.Marshal(paths)
@@ -300,7 +325,7 @@ func (r *Repository) MarkPublished(ctx context.Context, postID int64, paths, url
 	}
 	if _, err := r.handle.ExecContext(ctx,
 		`UPDATE posts SET publish_state = ?, publish_error = '', telegraph_paths = ?, telegraph_urls = ?,
-		 updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		 is_public = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		PublishPublished, string(encodedPaths), string(encodedURLs), postID); err != nil {
 		return errors.New("保存发布结果失败")
 	}

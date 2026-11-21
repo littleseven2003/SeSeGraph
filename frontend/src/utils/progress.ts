@@ -60,3 +60,42 @@ export function summaryText(progress: ServerProgress): string {
   }
   return `正在存图，已存 ${stored} / ${total} 张`
 }
+
+// 发布状态文案。
+const PUBLISH_LABELS: Record<string, string> = {
+  idle: '未发布',
+  pending: '等待发布',
+  publishing: '发布中',
+  published: '已发布',
+  failed: '发布失败',
+}
+
+export function publishStateLabel(state: string): string {
+  return PUBLISH_LABELS[state] ?? state
+}
+
+// publishActive 表示发布任务仍在进行，需要继续轮询。
+export function publishActive(progress: ServerProgress): boolean {
+  return progress.publish_state === 'pending' || progress.publish_state === 'publishing'
+}
+
+// canRequestPublish 判断是否可以发起或重试发布。
+export function canRequestPublish(progress: ServerProgress): boolean {
+  if (progress.status !== 'completed') return false
+  if (progress.public) return false
+  return progress.publish_state === 'idle' || progress.publish_state === 'failed'
+}
+
+// publishSummary 汇总发布状态文案。
+export function publishSummary(progress: ServerProgress): string {
+  if (progress.publish_state === 'published') {
+    return `已发布 ${progress.telegraph_urls.length} 个页面`
+  }
+  if (progress.publish_state === 'failed') {
+    return '发布失败，可重新发布（已创建的页面会复用）'
+  }
+  if (publishActive(progress)) {
+    return '正在发布到 Telegraph…'
+  }
+  return '发布后会生成 Telegraph 分享链接'
+}

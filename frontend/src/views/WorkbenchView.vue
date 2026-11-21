@@ -4,13 +4,13 @@ import DropZone from '../components/workbench/DropZone.vue'
 import ImageGrid from '../components/workbench/ImageGrid.vue'
 import MetaPanel from '../components/workbench/MetaPanel.vue'
 import ProgressPanel from '../components/workbench/ProgressPanel.vue'
-import { commitPost, createPost, fetchProgress, retryPost, uploadImage, type ServerProgress } from '../api/posts.ts'
+import { commitPost, createPost, fetchProgress, publishPost, retryPost, uploadImage, type ServerProgress } from '../api/posts.ts'
 import { ApiError } from '../api/client.ts'
 import { makeCover } from '../utils/cover.ts'
 import { MAX_IMAGE_COUNT, baseName, checkFile, formatBytes, limitForMode, mimeForName, type UploadMode } from '../utils/image.ts'
 import { parseMetaText, type PostMeta } from '../utils/meta.ts'
 import { sortByNaturalName } from '../utils/natural.ts'
-import { isActiveStatus } from '../utils/progress.ts'
+import { isActiveStatus, publishActive } from '../utils/progress.ts'
 import {
   browserStorage,
   clearTask,
@@ -63,6 +63,7 @@ const statuses = ref<Record<number, UploadStatus>>({})
 const snapshot = ref<TaskSnapshot | null>(null)
 const serverProgress = ref<ServerProgress | null>(null)
 const retrying = ref(false)
+const publishing = ref(false)
 const pollIntervalMs = 2000
 let pollTimer: number | undefined
 
@@ -360,9 +361,14 @@ async function refreshProgress(id: number): Promise<void> {
   try {
     const progress = await fetchProgress(id)
     applyServerProgress(progress)
-    if (!isActiveStatus(progress.status)) {
+    // 存图完成后仍可能处于发布中，发布任务结束前继续轮询。
+    if (!isActiveStatus(progress.status) && !publishActive(progress)) {
       stopPolling()
-      if (progress.status === 'completed') {
+      if (progress.publish_state === 'published') {
+        message.value = '已发布到 Telegraph，分享链接见下方'
+      } else if (progress.publish_state === 'failed') {
+        message.value = 'Telegraph 发布失败，可重新发布'
+      } else if (progress.status === 'completed') {
         message.value = '存图完成，图片已进入频道'
       } else if (progress.status === 'failed') {
         message.value = '部分图片存图失败，可以点击重试'
@@ -380,6 +386,22 @@ function startPolling(id: number): void {
   pollTimer = window.setInterval(() => {
     void refreshProgress(id)
   }, pollIntervalMs)
+}
+
+// 管理员确认发布：开启图片访问并进入 Telegraph 发布队列。
+async function publishToTelegraph(): Promise<void> {
+  if (publishing.value || postId.value === 0) return
+  publishing.value = true
+  message.value = ''
+  try {
+    await publishPost(postId.value)
+    message.value = '已提交发布，正在生成 Telegraph 页面'
+    startPolling(postId.value)
+  } catch (error) {
+    pushError(error instanceof ApiError ? error.message : '发布失败，请稍后重试')
+  } finally {
+    publishing.value = false
+  }
 }
 
 // 手动重试失败的图片，随后恢复轮询。
@@ -733,7 +755,13 @@ onBeforeUnmount(() => {
       </template>
 
       <div v-if="serverProgress" class="mt-4">
-        <ProgressPanel :progress="serverProgress" :retrying="retrying" @retry="retryFailed" />
+        <ProgressPanel
+          :progress="serverProgress"
+          :retrying="retrying"
+          :publishing="publishing"
+          @retry="retryFailed"
+          @publish="publishToTelegraph"
+        />
       </div>
 
       <div

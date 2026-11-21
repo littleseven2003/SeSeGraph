@@ -168,3 +168,46 @@ func TestPublishUnknownPost(t *testing.T) {
 func formatID(id int64) string {
 	return strconv.FormatInt(id, 10)
 }
+
+func TestProgressExposesPublishState(t *testing.T) {
+	env := newPublishEnv(t, "https://example.com", true)
+	cookie := env.setup(t)
+	postID := completedPost(t, env)
+
+	rec := env.do(t, http.MethodGet, "/api/posts/"+formatID(postID)+"/progress", "", cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("状态码 = %d，期望 200", rec.Code)
+	}
+	var before struct {
+		PublishState string   `json:"publish_state"`
+		Public       bool     `json:"public"`
+		URLs         []string `json:"telegraph_urls"`
+	}
+	if err := decodeJSON(rec.Body.Bytes(), &before); err != nil {
+		t.Fatalf("响应不是合法 JSON: %v", err)
+	}
+	if before.PublishState != posts.PublishIdle || before.Public || len(before.URLs) != 0 {
+		t.Errorf("发布前状态 = %+v", before)
+	}
+
+	if err := env.posts.MarkPublished(context.Background(), postID,
+		[]string{"Page-1"}, []string{"https://telegra.ph/Page-1"}); err != nil {
+		t.Fatalf("标记发布失败: %v", err)
+	}
+
+	rec = env.do(t, http.MethodGet, "/api/posts/"+formatID(postID)+"/progress", "", cookie)
+	var after struct {
+		PublishState string   `json:"publish_state"`
+		Public       bool     `json:"public"`
+		URLs         []string `json:"telegraph_urls"`
+	}
+	if err := decodeJSON(rec.Body.Bytes(), &after); err != nil {
+		t.Fatalf("响应不是合法 JSON: %v", err)
+	}
+	if after.PublishState != posts.PublishPublished || !after.Public {
+		t.Errorf("发布后状态 = %+v", after)
+	}
+	if len(after.URLs) != 1 || after.URLs[0] != "https://telegra.ph/Page-1" {
+		t.Errorf("分享链接 = %v", after.URLs)
+	}
+}

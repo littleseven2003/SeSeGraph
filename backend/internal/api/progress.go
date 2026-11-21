@@ -63,14 +63,23 @@ func progressHandler(deps Deps) gin.HandlerFunc {
 			return
 		}
 
+		publishState, publishURLs, public, err := deps.Posts.PublishStatus(c.Request.Context(), postID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取发布状态失败"})
+			return
+		}
+
 		c.JSON(http.StatusOK, gin.H{
-			"id":           post.ID,
-			"status":       post.Status,
-			"tags":         tags,
-			"image_count":  post.ImageCount,
-			"stored_count": stored,
-			"failed_count": failed,
-			"images":       items,
+			"id":             post.ID,
+			"status":         post.Status,
+			"tags":           tags,
+			"image_count":    post.ImageCount,
+			"stored_count":   stored,
+			"failed_count":   failed,
+			"images":         items,
+			"publish_state":  publishState,
+			"public":         public,
+			"telegraph_urls": publishURLs,
 		})
 	}
 }

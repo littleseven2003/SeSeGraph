@@ -77,6 +77,12 @@ export interface ServerProgress {
   stored_count: number
   failed_count: number
   images: ServerProgressImage[]
+  /** 发布状态：idle / pending / publishing / published / failed */
+  publish_state: string
+  /** 是否已对外公开 */
+  public: boolean
+  /** 发布完成后的分享链接 */
+  telegraph_urls: string[]
 }
 
 // uploadImage 逐张上传，请求体直接使用浏览器里的 Blob，由后端流式落盘。
@@ -111,4 +117,16 @@ export interface RetryResult {
 export async function retryPost(postId: number): Promise<RetryResult> {
   const response = await adminRequest(`/api/posts/${postId}/retry`, { method: 'POST' })
   return (await response.json()) as RetryResult
+}
+
+export interface PublishResult {
+  id: number
+  publish_state: string
+  public: boolean
+}
+
+// publishPost 由管理员确认发布，开启图片访问并把任务放入发布队列。
+export async function publishPost(postId: number): Promise<PublishResult> {
+  const response = await adminRequest(`/api/posts/${postId}/publish`, { method: 'POST' })
+  return (await response.json()) as PublishResult
 }
