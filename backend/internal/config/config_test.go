@@ -125,6 +125,8 @@ func TestLoadRejectsInvalidPublicURLWithoutEcho(t *testing.T) {
 		{"带查询串", "https://img.example.com/?a=1"},
 		{"空查询串", "https://img.example.com/?"},
 		{"带片段", "https://img.example.com/#top"},
+		{"末尾裸片段标记", "https://img.example.com/#"},
+		{"仅片段标记", "https://img.example.com#"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -149,6 +151,7 @@ func TestPublicURLIsHTTPS(t *testing.T) {
 		"http://img.example.com":           false,
 		"https://img.example.com/?a=1":     false,
 		"https://img.example.com/#top":     false,
+		"https://img.example.com/#":        false,
 		"https://user@img.example.com":     false,
 		"https://":                         false,
 		"":                                 false,

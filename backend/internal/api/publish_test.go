@@ -110,10 +110,11 @@ func TestPublishRequiresTelegraphAndHTTPS(t *testing.T) {
 // 图片保持私有，短码仍然 404。
 func TestPublishRejectsMalformedPublicURL(t *testing.T) {
 	cases := map[string]string{
-		"带查询串": "https://img.example.com/?a=1",
-		"空查询串": "https://img.example.com/?",
-		"带片段":  "https://img.example.com/#top",
-		"内嵌凭据": "https://user@img.example.com",
+		"带查询串":  "https://img.example.com/?a=1",
+		"空查询串":  "https://img.example.com/?",
+		"带片段":   "https://img.example.com/#top",
+		"末尾裸片段": "https://img.example.com/#",
+		"内嵌凭据":  "https://user@img.example.com",
 	}
 	for name, publicURL := range cases {
 		t.Run(name, func(t *testing.T) {

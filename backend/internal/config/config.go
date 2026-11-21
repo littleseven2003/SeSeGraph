@@ -98,7 +98,8 @@ func ValidatePublicURL(raw string) error {
 	if parsed.RawQuery != "" || parsed.ForceQuery {
 		return errors.New("对外访问地址不能包含查询串")
 	}
-	if parsed.Fragment != "" {
+	// 空的片段标记（末尾裸 #）解析后 Fragment 为空，但拼接的图片路径仍会落进片段。
+	if strings.Contains(raw, "#") {
 		return errors.New("对外访问地址不能包含片段")
 	}
 	return nil
