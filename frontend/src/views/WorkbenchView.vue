@@ -7,8 +7,17 @@ import ProgressPanel from '../components/workbench/ProgressPanel.vue'
 import { commitPost, createPost, fetchProgress, retryPost, uploadImage, type ServerProgress } from '../api/posts.ts'
 import { ApiError } from '../api/client.ts'
 import { makeCover } from '../utils/cover.ts'
-import { MAX_IMAGE_COUNT, baseName, checkFile, formatBytes, mimeForName, type UploadMode } from '../utils/image.ts'
+import {
+  MAX_IMAGE_COUNT,
+  baseName,
+  checkFile,
+  formatBytes,
+  limitForMode,
+  mimeForName,
+  type UploadMode,
+} from '../utils/image.ts'
 import { parseMetaText, type PostMeta } from '../utils/meta.ts'
+import { sortByNaturalName } from '../utils/natural.ts'
 import { browserStorage, clearTask, loadTask, saveTask, type StorageLike, type TaskSnapshot } from '../utils/task-store.ts'
 import { isActiveStatus } from '../utils/progress.ts'
 import { acceptedCount, initialStatuses, planUploads, type UploadStatus } from '../utils/upload.ts'
@@ -131,6 +140,18 @@ function applyTiles(next: WorkbenchTile[]): void {
   coverId.value = selectCover(tiles.value, coverId.value)
 }
 
+// 切换画质模式前先确认现有图片在新上限内，避免静默失效。
+function setMode(next: UploadMode): void {
+  if (next === mode.value || locked.value) return
+  const limit = limitForMode(next)
+  const oversized = tiles.value.filter((tile) => tile.size > limit)
+  if (oversized.length > 0) {
+    pushError(`有 ${oversized.length} 张超过 ${limit / (1024 * 1024)}MB 上限，请先移除这些图片再切换`)
+    return
+  }
+  mode.value = next
+}
+
 function onZip(file: File): void {
   working.value = true
   message.value = ''
@@ -193,8 +214,10 @@ function onImages(files: File[]): void {
     accepted.push(addTile(baseName(file.name), file, file.size))
   }
   if (accepted.length === 0) return
+  // 文件夹与多图入口默认按文件名自然排序，已有顺序保持不变。
+  const sorted = sortByNaturalName(accepted, (tile) => tile.name)
   statuses.value = {}
-  applyTiles([...tiles.value, ...accepted])
+  applyTiles([...tiles.value, ...sorted])
   void refreshCover()
 }
 
@@ -483,6 +506,31 @@ onBeforeUnmount(() => {
         </span>
       </div>
 
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-surface px-4 py-3">
+        <div>
+          <p class="text-sm font-medium">画质模式</p>
+          <p class="mt-0.5 text-xs text-muted">
+            {{ mode === 'document' ? 'document 原图，单图上限 20MB' : 'photo 省流量，单图上限 10MB' }}
+          </p>
+        </div>
+        <div class="flex rounded-md border border-line p-0.5" role="group" aria-label="画质模式">
+          <button
+            v-for="option in [
+              { value: 'photo', label: 'photo 省流量' },
+              { value: 'document', label: 'document 原图' },
+            ]"
+            :key="option.value"
+            type="button"
+            class="h-8 rounded px-2.5 text-xs font-medium transition disabled:opacity-50"
+            :class="mode === option.value ? 'bg-brand text-brand-ink' : 'text-muted hover:bg-canvas'"
+            :disabled="locked"
+            @click="setMode(option.value as UploadMode)"
+          >
+            {{ option.label }}
+          </button>
+        </div>
+      </div>
+
       <DropZone :disabled="working || locked" @zip="onZip" @images="onImages" @error="pushError" />
 
       <div v-if="working" class="mt-3 text-sm text-muted">正在解压压缩包…</div>
@@ -493,32 +541,14 @@ onBeforeUnmount(() => {
             <h2 class="text-base font-semibold">图片顺序</h2>
             <p class="mt-0.5 text-xs text-muted">拖拽或使用箭头调整顺序，序号即上传顺序，点选封面用于列表展示。</p>
           </div>
-          <div class="flex items-center gap-2">
-            <div class="flex rounded-md border border-line bg-surface p-0.5" role="group" aria-label="画质模式">
-              <button
-                v-for="option in [
-                  { value: 'photo', label: 'photo 省流量' },
-                  { value: 'document', label: 'document 原图' },
-                ]"
-                :key="option.value"
-                type="button"
-                class="h-8 rounded px-2.5 text-xs font-medium transition disabled:opacity-50"
-                :class="mode === option.value ? 'bg-brand text-brand-ink' : 'text-muted hover:bg-canvas'"
-                :disabled="locked"
-                @click="mode = option.value as UploadMode"
-              >
-                {{ option.label }}
-              </button>
-            </div>
-            <button
-              type="button"
-              class="h-8 rounded-md border border-line px-2.5 text-xs font-medium transition hover:border-muted/40 hover:bg-canvas disabled:opacity-50"
-              :disabled="locked"
-              @click="onSortByName"
-            >
-              按文件名排序
-            </button>
-          </div>
+          <button
+            type="button"
+            class="h-8 rounded-md border border-line px-2.5 text-xs font-medium transition hover:border-muted/40 hover:bg-canvas disabled:opacity-50"
+            :disabled="locked"
+            @click="onSortByName"
+          >
+            按文件名排序
+          </button>
         </div>
 
         <div class="mt-3 flex flex-col gap-4 lg:flex-row">

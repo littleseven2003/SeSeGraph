@@ -32,3 +32,22 @@ test('超过当前模式上限时给出提示', () => {
   assert.equal(checkFile({ name: 'a.txt', size: 1 }, 'photo', 1), 'a.txt 不是支持的图片格式')
   assert.equal(checkFile({ name: 'a.jpg', size: 1 }, 'photo', MAX_IMAGE_COUNT + 1), `单个帖子最多 ${MAX_IMAGE_COUNT} 张图片`)
 })
+
+test('全原图批次在 document 模式下全部通过，photo 模式全部被拒', () => {
+  const batch = [
+    { name: '1.jpg', size: 12 * 1024 * 1024 },
+    { name: '2.jpg', size: 14 * 1024 * 1024 },
+    { name: '3.jpg', size: 18 * 1024 * 1024 },
+  ]
+  assert.deepEqual(
+    batch.map((file, index) => checkFile(file, 'document', index + 1)),
+    [null, null, null],
+  )
+  assert.ok(batch.every((file, index) => checkFile(file, 'photo', index + 1) !== null))
+})
+
+test('切换到原图模式后 10–20MiB 的图片不再被拒', () => {
+  const file = { name: 'big.jpg', size: 15 * 1024 * 1024 }
+  assert.match(checkFile(file, 'photo', 1) ?? '', /10MB/)
+  assert.equal(checkFile(file, 'document', 1), null)
+})
