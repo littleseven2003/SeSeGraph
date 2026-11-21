@@ -436,3 +436,40 @@ func TestTelegramEarlyRateLimitIsPreserved(t *testing.T) {
 		t.Errorf("RetryAfter = %s，期望 37s", limited.RetryAfter)
 	}
 }
+
+type shortReader struct {
+	data []byte
+	sent bool
+}
+
+func (s *shortReader) Read(p []byte) (int, error) {
+	if s.sent {
+		return 0, errors.New("读取源中断")
+	}
+	s.sent = true
+	n := copy(p, s.data)
+	return n, nil
+}
+
+func TestTelegramWaitsForPipeCompletion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 只读少量请求体就返回成功，模拟上游提前确认。
+		buf := make([]byte, 8)
+		_, _ = r.Body.Read(buf)
+		_, _ = io.WriteString(w, `{"ok":true,"result":{"message_id":1,"photo":[{"file_id":"id-1"}]}}`)
+	}))
+	defer server.Close()
+
+	provider, err := NewTelegram(TelegramConfig{Token: testToken, ChatID: testChatID, APIBase: server.URL})
+	if err != nil {
+		t.Fatalf("创建提供方失败: %v", err)
+	}
+
+	_, err = provider.Upload(context.Background(), UploadRequest{
+		Mode:   ModePhoto,
+		Reader: &shortReader{data: []byte("0123456789")},
+	})
+	if !errors.Is(err, ErrUpstream) {
+		t.Fatalf("错误 = %v，期望 ErrUpstream（管道未完整写出）", err)
+	}
+}

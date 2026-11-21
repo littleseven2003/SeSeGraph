@@ -155,6 +155,19 @@ func (t *Telegram) Upload(ctx context.Context, req UploadRequest) (UploadResult,
 		return UploadResult{}, t.errorFor(payload)
 	}
 
+	// 上游返回成功后仍需确认本地管道已完整写出，避免把中途中断当成成功。
+	select {
+	case writeErr := <-writeDone:
+		if writeErr != nil {
+			if errors.Is(writeErr, ErrTooLarge) {
+				return UploadResult{}, ErrTooLarge
+			}
+			return UploadResult{}, ErrUpstream
+		}
+	case <-ctx.Done():
+		return UploadResult{}, ctx.Err()
+	}
+
 	return t.resultFrom(payload.Result, mode)
 }
 

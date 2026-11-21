@@ -439,3 +439,76 @@ func (r *Repository) CleanupOrphans(ctx context.Context, dataDir string, retenti
 	}
 	return removed, nil
 }
+
+// PendingImages 返回尚未上传到图床的图片，按序号升序。
+func (r *Repository) PendingImages(ctx context.Context, postID int64) ([]Image, error) {
+	rows, err := r.handle.QueryContext(ctx,
+		`SELECT id, sort_order, mime_type, file_size, temp_file_path, status
+		 FROM post_images
+		 WHERE post_id = ? AND status = ? AND remote_file_id = ''
+		 ORDER BY sort_order`, postID, ImageStatusUploaded)
+	if err != nil {
+		return nil, errors.New("读取待上传图片失败")
+	}
+	defer rows.Close()
+
+	var images []Image
+	for rows.Next() {
+		image := Image{PostID: postID}
+		if err := rows.Scan(&image.ID, &image.SortOrder, &image.MimeType,
+			&image.FileSize, &image.TempFilePath, &image.Status); err != nil {
+			return nil, errors.New("读取待上传图片失败")
+		}
+		images = append(images, image)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.New("读取待上传图片失败")
+	}
+	return images, nil
+}
+
+// MarkImageStored 记录远端标识并清空本地临时路径。
+func (r *Repository) MarkImageStored(ctx context.Context, imageID int64, fileID string, messageID int64, provider string) error {
+	if _, err := r.handle.ExecContext(ctx,
+		`UPDATE post_images
+		 SET remote_file_id = ?, remote_message_id = ?, storage_provider = ?, status = ?,
+		     temp_file_path = '', error_message = ''
+		 WHERE id = ?`,
+		fileID, messageID, provider, ImageStatusStored, imageID,
+	); err != nil {
+		return errors.New("记录远端标识失败")
+	}
+	return nil
+}
+
+// MarkImageFailed 记录单张图片的失败原因。
+func (r *Repository) MarkImageFailed(ctx context.Context, imageID int64, message string) error {
+	if _, err := r.handle.ExecContext(ctx,
+		`UPDATE post_images SET status = ?, error_message = ? WHERE id = ?`,
+		ImageStatusFailed, message, imageID,
+	); err != nil {
+		return errors.New("记录图片失败状态失败")
+	}
+	return nil
+}
+
+// CountStored 统计已存入图床的图片数量。
+func (r *Repository) CountStored(ctx context.Context, postID int64) (int, error) {
+	var total int
+	if err := r.handle.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM post_images WHERE post_id = ? AND status = ?`,
+		postID, ImageStatusStored).Scan(&total); err != nil {
+		return 0, errors.New("统计已存图片失败")
+	}
+	return total, nil
+}
+
+// MarkPostFinished 结束帖子的上传流程，写入最终状态与失败原因。
+func (r *Repository) MarkPostFinished(ctx context.Context, postID int64, status, message string) error {
+	if _, err := r.handle.ExecContext(ctx,
+		`UPDATE posts SET status = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		status, message, postID); err != nil {
+		return errors.New("更新帖子状态失败")
+	}
+	return nil
+}
