@@ -1,15 +1,18 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 
 	"github.com/gin-gonic/gin"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/api"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/config"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/db"
 )
 
 // 构建时通过 -ldflags 注入，未注入时使用开发默认值。
@@ -17,6 +20,9 @@ var (
 	version = "dev"
 	commit  = "unknown"
 )
+
+// databaseFileName 是数据目录下的数据库文件名。
+const databaseFileName = "sesegraph.db"
 
 func main() {
 	if err := run(os.Args[1:], os.LookupEnv); err != nil {
@@ -39,6 +45,16 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	gin.SetMode(gin.ReleaseMode)
 	router := api.NewRouter(version, commit)
 
+	store, err := db.Open(filepath.Join(cfg.DataDir, databaseFileName))
+	if err != nil {
+		return errDatabase
+	}
+	defer func() { _ = store.Close() }()
+
+	if err := db.Migrate(context.Background(), store); err != nil {
+		return errDatabase
+	}
+
 	// 只记录版本信息，监听地址与数据目录属于本地部署细节，不写入日志。
 	log.Printf("服务启动：版本 %s（提交 %s）", version, commit)
 
@@ -51,3 +67,6 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 
 // errServerStart 是启动失败时对外的固定说明，避免回显配置取值。
 var errServerStart = errors.New("HTTP 服务启动失败，请检查监听地址是否可用")
+
+// errDatabase 是数据库初始化失败时的固定说明，不包含路径等本地信息。
+var errDatabase = errors.New("数据库初始化失败，请检查数据目录是否可写")

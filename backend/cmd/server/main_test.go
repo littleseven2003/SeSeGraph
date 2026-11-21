@@ -4,8 +4,12 @@ import (
 	"bytes"
 	"log"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/littleseven2003/SeSeGraph/backend/internal/db"
 )
 
 // noEnv 模拟没有任何环境变量参与配置。
@@ -24,14 +28,13 @@ func TestRunHidesConfigOnListenFailure(t *testing.T) {
 	addr, closeFn := occupyPort(t)
 	defer closeFn()
 
-	const markedDataDir = "/tmp/sesegraph-marked-datadir"
-
-	err := run([]string{"--addr", addr, "--data", markedDataDir}, noEnv)
+	dataDir := t.TempDir()
+	err := run([]string{"--addr", addr, "--data", dataDir}, noEnv)
 	if err == nil {
 		t.Fatal("端口已被占用时应返回错误")
 	}
 	msg := err.Error()
-	for _, value := range []string{addr, markedDataDir} {
+	for _, value := range []string{addr, dataDir} {
 		if strings.Contains(msg, value) {
 			t.Errorf("错误信息不应回显配置原值 %q，实际: %s", value, msg)
 		}
@@ -47,14 +50,101 @@ func TestStartupLogHidesConfig(t *testing.T) {
 	log.SetOutput(&buf)
 	defer log.SetOutput(original)
 
-	const markedDataDir = "/tmp/sesegraph-marked-logdir"
-	_ = run([]string{"--addr", addr, "--data", markedDataDir}, noEnv)
+	dataDir := t.TempDir()
+	_ = run([]string{"--addr", addr, "--data", dataDir}, noEnv)
 
 	logged := buf.String()
-	for _, value := range []string{addr, markedDataDir} {
+	for _, value := range []string{addr, dataDir} {
 		if strings.Contains(logged, value) {
 			t.Errorf("启动日志不应包含配置原值 %q，实际: %s", value, logged)
 		}
+	}
+}
+
+func TestRunInitializesDatabase(t *testing.T) {
+	addr, closeFn := occupyPort(t)
+	defer closeFn()
+
+	dataDir := t.TempDir()
+	if err := run([]string{"--addr", addr, "--data", dataDir}, noEnv); err == nil {
+		t.Fatal("端口已被占用时应返回错误")
+	}
+
+	store, err := db.Open(filepath.Join(dataDir, databaseFileName))
+	if err != nil {
+		t.Fatalf("启动后应生成可打开的数据库文件: %v", err)
+	}
+	defer store.Close()
+
+	var version int
+	if err := store.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		t.Fatalf("读取结构版本失败: %v", err)
+	}
+	if version != db.SchemaVersion {
+		t.Errorf("user_version = %d，期望 %d", version, db.SchemaVersion)
+	}
+
+	var table string
+	if err := store.QueryRow(
+		"SELECT name FROM sqlite_master WHERE type='table' AND name='posts'",
+	).Scan(&table); err != nil {
+		t.Errorf("启动后应存在 posts 表: %v", err)
+	}
+}
+
+func TestRunKeepsDatabaseAcrossRestarts(t *testing.T) {
+	addr, closeFn := occupyPort(t)
+	defer closeFn()
+	dataDir := t.TempDir()
+
+	if err := run([]string{"--addr", addr, "--data", dataDir}, noEnv); err == nil {
+		t.Fatal("首次启动应因端口占用失败")
+	}
+	store, err := db.Open(filepath.Join(dataDir, databaseFileName))
+	if err != nil {
+		t.Fatalf("首次启动后打开数据库失败: %v", err)
+	}
+	if _, err := store.Exec("INSERT INTO posts (title) VALUES ('重启前写入')"); err != nil {
+		t.Fatalf("写入帖子失败: %v", err)
+	}
+	_ = store.Close()
+
+	if err := run([]string{"--addr", addr, "--data", dataDir}, noEnv); err == nil {
+		t.Fatal("再次启动应因端口占用失败")
+	}
+
+	again, err := db.Open(filepath.Join(dataDir, databaseFileName))
+	if err != nil {
+		t.Fatalf("再次启动后打开数据库失败: %v", err)
+	}
+	defer again.Close()
+
+	var title string
+	if err := again.QueryRow("SELECT title FROM posts LIMIT 1").Scan(&title); err != nil {
+		t.Fatalf("重复启动后应保留已有数据: %v", err)
+	}
+	if title != "重启前写入" {
+		t.Errorf("title = %q，期望保留原数据", title)
+	}
+}
+
+func TestRunHidesDatabaseFailure(t *testing.T) {
+	base := t.TempDir()
+	blocker := filepath.Join(base, "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatalf("准备文件失败: %v", err)
+	}
+	dataDir := filepath.Join(blocker, "data")
+
+	err := run([]string{"--addr", "127.0.0.1:0", "--data", dataDir}, noEnv)
+	if err == nil {
+		t.Fatal("数据目录不可用时应返回错误")
+	}
+	if err.Error() != errDatabase.Error() {
+		t.Errorf("错误信息 = %q，期望固定说明且不回显路径", err.Error())
+	}
+	if strings.Contains(err.Error(), dataDir) {
+		t.Errorf("错误信息不应回显数据目录: %s", err.Error())
 	}
 }
 
