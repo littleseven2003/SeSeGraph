@@ -336,15 +336,15 @@ func (r *Repository) MarkPublished(ctx context.Context, postID int64, paths, url
 }
 
 // UpdateMetadata 更新标题、说明与作者名，不改动发布状态、发布时间与页面路径。
-func (r *Repository) UpdateMetadata(ctx context.Context, postID int64, title, description, authorName string) error {
-	// 状态条件与读取分开校验：写入时再确认一次，避免读取后被发布队列改走旧元数据。
-	// 允许：普通草稿、已发布帖（远端已更新）、没有页面路径的失败帖。
+func (r *Repository) UpdateMetadata(ctx context.Context, postID int64, expectedState, title, description, authorName string) error {
+	// 写入时按读取到的状态再校验一次：读取后整次发布已完成或已入队都会失败，
+	// 避免远端与本地分别落到不同版本。失败帖还要求没有可复用的页面路径。
 	result, err := r.handle.ExecContext(ctx,
 		`UPDATE posts SET title = ?, description = ?, author_name = ?, updated_at = CURRENT_TIMESTAMP
-		 WHERE id = ?
+		 WHERE id = ? AND publish_state = ?
 		   AND (publish_state IN (?, ?)
-		        OR (publish_state = ? AND (telegraph_paths = '[]' OR telegraph_paths = '')))`,
-		title, description, authorName, postID,
+		        OR (publish_state = ? AND telegraph_paths IN ('[]', '')))`,
+		title, description, authorName, postID, expectedState,
 		PublishIdle, PublishPublished, PublishFailed)
 	if err != nil {
 		return errors.New("更新帖子失败")

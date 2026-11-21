@@ -71,7 +71,7 @@ func (e *Editor) Update(ctx context.Context, postID int64, meta Metadata) error 
 		info.State == posts.PublishFailed && len(info.Paths) == 0,
 		info.State == posts.PublishPublished && len(info.Paths) == 0:
 		// 没有可复用的远端页面，只改本地记录。
-		return e.repo.UpdateMetadata(ctx, postID, meta.Title, meta.Description, meta.AuthorName)
+		return e.repo.UpdateMetadata(ctx, postID, info.State, meta.Title, meta.Description, meta.AuthorName)
 	default:
 		// 待发布、发布中，或已有页面路径的失败帖：发布器可能已读走旧元数据。
 		return ErrPublishInProgress
@@ -114,5 +114,5 @@ func (e *Editor) Update(ctx context.Context, postID int64, meta Metadata) error 
 		}
 	}
 
-	return e.repo.UpdateMetadata(ctx, postID, meta.Title, meta.Description, meta.AuthorName)
+	return e.repo.UpdateMetadata(ctx, postID, info.State, meta.Title, meta.Description, meta.AuthorName)
 }
