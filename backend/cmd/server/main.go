@@ -19,6 +19,7 @@ import (
 	"github.com/littleseven2003/SeSeGraph/backend/internal/config"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/db"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/publisher"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/settings"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/storage"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/telegraph"
@@ -102,6 +103,9 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	stopWorker := startUploadQueue(ctx, repository, cfg.DataDir, streams, lookupEnv)
 	defer stopWorker()
 
+	stopPublisher := startPublisher(ctx, repository, telegraphManager, cfg.PublicURL)
+	defer stopPublisher()
+
 	// 只记录版本信息，监听地址与数据目录属于本地部署细节，不写入日志。
 	log.Printf("服务启动：版本 %s（提交 %s）", version, commit)
 
@@ -153,6 +157,41 @@ func buildStreamProvider(lookupEnv func(string) (string, bool)) storage.StreamPr
 		return nil
 	}
 	return provider
+}
+
+// startPublisher 在 Telegraph 已配置且对外地址为 HTTPS 时启动发布队列。
+func startPublisher(ctx context.Context, repository *posts.Repository, manager *telegraph.Manager, publicURL string) func() {
+	if manager == nil {
+		log.Print("Telegraph 未配置，发布队列未启动")
+		return func() {}
+	}
+	if !isHTTPS(publicURL) {
+		log.Print("对外地址不是 HTTPS，发布队列未启动")
+		return func() {}
+	}
+	client, err := manager.Client(ctx)
+	if err != nil {
+		log.Print("Telegraph 未配置，发布队列未启动")
+		return func() {}
+	}
+
+	queue, err := publisher.New(publisher.Options{
+		Repository: repository,
+		Pages:      client,
+		PublicURL:  publicURL,
+	})
+	if err != nil {
+		log.Print("发布队列初始化失败")
+		return func() {}
+	}
+	if _, err := queue.Recover(ctx); err != nil {
+		log.Print("发布队列恢复失败")
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	go queue.Run(runCtx)
+	log.Print("发布队列已启动")
+	return cancel
 }
 
 // buildTelegraphManager 创建 Telegraph 账户管理，环境变量令牌优先于数据库。
