@@ -279,3 +279,84 @@ func TestTelegramConfigValidation(t *testing.T) {
 		t.Errorf("未知模式应返回 ErrUnsupportedMode，实际 %v", err)
 	}
 }
+
+func newErrorServer(t *testing.T, status int, body string) *Telegram {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, body)
+	}))
+	t.Cleanup(server.Close)
+
+	provider, err := NewTelegram(TelegramConfig{Token: testToken, ChatID: testChatID, APIBase: server.URL})
+	if err != nil {
+		t.Fatalf("创建提供方失败: %v", err)
+	}
+	return provider
+}
+
+func TestTelegramRateLimitedParsesRetryAfter(t *testing.T) {
+	provider := newErrorServer(t, http.StatusTooManyRequests,
+		`{"ok":false,"error_code":429,"description":"Too Many Requests: retry after 37","parameters":{"retry_after":37}}`)
+
+	_, err := provider.Upload(context.Background(), UploadRequest{Mode: ModePhoto, Reader: strings.NewReader("x")})
+	if !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("错误 = %v，期望 ErrRateLimited", err)
+	}
+
+	var limited *RateLimitError
+	if !errors.As(err, &limited) {
+		t.Fatalf("错误应可提取为 RateLimitError，实际 %T", err)
+	}
+	if limited.RetryAfter != 37*time.Second {
+		t.Errorf("RetryAfter = %s，期望 37s", limited.RetryAfter)
+	}
+}
+
+func TestTelegramRateLimitedWithoutParameters(t *testing.T) {
+	provider := newErrorServer(t, http.StatusTooManyRequests, `{"ok":false,"error_code":429}`)
+
+	_, err := provider.Upload(context.Background(), UploadRequest{Mode: ModePhoto, Reader: strings.NewReader("x")})
+	var limited *RateLimitError
+	if !errors.As(err, &limited) {
+		t.Fatalf("错误应可提取为 RateLimitError，实际 %v", err)
+	}
+	if limited.RetryAfter != 0 {
+		t.Errorf("RetryAfter = %s，期望 0", limited.RetryAfter)
+	}
+}
+
+func TestTelegramErrorsDoNotLeakCredentials(t *testing.T) {
+	cases := map[string]string{
+		"上游说明含令牌":   `{"ok":false,"error_code":400,"description":"bad request to /bot` + testToken + `/sendPhoto","parameters":{}}`,
+		"上游说明含文件地址": `{"ok":false,"error_code":404,"description":"https://api.telegram.org/file/bot` + testToken + `/photos/1.jpg"}`,
+		"非法 JSON":   `not-json`,
+	}
+	for name, body := range cases {
+		provider := newErrorServer(t, http.StatusInternalServerError, body)
+		_, err := provider.Upload(context.Background(), UploadRequest{Mode: ModePhoto, Reader: strings.NewReader("x")})
+		if err == nil {
+			t.Fatalf("%s：应返回错误", name)
+		}
+		message := err.Error()
+		for _, secret := range []string{testToken, "api.telegram.org/file", testChatID} {
+			if strings.Contains(message, secret) {
+				t.Errorf("%s：错误信息泄露 %q：%s", name, secret, message)
+			}
+		}
+	}
+}
+
+func TestTelegramSuccessResultHasNoURL(t *testing.T) {
+	api := newFakeAPI(t)
+	provider := newTestProvider(t, api, TelegramConfig{})
+
+	result, err := provider.Upload(context.Background(), UploadRequest{Mode: ModePhoto, Reader: strings.NewReader("x")})
+	if err != nil {
+		t.Fatalf("上传失败: %v", err)
+	}
+	if strings.Contains(result.FileID, "http") || strings.Contains(result.FileID, testToken) {
+		t.Errorf("远端标识不应包含地址或令牌: %q", result.FileID)
+	}
+}

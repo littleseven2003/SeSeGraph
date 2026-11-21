@@ -200,10 +200,13 @@ func (t *Telegram) streamBody(req UploadRequest, field string, limit int64) (io.
 }
 
 type apiResponse struct {
-	OK          bool            `json:"ok"`
-	ErrorCode   int             `json:"error_code"`
-	Description string          `json:"description"`
-	Result      json.RawMessage `json:"result"`
+	OK          bool   `json:"ok"`
+	ErrorCode   int    `json:"error_code"`
+	Description string `json:"description"`
+	Parameters  struct {
+		RetryAfter int `json:"retry_after"`
+	} `json:"parameters"`
+	Result json.RawMessage `json:"result"`
 }
 
 type messageResult struct {
@@ -220,7 +223,13 @@ type messageResult struct {
 }
 
 // errorFor 把上游失败转换为对外错误，不带原始描述与请求地址。
+// 429 会转成带等待时长的限流错误，重试排期由调用方决定。
 func (t *Telegram) errorFor(payload apiResponse) error {
+	if payload.ErrorCode == http.StatusTooManyRequests {
+		return &RateLimitError{
+			RetryAfter: time.Duration(payload.Parameters.RetryAfter) * time.Second,
+		}
+	}
 	return fmt.Errorf("%w：上游返回 %d", ErrUpstream, payload.ErrorCode)
 }
 
