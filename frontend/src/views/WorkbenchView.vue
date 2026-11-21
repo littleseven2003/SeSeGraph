@@ -137,26 +137,22 @@ function onZip(file: File): void {
   const reader = new FileReader()
   reader.onload = () => {
     try {
-      const unpacked = unpackZip(new Uint8Array(reader.result as ArrayBuffer), DEFAULT_META_FILENAMES)
-      if (unpacked.images.length === 0) {
-        pushError('压缩包里没有找到受支持的图片')
-        return
-      }
-      if (unpacked.images.length > MAX_IMAGE_COUNT) {
-        pushError(`单个帖子最多 ${MAX_IMAGE_COUNT} 张图片，请先精简压缩包`)
+      const result = unpackZip(new Uint8Array(reader.result as ArrayBuffer), { metaNames: DEFAULT_META_FILENAMES })
+      if (!result.ok) {
+        pushError(result.error)
         return
       }
       releaseTiles(tiles.value)
-      const next = unpacked.images.map((image) =>
+      const next = result.images.map((image) =>
         addTile(baseName(image.name), new Blob([image.data.slice()], { type: mimeForName(image.name) }), image.data.length),
       )
-      metaText.value = unpacked.metaText
-      metaSource.value = unpacked.metaText === '' ? '' : unpacked.metaName
+      metaText.value = result.metaText
+      metaSource.value = result.metaText === '' ? '' : result.metaName
       statuses.value = {}
       applyTiles(next)
-      if (unpacked.metaText !== '') {
+      if (result.metaText !== '') {
         // 包内存在说明文件时自动预填，缺失字段仍可手动补充。
-        const parsed = parseMetaText(unpacked.metaText, 'first-line')
+        const parsed = parseMetaText(result.metaText, 'first-line')
         draft.value = {
           title: parsed.title,
           description: parsed.description,
@@ -164,8 +160,8 @@ function onZip(file: File): void {
           author: parsed.author,
         }
       }
-      if (unpacked.skipped > 0) {
-        message.value = `已忽略 ${unpacked.skipped} 个非图片文件`
+      if (result.skipped > 0) {
+        message.value = `已忽略 ${result.skipped} 个非图片文件`
       }
       void refreshCover()
     } catch {

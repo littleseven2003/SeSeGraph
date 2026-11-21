@@ -1,4 +1,4 @@
-// 在浏览器内解压 ZIP，只保留图片与可选的元信息文本文件。
+// 在浏览器内解压 ZIP：先读中央目录筛选条目并检查限制，只展开命中的图片与说明文件。
 import { unzipSync } from 'fflate'
 import { baseName, isImageName } from './image.ts'
 import { sortByNaturalName } from './natural.ts'
@@ -6,20 +6,43 @@ import { sortByNaturalName } from './natural.ts'
 // 默认识别的元信息文件名，匹配时不区分大小写。
 export const DEFAULT_META_FILENAMES = ['info.txt', 'meta.txt', 'readme.txt']
 
+// 单个压缩包的展开限制，避免一次解压把页面拖死。
+export interface ArchiveLimits {
+  /** 允许的图片张数上限 */
+  maxImages: number
+  /** 单张图片展开后的上限 */
+  maxImageBytes: number
+  /** 全部图片展开后的总上限 */
+  maxTotalBytes: number
+}
+
+export const DEFAULT_ARCHIVE_LIMITS: ArchiveLimits = {
+  maxImages: 500,
+  maxImageBytes: 20 * 1024 * 1024,
+  maxTotalBytes: 512 * 1024 * 1024,
+}
+
 // 解压后的单张图片。
 export interface ArchiveImage {
   name: string
   data: Uint8Array
 }
 
-// 解压结果：图片按自然排序，元信息文本可为空。
+// 解压结果：成功时给出图片与说明文本，超限时只返回原因。
 export interface UnpackedArchive {
   images: ArchiveImage[]
   metaText: string
   /** 命中的元信息文件名，未命中时为空串 */
   metaName: string
-  /** 被跳过的条目数量，用于界面提示 */
+  /** 被跳过的非图片条目数量，用于界面提示 */
   skipped: number
+}
+
+export type UnpackResult = ({ ok: true } & UnpackedArchive) | { ok: false; error: string }
+
+interface ArchiveOptions {
+  metaNames?: readonly string[]
+  limits?: Partial<ArchiveLimits>
 }
 
 function isJunkPath(name: string): boolean {
@@ -31,33 +54,104 @@ function isDirectoryEntry(name: string): boolean {
   return name.endsWith('/')
 }
 
-// unpackZip 同步解压，传入完整压缩包字节。浏览器端执行，不占用服务端资源。
-export function unpackZip(data: Uint8Array, metaNames: readonly string[] = DEFAULT_META_FILENAMES): UnpackedArchive {
-  const wanted = new Set(metaNames.map((name) => name.toLowerCase()))
-  const files = unzipSync(data, {
-    filter: (file) => !isDirectoryEntry(file.name) && !isJunkPath(file.name),
-  })
+function formatMegabytes(bytes: number): string {
+  return `${Math.floor(bytes / (1024 * 1024))}MB`
+}
 
-  const images: ArchiveImage[] = []
-  let metaBytes: Uint8Array | null = null
+// unpackZip 分两遍处理压缩包：
+// 第一遍只遍历中央目录（filter 一律返回 false，不展开数据），据此执行数量、单张与总量限制；
+// 第二遍只展开白名单内的条目。
+export function unpackZip(data: Uint8Array, options: ArchiveOptions = {}): UnpackResult {
+  const limits: ArchiveLimits = { ...DEFAULT_ARCHIVE_LIMITS, ...options.limits }
+  const wantedMeta = new Set((options.metaNames ?? DEFAULT_META_FILENAMES).map((name) => name.toLowerCase()))
+
+  const images: { name: string; size: number }[] = []
+  const wanted = new Set<string>()
+  let metaEntry = ''
   let metaName = ''
   let skipped = 0
+  let totalBytes = 0
+  let overCount = 0
+  let oversizeName = ''
+  let overTotal = false
 
-  for (const [name, bytes] of Object.entries(files)) {
-    if (isImageName(name)) {
-      images.push({ name, data: bytes })
-      continue
+  // 第一遍：只登记条目，不展开任何数据。
+  unzipSync(data, {
+    filter: (file) => {
+      if (isDirectoryEntry(file.name) || isJunkPath(file.name)) return false
+      if (isImageName(file.name)) {
+        if (images.length >= limits.maxImages || overCount > 0) {
+          overCount += 1
+          return false
+        }
+        const size = file.originalSize
+        if (size > limits.maxImageBytes) {
+          if (oversizeName === '') oversizeName = baseName(file.name)
+          return false
+        }
+        if (totalBytes + size > limits.maxTotalBytes) {
+          overTotal = true
+          return false
+        }
+        totalBytes += size
+        images.push({ name: file.name, size })
+        wanted.add(file.name)
+        return false
+      }
+      if (metaEntry === '' && wantedMeta.has(baseName(file.name).toLowerCase())) {
+        metaEntry = file.name
+        metaName = baseName(file.name)
+        wanted.add(file.name)
+        return false
+      }
+      skipped += 1
+      return false
+    },
+  })
+
+  if (overCount > 0) {
+    return { ok: false, error: `压缩包内图片超过 ${limits.maxImages} 张，请先精选后再上传` }
+  }
+  if (oversizeName !== '') {
+    return {
+      ok: false,
+      error: `${oversizeName} 超过 ${formatMegabytes(limits.maxImageBytes)} 上限，请压缩后重试`,
     }
-    if (metaBytes === null && wanted.has(baseName(name).toLowerCase())) {
-      metaBytes = bytes
-      metaName = baseName(name)
-      continue
+  }
+  if (overTotal) {
+    return {
+      ok: false,
+      error: `压缩包展开后超过 ${formatMegabytes(limits.maxTotalBytes)}，请分批上传`,
     }
-    skipped += 1
+  }
+  if (images.length === 0) {
+    return { ok: false, error: '压缩包里没有找到受支持的图片' }
   }
 
+  // 第二遍：只展开白名单条目。
+  const files = unzipSync(data, {
+    filter: (file) => wanted.has(file.name),
+  })
+
+  const unpacked: ArchiveImage[] = []
+  let actualBytes = 0
+  for (const image of images) {
+    const bytes = files[image.name]
+    if (!bytes) continue
+    actualBytes += bytes.length
+    if (actualBytes > limits.maxTotalBytes) {
+      return {
+        ok: false,
+        error: `压缩包展开后超过 ${formatMegabytes(limits.maxTotalBytes)}，请分批上传`,
+      }
+    }
+    unpacked.push({ name: image.name, data: bytes })
+  }
+
+  const metaBytes = metaEntry !== '' ? files[metaEntry] : undefined
   return {
-    images: sortByNaturalName(images, (image) => image.name),
+    ok: true,
+    images: sortByNaturalName(unpacked, (image) => image.name),
     metaText: metaBytes ? new TextDecoder('utf-8').decode(metaBytes) : '',
     metaName,
     skipped,
