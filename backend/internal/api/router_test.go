@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/auth"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/db"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
 )
 
 func init() {
@@ -32,6 +33,8 @@ type testEnv struct {
 	logger     *log.Logger
 	sessions   *auth.Sessions
 	setupToken string
+	dataDir    string
+	posts      *posts.Repository
 }
 
 func newTestEnv(t *testing.T, setupToken string) *testEnv {
@@ -51,6 +54,9 @@ func newTestEnv(t *testing.T, setupToken string) *testEnv {
 	service := auth.NewService(handle)
 	sessions := auth.NewSessions([]byte("0123456789abcdef0123456789abcdef"), time.Hour, false)
 
+	dataDir := t.TempDir()
+	repository := posts.NewRepository(handle)
+
 	router := NewRouter(Deps{
 		Version:    "v0.1.0-test",
 		Commit:     "abc1234",
@@ -58,6 +64,8 @@ func newTestEnv(t *testing.T, setupToken string) *testEnv {
 		Sessions:   sessions,
 		SetupToken: setupToken,
 		Logger:     logger,
+		DataDir:    dataDir,
+		Posts:      repository,
 	})
 	return &testEnv{
 		router:     router,
@@ -67,6 +75,8 @@ func newTestEnv(t *testing.T, setupToken string) *testEnv {
 		logger:     logger,
 		sessions:   sessions,
 		setupToken: setupToken,
+		dataDir:    dataDir,
+		posts:      repository,
 	}
 }
 

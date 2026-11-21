@@ -15,6 +15,7 @@ import (
 	"github.com/littleseven2003/SeSeGraph/backend/internal/auth"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/config"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/db"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/web"
 )
 
@@ -79,6 +80,8 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		Sessions:   auth.NewSessions(secret, auth.DefaultSessionTTL, isHTTPS(cfg.PublicURL)),
 		SetupToken: readSetupToken(lookupEnv),
 		WebFS:      assets,
+		DataDir:    cfg.DataDir,
+		Posts:      posts.NewRepository(store),
 	})
 
 	// 只记录版本信息，监听地址与数据目录属于本地部署细节，不写入日志。

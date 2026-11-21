@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/auth"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
 )
 
 // Deps 汇总构建路由所需的依赖。
@@ -21,6 +22,8 @@ type Deps struct {
 	SetupToken string
 	Logger     *log.Logger
 	WebFS      fs.FS
+	DataDir    string
+	Posts      *posts.Repository
 }
 
 // maxAuthBodyBytes 是登录与初始化请求体的上限，超出的请求不会被解码。
@@ -56,6 +59,7 @@ func NewRouter(deps Deps) *gin.Engine {
 	admin.GET("/posts", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"items": []any{}})
 	})
+	admin.POST("/posts", createPostHandler(deps))
 
 	if deps.WebFS != nil {
 		router.NoRoute(spaHandler(deps.WebFS))

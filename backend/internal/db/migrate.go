@@ -8,7 +8,7 @@ import (
 )
 
 // SchemaVersion 是当前代码期望的数据库结构版本，写入 SQLite 的 user_version。
-const SchemaVersion = 2
+const SchemaVersion = 3
 
 // schemaStatements 是首次建库所需的语句，顺序即执行顺序。
 var schemaStatements = []string{
@@ -69,6 +69,8 @@ var schemaStatements = []string{
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	)`,
+	`CREATE INDEX IF NOT EXISTS idx_posts_status_created ON posts(status, created_at)`,
+	`CREATE INDEX IF NOT EXISTS idx_post_images_status ON post_images(status)`,
 	`CREATE TABLE IF NOT EXISTS traffic_stats (
 		month TEXT PRIMARY KEY,
 		bytes_out INTEGER DEFAULT 0,
