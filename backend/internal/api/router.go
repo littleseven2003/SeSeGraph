@@ -76,6 +76,7 @@ func NewRouter(deps Deps) *gin.Engine {
 	admin.GET("/posts", listPostsHandler(deps))
 	admin.GET("/posts/:id", postDetailHandler(deps))
 	admin.PUT("/posts/:id", limitBody(maxCreatePostBodyBytes), updatePostHandler(deps))
+	admin.PATCH("/posts/:id/toggle", togglePostHandler(deps))
 	admin.GET("/tags", tagsHandler(deps))
 	admin.GET("/thumbs/:filename", thumbHandler(deps))
 	admin.POST("/posts", limitBody(maxCreatePostBodyBytes), createPostHandler(deps))
