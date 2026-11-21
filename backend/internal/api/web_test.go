@@ -116,3 +116,22 @@ func TestMissingIndexFallsBackToHint(t *testing.T) {
 		t.Errorf("应提示前端尚未构建，实际: %s", rec.Body.String())
 	}
 }
+
+func TestAPIUnknownPathsReturnJSON404(t *testing.T) {
+	router := newWebEnv(t)
+	paths := []string{
+		"/api/unknown",
+		"/api/thumbs/../../etc/passwd",
+		"/i/../../etc/passwd",
+	}
+	for _, target := range paths {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s 状态码 = %d，期望 404", target, rec.Code)
+		}
+		if strings.Contains(rec.Body.String(), "entry") {
+			t.Errorf("%s 不应回退到入口页", target)
+		}
+	}
+}

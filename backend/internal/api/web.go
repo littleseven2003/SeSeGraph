@@ -20,8 +20,15 @@ func spaHandler(webFS fs.FS) gin.HandlerFunc {
 			return
 		}
 
-		requested := strings.TrimPrefix(path.Clean("/"+c.Request.URL.Path), "/")
-		// 接口与图片网关路径不参与页面回退。
+		// 接口与图片网关路径不参与页面回退。先按原始路径判断，
+		// 避免 ../ 之类的路径段在清理后把接口路径伪装成页面路径。
+		raw := c.Request.URL.Path
+		if raw == "/api" || strings.HasPrefix(raw, "/api/") || raw == "/i" || strings.HasPrefix(raw, "/i/") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "未找到"})
+			return
+		}
+
+		requested := strings.TrimPrefix(path.Clean("/"+raw), "/")
 		if strings.HasPrefix(requested, "api/") || strings.HasPrefix(requested, "i/") {
 			c.JSON(http.StatusNotFound, gin.H{"error": "未找到"})
 			return
