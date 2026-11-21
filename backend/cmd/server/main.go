@@ -95,6 +95,7 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		Posts:            repository,
 		Streams:          streams,
 		Telegraph:        telegraphManager,
+		PublicURL:        cfg.PublicURL,
 		ImageConcurrency: readImageConcurrency(lookupEnv),
 	})
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"math/big"
 	"os"
@@ -18,6 +19,15 @@ const (
 	StatusPublishing = "publishing"
 	StatusCompleted  = "completed"
 	StatusFailed     = "failed"
+)
+
+// 发布状态取值：idle 未发布、pending 待发布、publishing 发布中、published 已发布、failed 发布失败。
+const (
+	PublishIdle       = "idle"
+	PublishPending    = "pending"
+	PublishPublishing = "publishing"
+	PublishPublished  = "published"
+	PublishFailed     = "failed"
 )
 
 // 图片状态取值。
@@ -47,6 +57,17 @@ type Post struct {
 	UploadMode     string
 	Status         string
 	Tags           []string
+}
+
+// PublishInfo 是发布一帖所需的元数据与已存图列表。
+type PublishInfo struct {
+	PostID      int64
+	Title       string
+	Description string
+	AuthorName  string
+	State       string
+	Images      []Image
+	Paths       []string
 }
 
 // PublicImage 是网关可以对外转发的图片信息，仅包含必要字段。
@@ -195,6 +216,135 @@ func (r *Repository) PublicImage(ctx context.Context, shortCode string) (*Public
 		return nil, errors.New("读取图片记录失败")
 	}
 	return image, nil
+}
+
+// RequestPublish 由管理员确认发布：标记公开并把发布任务置为待处理。
+// 只有图片全部存图的帖子才能发布，旧版存图任务必须显式调用。
+func (r *Repository) RequestPublish(ctx context.Context, postID int64) error {
+	result, err := r.handle.ExecContext(ctx,
+		`UPDATE posts SET is_public = 1, publish_state = ?, publish_error = '', updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND status = ? AND publish_state IN (?, ?)`,
+		PublishPending, postID, StatusCompleted, PublishIdle, PublishFailed)
+	if err != nil {
+		return errors.New("更新发布状态失败")
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ClaimPublishable 领取一条待发布任务，串行发布由调用方保证。
+func (r *Repository) ClaimPublishable(ctx context.Context) (int64, bool, error) {
+	var id int64
+	err := r.handle.QueryRowContext(ctx,
+		`UPDATE posts SET publish_state = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = (SELECT id FROM posts WHERE publish_state = ? ORDER BY updated_at LIMIT 1)
+		   AND publish_state = ?
+		 RETURNING id`,
+		PublishPublishing, PublishPending, PublishPending).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, errors.New("领取发布任务失败")
+	}
+	return id, true, nil
+}
+
+// RecoverPublish 把中断的发布任务放回待处理，进程启动时调用。
+func (r *Repository) RecoverPublish(ctx context.Context) (int64, error) {
+	result, err := r.handle.ExecContext(ctx,
+		`UPDATE posts SET publish_state = ?, updated_at = CURRENT_TIMESTAMP WHERE publish_state = ?`,
+		PublishPending, PublishPublishing)
+	if err != nil {
+		return 0, errors.New("恢复发布任务失败")
+	}
+	affected, _ := result.RowsAffected()
+	return affected, nil
+}
+
+// MarkPublishFailed 记录发布失败，保留已创建的页面路径供重试复用。
+func (r *Repository) MarkPublishFailed(ctx context.Context, postID int64, message string) error {
+	if _, err := r.handle.ExecContext(ctx,
+		`UPDATE posts SET publish_state = ?, publish_error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		PublishFailed, message, postID); err != nil {
+		return errors.New("更新发布状态失败")
+	}
+	return nil
+}
+
+// SavePublishPaths 增量保存已创建的页面路径，进程中断后重试可复用。
+func (r *Repository) SavePublishPaths(ctx context.Context, postID int64, paths []string) error {
+	encoded, err := json.Marshal(paths)
+	if err != nil {
+		return errors.New("保存页面路径失败")
+	}
+	if _, err := r.handle.ExecContext(ctx,
+		`UPDATE posts SET telegraph_paths = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		string(encoded), postID); err != nil {
+		return errors.New("保存页面路径失败")
+	}
+	return nil
+}
+
+// MarkPublished 记录发布完成，写入全部路径与对外链接。
+func (r *Repository) MarkPublished(ctx context.Context, postID int64, paths, urls []string) error {
+	encodedPaths, err := json.Marshal(paths)
+	if err != nil {
+		return errors.New("保存发布结果失败")
+	}
+	encodedURLs, err := json.Marshal(urls)
+	if err != nil {
+		return errors.New("保存发布结果失败")
+	}
+	if _, err := r.handle.ExecContext(ctx,
+		`UPDATE posts SET publish_state = ?, publish_error = '', telegraph_paths = ?, telegraph_urls = ?,
+		 updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		PublishPublished, string(encodedPaths), string(encodedURLs), postID); err != nil {
+		return errors.New("保存发布结果失败")
+	}
+	return nil
+}
+
+// PublishInfo 读取发布所需的元数据、存图列表与已保存的页面路径。
+func (r *Repository) PublishInfo(ctx context.Context, postID int64) (*PublishInfo, error) {
+	info := &PublishInfo{PostID: postID}
+	var pathsJSON string
+	err := r.handle.QueryRowContext(ctx,
+		`SELECT title, description, author_name, publish_state, telegraph_paths FROM posts WHERE id = ?`, postID,
+	).Scan(&info.Title, &info.Description, &info.AuthorName, &info.State, &pathsJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, errors.New("读取发布信息失败")
+	}
+	if pathsJSON != "" {
+		if err := json.Unmarshal([]byte(pathsJSON), &info.Paths); err != nil {
+			info.Paths = nil
+		}
+	}
+	rows, err := r.handle.QueryContext(ctx,
+		`SELECT id, sort_order, short_code, mime_type, file_size, temp_file_path, status, error_message
+		 FROM post_images WHERE post_id = ? AND status = ? ORDER BY sort_order`,
+		postID, ImageStatusStored)
+	if err != nil {
+		return nil, errors.New("读取图片列表失败")
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		image := Image{PostID: postID}
+		if err := rows.Scan(&image.ID, &image.SortOrder, &image.ShortCode, &image.MimeType,
+			&image.FileSize, &image.TempFilePath, &image.Status, &image.ErrorMessage); err != nil {
+			return nil, errors.New("读取图片列表失败")
+		}
+		info.Images = append(info.Images, image)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.New("读取图片列表失败")
+	}
+	return info, nil
 }
 
 // SetPublic 设置帖子是否对外公开，由发布流程在管理员确认后调用。

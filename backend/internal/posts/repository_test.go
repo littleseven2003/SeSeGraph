@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -444,5 +445,126 @@ func TestPublicImageRejectsUnstoredAndUnknown(t *testing.T) {
 	}
 	if _, err := repo.PublicImage(ctx, ""); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("空短码应返回 ErrNotFound，实际: %v", err)
+	}
+}
+
+func TestRequestPublishRequiresCompleted(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+
+	postID, err := repo.Create(ctx, Post{Title: "待发布", ImageCount: 1})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+	if err := repo.RequestPublish(ctx, postID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("未完成帖发布错误 = %v，期望 ErrNotFound", err)
+	}
+
+	if err := repo.MarkPostFinished(ctx, postID, StatusCompleted, ""); err != nil {
+		t.Fatalf("标记完成失败: %v", err)
+	}
+	if err := repo.RequestPublish(ctx, postID); err != nil {
+		t.Fatalf("发布失败: %v", err)
+	}
+
+	info, err := repo.PublishInfo(ctx, postID)
+	if err != nil {
+		t.Fatalf("读取发布信息失败: %v", err)
+	}
+	if info.State != PublishPending {
+		t.Errorf("状态 = %q，期望 pending", info.State)
+	}
+	var public int
+	if err := repo.handle.QueryRowContext(ctx, `SELECT is_public FROM posts WHERE id = ?`, postID).Scan(&public); err != nil {
+		t.Fatalf("读取公开标记失败: %v", err)
+	}
+	if public != 1 {
+		t.Errorf("is_public = %d，期望 1", public)
+	}
+
+	if err := repo.RequestPublish(ctx, postID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("重复发布错误 = %v，期望 ErrNotFound", err)
+	}
+}
+
+func TestClaimPublishableAndRecover(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+
+	postID, err := repo.Create(ctx, Post{Title: "队列", ImageCount: 1})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+	if err := repo.MarkPostFinished(ctx, postID, StatusCompleted, ""); err != nil {
+		t.Fatalf("标记完成失败: %v", err)
+	}
+	if _, ok, err := repo.ClaimPublishable(ctx); err != nil || ok {
+		t.Fatalf("空队列不应领取到任务: ok=%v err=%v", ok, err)
+	}
+
+	if err := repo.RequestPublish(ctx, postID); err != nil {
+		t.Fatalf("发布失败: %v", err)
+	}
+	claimed, ok, err := repo.ClaimPublishable(ctx)
+	if err != nil || !ok || claimed != postID {
+		t.Fatalf("领取 = %d ok=%v err=%v", claimed, ok, err)
+	}
+	if _, ok, _ := repo.ClaimPublishable(ctx); ok {
+		t.Error("同一任务不应被重复领取")
+	}
+
+	recovered, err := repo.RecoverPublish(ctx)
+	if err != nil || recovered != 1 {
+		t.Fatalf("恢复数量 = %d err=%v", recovered, err)
+	}
+	if claimed, ok, _ := repo.ClaimPublishable(ctx); !ok || claimed != postID {
+		t.Error("恢复后应能重新领取")
+	}
+}
+
+func TestSavePublishPathsAndMarkPublished(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+
+	postID, err := repo.Create(ctx, Post{Title: "路径", ImageCount: 1})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+	if err := repo.SavePublishPaths(ctx, postID, []string{"Path-1"}); err != nil {
+		t.Fatalf("保存路径失败: %v", err)
+	}
+	info, err := repo.PublishInfo(ctx, postID)
+	if err != nil {
+		t.Fatalf("读取发布信息失败: %v", err)
+	}
+	if len(info.Paths) != 1 || info.Paths[0] != "Path-1" {
+		t.Errorf("路径 = %v", info.Paths)
+	}
+
+	if err := repo.MarkPublished(ctx, postID, []string{"Path-1"}, []string{"https://telegra.ph/Path-1"}); err != nil {
+		t.Fatalf("标记发布失败: %v", err)
+	}
+	info, err = repo.PublishInfo(ctx, postID)
+	if err != nil {
+		t.Fatalf("读取发布信息失败: %v", err)
+	}
+	if info.State != PublishPublished {
+		t.Errorf("状态 = %q，期望 published", info.State)
+	}
+
+	var urls string
+	if err := repo.handle.QueryRowContext(ctx, `SELECT telegraph_urls FROM posts WHERE id = ?`, postID).Scan(&urls); err != nil {
+		t.Fatalf("读取链接失败: %v", err)
+	}
+	if !strings.Contains(urls, "https://telegra.ph/Path-1") {
+		t.Errorf("链接 = %s", urls)
+	}
+
+	if err := repo.MarkPublishFailed(ctx, postID, "失败"); err != nil {
+		t.Fatalf("标记失败失败: %v", err)
+	}
+	info, _ = repo.PublishInfo(ctx, postID)
+	if info.State != PublishFailed {
+		t.Errorf("状态 = %q，期望 failed", info.State)
 	}
 }

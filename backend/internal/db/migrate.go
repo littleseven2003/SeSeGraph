@@ -8,7 +8,7 @@ import (
 )
 
 // SchemaVersion 是当前代码期望的数据库结构版本，写入 SQLite 的 user_version。
-const SchemaVersion = 5
+const SchemaVersion = 6
 
 // schemaStatements 是首次建库所需的语句，顺序即执行顺序。
 var schemaStatements = []string{
@@ -31,6 +31,8 @@ var schemaStatements = []string{
 		error_message TEXT DEFAULT '',
 		is_disabled INTEGER DEFAULT 0,
 		is_public INTEGER DEFAULT 0,
+		publish_state TEXT DEFAULT 'idle',
+		publish_error TEXT DEFAULT '',
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	)`,
@@ -111,6 +113,12 @@ func Migrate(ctx context.Context, handle *sql.DB) error {
 	// 旧库升级：post 表补公开标记，默认关闭，需要管理员确认后才开启。
 	if err := ensureColumn(ctx, tx, "posts", "is_public", "ALTER TABLE posts ADD COLUMN is_public INTEGER DEFAULT 0"); err != nil {
 		return errors.New("升级帖子公开标记失败")
+	}
+	if err := ensureColumn(ctx, tx, "posts", "publish_state", "ALTER TABLE posts ADD COLUMN publish_state TEXT DEFAULT 'idle'"); err != nil {
+		return errors.New("升级发布状态失败")
+	}
+	if err := ensureColumn(ctx, tx, "posts", "publish_error", "ALTER TABLE posts ADD COLUMN publish_error TEXT DEFAULT ''"); err != nil {
+		return errors.New("升级发布状态失败")
 	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", SchemaVersion)); err != nil {
 		return errors.New("写入数据库结构版本失败")

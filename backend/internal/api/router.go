@@ -32,6 +32,8 @@ type Deps struct {
 	ImageConcurrency int
 	// Telegraph 负责账户配置与建号，未配置时为 nil。
 	Telegraph *telegraph.Manager
+	// PublicURL 是对外访问地址，发布前要求为 HTTPS。
+	PublicURL string
 }
 
 // maxAuthBodyBytes 是登录与初始化请求体的上限，超出的请求不会被解码。
@@ -78,6 +80,7 @@ func NewRouter(deps Deps) *gin.Engine {
 	admin.POST("/settings/telegraph/create-account", limitBody(maxTelegraphBodyBytes), telegraphAccountHandler(deps))
 	admin.GET("/posts/:id/progress", progressHandler(deps))
 	admin.POST("/posts/:id/retry", retryHandler(deps))
+	admin.POST("/posts/:id/publish", publishPostHandler(deps))
 
 	if deps.WebFS != nil {
 		router.NoRoute(spaHandler(deps.WebFS))
