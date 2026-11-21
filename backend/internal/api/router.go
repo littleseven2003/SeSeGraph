@@ -60,6 +60,7 @@ func NewRouter(deps Deps) *gin.Engine {
 		c.JSON(http.StatusOK, gin.H{"items": []any{}})
 	})
 	admin.POST("/posts", createPostHandler(deps))
+	admin.POST("/posts/:id/images", uploadImageHandler(deps))
 
 	if deps.WebFS != nil {
 		router.NoRoute(spaHandler(deps.WebFS))
