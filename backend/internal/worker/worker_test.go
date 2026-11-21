@@ -52,29 +52,42 @@ func (f *fakeProvider) callCount() int {
 	return f.calls
 }
 
-type sleepRecorder struct {
+// testClock 提供可推进的时钟，让间隔与退避断言稳定可复现。
+type testClock struct {
 	mu        sync.Mutex
+	now       time.Time
 	durations []time.Duration
 }
 
-func (s *sleepRecorder) sleep(_ context.Context, d time.Duration) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.durations = append(s.durations, d)
+func newTestClock() *testClock {
+	return &testClock{now: time.Unix(1700000000, 0)}
+}
+
+func (c *testClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *testClock) sleep(_ context.Context, d time.Duration) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+	c.durations = append(c.durations, d)
 	return nil
 }
 
-func (s *sleepRecorder) recorded() []time.Duration {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]time.Duration(nil), s.durations...)
+func (c *testClock) recorded() []time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]time.Duration(nil), c.durations...)
 }
 
 type env struct {
 	repo     *posts.Repository
 	dataDir  string
 	provider *fakeProvider
-	sleeps   *sleepRecorder
+	sleeps   *testClock
 	worker   *Worker
 }
 
@@ -93,7 +106,7 @@ func newEnv(t *testing.T) *env {
 		repo:     posts.NewRepository(handle),
 		dataDir:  t.TempDir(),
 		provider: &fakeProvider{},
-		sleeps:   &sleepRecorder{},
+		sleeps:   newTestClock(),
 	}
 	worker, err := New(Options{
 		Repository: e.repo,
@@ -102,6 +115,7 @@ func newEnv(t *testing.T) *env {
 		Interval:   time.Millisecond,
 		Logger:     log.New(io.Discard, "", 0),
 		Sleep:      e.sleeps.sleep,
+		Now:        e.sleeps.Now,
 	})
 	if err != nil {
 		t.Fatalf("创建队列失败: %v", err)
@@ -346,5 +360,78 @@ func TestProcessStopsOnContextCancel(t *testing.T) {
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("错误 = %v，期望上下文取消", err)
+	}
+}
+
+func TestIntervalSharedAcrossSingleImagePosts(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.worker.interval = time.Second
+
+	first := e.queuedPost(t, 1, "photo")
+	second := e.queuedPost(t, 1, "photo")
+
+	for i := 0; i < 2; i++ {
+		if _, err := e.worker.ProcessOnce(ctx); err != nil {
+			t.Fatalf("第 %d 个任务处理失败: %v", i+1, err)
+		}
+	}
+
+	if e.provider.callCount() != 2 {
+		t.Fatalf("上传次数 = %d，期望 2", e.provider.callCount())
+	}
+	durations := e.sleeps.recorded()
+	if len(durations) != 1 || durations[0] != time.Second {
+		t.Errorf("跨任务间隔 = %v，期望恰好一次 1s", durations)
+	}
+
+	for _, id := range []int64{first, second} {
+		stored, err := e.repo.Get(ctx, id)
+		if err != nil || stored.Status != posts.StatusCompleted {
+			t.Errorf("帖子 %d 状态 = %v err=%v", id, stored, err)
+		}
+	}
+}
+
+func TestExhaustedRetryAfterDelaysNextPost(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.worker.interval = time.Second
+	e.provider.failures = []error{
+		&storage.RateLimitError{RetryAfter: 5 * time.Second},
+		&storage.RateLimitError{RetryAfter: 5 * time.Second},
+		&storage.RateLimitError{RetryAfter: 5 * time.Second},
+	}
+
+	first := e.queuedPost(t, 1, "photo")
+	second := e.queuedPost(t, 1, "photo")
+
+	if _, err := e.worker.ProcessOnce(ctx); err == nil {
+		t.Fatal("首个任务重试耗尽应返回错误")
+	}
+	failed, _ := e.repo.Get(ctx, first)
+	if failed.Status != posts.StatusFailed {
+		t.Errorf("首个任务状态 = %q，期望 failed", failed.Status)
+	}
+
+	if _, err := e.worker.ProcessOnce(ctx); err != nil {
+		t.Fatalf("第二个任务处理失败: %v", err)
+	}
+	completed, _ := e.repo.Get(ctx, second)
+	if completed.Status != posts.StatusCompleted {
+		t.Errorf("第二个任务状态 = %q，期望 completed", completed.Status)
+	}
+
+	durations := e.sleeps.recorded()
+	if len(durations) != 3 {
+		t.Fatalf("等待次数 = %d，期望 3（两次重试等待 + 一次跨任务门控）: %v", len(durations), durations)
+	}
+	for index, wait := range durations {
+		if wait != 5*time.Second {
+			t.Errorf("第 %d 次等待 = %s，期望 5s", index+1, wait)
+		}
+	}
+	if e.provider.callCount() != 4 {
+		t.Errorf("上传调用 = %d，期望 4（首个 3 次 + 次个 1 次）", e.provider.callCount())
 	}
 }

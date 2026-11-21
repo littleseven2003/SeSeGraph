@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
@@ -32,6 +33,7 @@ type Options struct {
 	MaxAttempts int
 	Logger      *log.Logger
 	Sleep       func(ctx context.Context, d time.Duration) error
+	Now         func() time.Time
 }
 
 // Worker 串行处理待上传的帖子。
@@ -43,6 +45,10 @@ type Worker struct {
 	maxAttempts int
 	logger      *log.Logger
 	sleep       func(ctx context.Context, d time.Duration) error
+	now         func() time.Time
+
+	mu          sync.Mutex
+	nextAllowed time.Time
 }
 
 // New 创建上传队列。
@@ -70,6 +76,10 @@ func New(opts Options) (*Worker, error) {
 	if sleep == nil {
 		sleep = defaultSleep
 	}
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
 
 	return &Worker{
 		repo:        opts.Repository,
@@ -79,6 +89,7 @@ func New(opts Options) (*Worker, error) {
 		maxAttempts: maxAttempts,
 		logger:      logger,
 		sleep:       sleep,
+		now:         now,
 	}, nil
 }
 
@@ -154,18 +165,13 @@ func (w *Worker) Process(ctx context.Context, postID int64) error {
 		return err
 	}
 
-	for index, image := range images {
+	for _, image := range images {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if err := w.uploadImage(ctx, post, image); err != nil {
 			w.finish(ctx, postID, posts.StatusFailed, "上传图片失败")
 			return errors.New("上传图片失败")
-		}
-		if index < len(images)-1 {
-			if err := w.sleep(ctx, w.interval); err != nil {
-				return err
-			}
 		}
 	}
 
@@ -191,7 +197,7 @@ func (w *Worker) uploadImage(ctx context.Context, post *posts.Post, image posts.
 	path := filepath.Join(w.dataDir, filepath.FromSlash(image.TempFilePath))
 
 	for attempt := 1; ; attempt++ {
-		if err := ctx.Err(); err != nil {
+		if err := w.acquireSlot(ctx); err != nil {
 			return err
 		}
 
@@ -218,19 +224,47 @@ func (w *Worker) uploadImage(ctx context.Context, post *posts.Post, image posts.
 		}
 
 		var limited *storage.RateLimitError
-		if errors.As(uploadErr, &limited) && attempt < w.maxAttempts {
+		if errors.As(uploadErr, &limited) {
+			// 限流后把队列整体的下一次发送时间推后，重试耗尽时同样生效。
 			wait := limited.RetryAfter
 			if wait <= 0 {
 				wait = w.interval
 			}
-			if err := w.sleep(ctx, wait); err != nil {
-				return err
+			w.holdUntil(w.now().Add(wait))
+			if attempt < w.maxAttempts {
+				continue
 			}
-			continue
 		}
 
 		_ = w.repo.MarkImageFailed(ctx, image.ID, "上传失败")
 		return errors.New("上传失败")
+	}
+}
+
+// acquireSlot 在每次请求前等待必要的间隔，保证整个队列共享发送节奏。
+func (w *Worker) acquireSlot(ctx context.Context) error {
+	w.mu.Lock()
+	wait := w.nextAllowed.Sub(w.now())
+	w.mu.Unlock()
+
+	if wait > 0 {
+		if err := w.sleep(ctx, wait); err != nil {
+			return err
+		}
+	}
+
+	w.mu.Lock()
+	w.nextAllowed = w.now().Add(w.interval)
+	w.mu.Unlock()
+	return nil
+}
+
+// holdUntil 把队列的下一次发送时间推后到指定时刻。
+func (w *Worker) holdUntil(deadline time.Time) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if deadline.After(w.nextAllowed) {
+		w.nextAllowed = deadline
 	}
 }
 
