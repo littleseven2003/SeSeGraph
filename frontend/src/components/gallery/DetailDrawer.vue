@@ -3,11 +3,15 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { PostDetail } from '../../api/gallery.ts'
 import {
   DEFAULT_SHARE_TEMPLATE,
+  SHARE_PLACEHOLDERS,
+  focusStep,
   formatFileSize,
   formatPublishedAt,
   imageShareUrl,
   postShareUrl,
+  readShareTemplate,
   renderShareText,
+  saveShareTemplate,
   statusLabel,
 } from '../../utils/gallery.ts'
 
@@ -20,7 +24,12 @@ const props = defineProps<{
 const emit = defineEmits<{ close: []; retry: [] }>()
 
 const closeButton = ref<HTMLButtonElement | null>(null)
+const panel = ref<HTMLElement | null>(null)
 const feedback = ref('')
+const shareTemplate = ref(DEFAULT_SHARE_TEMPLATE)
+const templateDraft = ref(DEFAULT_SHARE_TEMPLATE)
+const templateNotice = ref('')
+let previousFocus: HTMLElement | null = null
 
 const status = computed(() =>
   props.detail === null
@@ -33,6 +42,13 @@ const created = computed(() => (props.detail === null ? '' : formatPublishedAt(p
 const shareUrl = computed(() => (props.detail === null ? '' : postShareUrl(props.detail)))
 const publicBase = computed(() => (props.detail === null ? '' : props.detail.public_base_url))
 const shareReady = computed(() => shareUrl.value !== '')
+const previewValues = computed(() => ({
+  title: props.detail?.title ?? '标题',
+  description: props.detail?.description ?? '说明',
+  url: shareUrl.value !== '' ? shareUrl.value : '{{url}}',
+  count: props.detail?.images.length ?? 0,
+  tags: props.detail?.tags ?? [],
+}))
 
 function imageLink(image: { short_code: string; status: string }): string {
   if (props.detail === null) return ''
@@ -87,7 +103,7 @@ async function copy(text: string, label: string): Promise<void> {
 
 function copyShareText(): void {
   if (props.detail === null) return
-  const text = renderShareText(DEFAULT_SHARE_TEMPLATE, {
+  const text = renderShareText(shareTemplate.value, {
     title: props.detail.title,
     description: props.detail.description,
     url: shareUrl.value,
@@ -97,11 +113,62 @@ function copyShareText(): void {
   void copy(text, '分享文案')
 }
 
+// focusable 列出抽屉内可聚焦元素，用于把 Tab 循环限制在抽屉里。
+function focusable(): HTMLElement[] {
+  if (panel.value === null) return []
+  const selector =
+    'a[href], button:not([disabled]), textarea, input, select, summary, [tabindex]:not([tabindex="-1"])'
+  return Array.from(panel.value.querySelectorAll<HTMLElement>(selector)).filter(
+    (element) => element.offsetParent !== null,
+  )
+}
+
 function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape') emit('close')
+  if (event.key === 'Escape') {
+    emit('close')
+    return
+  }
+  if (event.key !== 'Tab' || panel.value === null) return
+  const items = focusable()
+  if (items.length === 0) return
+  const active = document.activeElement as HTMLElement | null
+  const index = active === null ? -1 : items.indexOf(active)
+  const inside = active !== null && panel.value.contains(active)
+  if (!inside) {
+    event.preventDefault()
+    items[event.shiftKey ? items.length - 1 : 0]?.focus()
+    return
+  }
+  const step = focusStep(index, items.length, event.shiftKey)
+  const next = items[step]
+  if (next === undefined) return
+  // 只在首尾越界时接管，抽屉内部的正常切换交给浏览器。
+  if ((!event.shiftKey && step === 0) || (event.shiftKey && step === items.length - 1)) {
+    event.preventDefault()
+    next.focus()
+  }
+}
+
+function insertPlaceholder(token: string): void {
+  templateDraft.value = templateDraft.value + token
+}
+
+function applyTemplate(): void {
+  shareTemplate.value = saveShareTemplate(window.localStorage, templateDraft.value)
+  templateDraft.value = shareTemplate.value
+  templateNotice.value = '模板已保存'
+}
+
+function resetTemplate(): void {
+  shareTemplate.value = saveShareTemplate(window.localStorage, '')
+  templateDraft.value = shareTemplate.value
+  templateNotice.value = '已恢复默认模板'
 }
 
 onMounted(() => {
+  previousFocus = document.activeElement as HTMLElement | null
+  shareTemplate.value = readShareTemplate(window.localStorage)
+  templateDraft.value = shareTemplate.value
   window.addEventListener('keydown', onKeydown)
   document.body.style.overflow = 'hidden'
   closeButton.value?.focus()
@@ -110,6 +177,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
   document.body.style.overflow = ''
+  // 关闭后把焦点还给打开抽屉的元素，键盘用户不会丢失位置。
+  if (previousFocus !== null && previousFocus.isConnected) previousFocus.focus()
 })
 
 watch(
@@ -123,6 +192,7 @@ watch(
 <template>
   <div class="fixed inset-0 z-40 flex justify-end bg-ink/45" @click.self="emit('close')">
     <aside
+      ref="panel"
       role="dialog"
       aria-modal="true"
       aria-label="图集详情"
@@ -278,6 +348,50 @@ watch(
         <p class="mt-2 min-h-[18px] text-xs text-muted" aria-live="polite">
           {{ feedback !== '' ? feedback : shareReady || detail === null ? '' : '发布完成并生成互链后可分享整帖' }}
         </p>
+
+        <details class="mt-1 text-xs">
+          <summary class="cursor-pointer select-none text-muted hover:text-ink">分享文案模板</summary>
+          <div class="mt-2 space-y-2">
+            <label class="sr-only" for="share-template">分享文案模板</label>
+            <textarea
+              id="share-template"
+              v-model="templateDraft"
+              rows="3"
+              class="w-full rounded-md border border-line bg-canvas px-2 py-1.5 text-xs leading-relaxed outline-none transition focus:border-brand focus:bg-surface"
+            ></textarea>
+            <div class="flex flex-wrap gap-1">
+              <button
+                v-for="token in SHARE_PLACEHOLDERS"
+                :key="token"
+                type="button"
+                class="rounded border border-line px-1.5 py-0.5 font-mono text-xs text-muted transition hover:bg-canvas hover:text-ink"
+                @click="insertPlaceholder(token)"
+              >
+                {{ token }}
+              </button>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                class="h-8 rounded-md bg-brand px-2.5 text-xs font-medium text-brand-ink transition hover:bg-brand-strong"
+                @click="applyTemplate"
+              >
+                保存模板
+              </button>
+              <button
+                type="button"
+                class="h-8 rounded-md border border-line px-2.5 text-xs font-medium transition hover:bg-canvas"
+                @click="resetTemplate"
+              >
+                恢复默认
+              </button>
+              <span class="text-muted" aria-live="polite">{{ templateNotice }}</span>
+            </div>
+            <p class="whitespace-pre-line rounded bg-canvas px-2 py-1.5 text-xs leading-relaxed text-muted">
+              {{ renderShareText(templateDraft, previewValues) }}
+            </p>
+          </div>
+        </details>
       </footer>
     </aside>
   </div>

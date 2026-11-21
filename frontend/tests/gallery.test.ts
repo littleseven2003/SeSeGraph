@@ -7,9 +7,13 @@ import {
   formatFileSize,
   formatPublishedAt,
   createLatestGuard,
+  focusStep,
   imageShareUrl,
+  normalizeShareTemplate,
   pageWindow,
   postShareUrl,
+  readShareTemplate,
+  saveShareTemplate,
   readBlurPreference,
   renderShareText,
   saveBlurPreference,
@@ -145,4 +149,42 @@ test('pageWindow 最多五页并夹在当前页附近', () => {
   assert.deepEqual(pageWindow(1, 12, 60), [1, 2, 3, 4, 5])
   assert.deepEqual(pageWindow(5, 12, 240), [3, 4, 5, 6, 7])
   assert.deepEqual(pageWindow(20, 12, 240), [16, 17, 18, 19, 20])
+})
+
+test('分享模板默认值、持久化与恢复默认', () => {
+  const store = new Map<string, string>()
+  const storage = {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => void store.set(key, value),
+  }
+  assert.equal(readShareTemplate(storage), DEFAULT_SHARE_TEMPLATE)
+
+  const custom = '{{title}}（{{count}} 张）\n{{url}}'
+  assert.equal(saveShareTemplate(storage, custom), custom)
+  assert.equal(readShareTemplate(storage), custom)
+
+  assert.equal(normalizeShareTemplate('   '), DEFAULT_SHARE_TEMPLATE)
+  assert.equal(saveShareTemplate(storage, '  '), DEFAULT_SHARE_TEMPLATE)
+  assert.equal(readShareTemplate(storage), DEFAULT_SHARE_TEMPLATE)
+
+  const broken = {
+    getItem: () => {
+      throw new Error('blocked')
+    },
+    setItem: () => {
+      throw new Error('blocked')
+    },
+  }
+  assert.equal(readShareTemplate(broken), DEFAULT_SHARE_TEMPLATE)
+  assert.equal(saveShareTemplate(broken, custom), custom)
+})
+
+test('focusStep 在首尾循环并处理无焦点元素', () => {
+  assert.equal(focusStep(0, 3, true), 2)
+  assert.equal(focusStep(2, 3, false), 0)
+  assert.equal(focusStep(1, 3, false), 2)
+  assert.equal(focusStep(1, 3, true), 0)
+  assert.equal(focusStep(-1, 3, false), 0)
+  assert.equal(focusStep(-1, 3, true), 2)
+  assert.equal(focusStep(0, 0, false), -1)
 })

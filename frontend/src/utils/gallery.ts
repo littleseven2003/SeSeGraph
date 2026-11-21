@@ -3,6 +3,9 @@
 /** 模糊开关的本地存储键。 */
 export const BLUR_STORAGE_KEY = 'sesegraph.gallery.blur'
 
+/** 分享文案模板的本地存储键。 */
+export const SHARE_TEMPLATE_STORAGE_KEY = 'sesegraph.gallery.shareTemplate'
+
 /** 默认分享文案模板，占位符与任务书一致。 */
 export const DEFAULT_SHARE_TEMPLATE = '{{title}} · {{count}} 张图\n{{url}}\n{{tags}}'
 
@@ -186,4 +189,45 @@ export function pageWindow(page: number, pageSize: number, total: number): numbe
   const pages: number[] = []
   for (let index = start; index <= end; index += 1) pages.push(index)
   return pages
+}
+
+/** normalizeShareTemplate 去掉首尾空白，空模板回落到默认值。 */
+export function normalizeShareTemplate(template: string): string {
+  const trimmed = template.trim()
+  return trimmed === '' ? DEFAULT_SHARE_TEMPLATE : trimmed
+}
+
+/** readShareTemplate 读取自定义模板，缺省或读取失败时用默认模板。 */
+export function readShareTemplate(storage: StorageLike | undefined): string {
+  if (storage === undefined) return DEFAULT_SHARE_TEMPLATE
+  try {
+    return normalizeShareTemplate(storage.getItem(SHARE_TEMPLATE_STORAGE_KEY) ?? '')
+  } catch {
+    return DEFAULT_SHARE_TEMPLATE
+  }
+}
+
+/** saveShareTemplate 持久化模板，传空串等于恢复默认。 */
+export function saveShareTemplate(storage: StorageLike | undefined, template: string): string {
+  const normalized = normalizeShareTemplate(template)
+  if (storage !== undefined) {
+    try {
+      if (normalized === DEFAULT_SHARE_TEMPLATE) {
+        storage.setItem(SHARE_TEMPLATE_STORAGE_KEY, '')
+      } else {
+        storage.setItem(SHARE_TEMPLATE_STORAGE_KEY, normalized)
+      }
+    } catch {
+      // 存储不可用时只影响本次会话
+    }
+  }
+  return normalized
+}
+
+/** focusStep 计算 Tab 循环后的焦点下标，用于把手动焦点限制在抽屉内。 */
+export function focusStep(index: number, length: number, backwards: boolean): number {
+  if (length <= 0) return -1
+  if (index < 0) return backwards ? length - 1 : 0
+  if (backwards) return index === 0 ? length - 1 : index - 1
+  return index === length - 1 ? 0 : index + 1
 }
