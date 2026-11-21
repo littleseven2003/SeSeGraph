@@ -104,7 +104,8 @@ func newGatewayEnv(t *testing.T, concurrency int, streams storage.StreamProvider
 }
 
 // publishPost 建一个已完成且图片已存图的帖子，返回短码。
-func (e *gatewayEnv) publishPost(t *testing.T, shortCode, mime, mode string, disabled bool) string {
+// public 为真时开启公开标记，disabled 为真时同时禁用帖子。
+func (e *gatewayEnv) publishPost(t *testing.T, shortCode, mime, mode string, public, disabled bool) string {
 	t.Helper()
 	ctx := context.Background()
 	postID, err := e.repo.Create(ctx, posts.Post{Title: "网关测试", ImageCount: 1, UploadMode: mode})
@@ -134,6 +135,11 @@ func (e *gatewayEnv) publishPost(t *testing.T, shortCode, mime, mode string, dis
 	if err := e.repo.MarkPostFinished(ctx, postID, posts.StatusCompleted, ""); err != nil {
 		t.Fatalf("标记完成失败: %v", err)
 	}
+	if public {
+		if err := e.repo.SetPublic(ctx, postID, true); err != nil {
+			t.Fatalf("设置公开失败: %v", err)
+		}
+	}
 	if disabled {
 		if _, err := e.handle.ExecContext(ctx, `UPDATE posts SET is_disabled = 1 WHERE id = ?`, postID); err != nil {
 			t.Fatalf("禁用帖子失败: %v", err)
@@ -161,6 +167,15 @@ func (e *gatewayEnv) pendingPost(t *testing.T) string {
 	return images[0].ShortCode
 }
 
+// publicize 按短码把对应帖子标记为公开，模拟管理员确认发布。
+func (e *gatewayEnv) publicize(t *testing.T, code string) {
+	t.Helper()
+	if _, err := e.handle.ExecContext(context.Background(),
+		`UPDATE posts SET is_public = 1 WHERE id = (SELECT post_id FROM post_images WHERE short_code = ?)`, code); err != nil {
+		t.Fatalf("设置公开失败: %v", err)
+	}
+}
+
 func getImage(t *testing.T, url string) (*http.Response, []byte) {
 	t.Helper()
 	response, err := http.Get(url)
@@ -179,7 +194,7 @@ func TestGatewayRejectsBeforeUpstream(t *testing.T) {
 	provider := &fakeStreamProvider{}
 	env := newGatewayEnv(t, 4, provider)
 
-	disabledCode := env.publishPost(t, "", "image/jpeg", "photo", true)
+	disabledCode := env.publishPost(t, "", "image/jpeg", "photo", true, true)
 	pendingCode := env.pendingPost(t)
 
 	cases := []struct {
@@ -206,10 +221,32 @@ func TestGatewayRejectsBeforeUpstream(t *testing.T) {
 	}
 }
 
+func TestGatewayRejectsLegacyCompletedPostUntilPublic(t *testing.T) {
+	provider := &fakeStreamProvider{}
+	env := newGatewayEnv(t, 4, provider)
+	// 旧库升级场景：已存图、帖已完成，但公开标记默认关闭。
+	code := env.publishPost(t, "legacy1234", "image/jpeg", "photo", false, false)
+
+	response, body := getImage(t, env.server.URL+"/i/"+code)
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("未公开的旧任务状态码 = %d，期望 404，响应: %s", response.StatusCode, body)
+	}
+	if calls := provider.callCount(); calls != 0 {
+		t.Errorf("未公开的旧任务不应访问上游，实际调用 %d 次", calls)
+	}
+
+	// 管理员确认后开启公开标记即可访问。
+	env.publicize(t, code)
+	response, _ = getImage(t, env.server.URL+"/i/"+code)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("开启公开后状态码 = %d，期望 200", response.StatusCode)
+	}
+}
+
 func TestGatewayStreamsWithCacheHeaders(t *testing.T) {
 	provider := &fakeStreamProvider{}
 	env := newGatewayEnv(t, 4, provider)
-	code := env.publishPost(t, "abc123XYZ0", "image/jpeg", "document", false)
+	code := env.publishPost(t, "abc123XYZ0", "image/jpeg", "document", true, false)
 
 	response, body := getImage(t, env.server.URL+"/i/"+code)
 	if response.StatusCode != http.StatusOK {
@@ -229,8 +266,8 @@ func TestGatewayStreamsWithCacheHeaders(t *testing.T) {
 func TestGatewayUsesModeSpecificMIME(t *testing.T) {
 	provider := &fakeStreamProvider{}
 	env := newGatewayEnv(t, 4, provider)
-	documentCode := env.publishPost(t, "doc12345", "image/png", "document", false)
-	photoCode := env.publishPost(t, "photo1234", "image/jpeg", "photo", false)
+	documentCode := env.publishPost(t, "doc12345", "image/png", "document", true, false)
+	photoCode := env.publishPost(t, "photo1234", "image/jpeg", "photo", true, false)
 
 	documentResponse, _ := getImage(t, env.server.URL+"/i/"+documentCode)
 	if got := documentResponse.Header.Get("Content-Type"); got != "image/png" {
@@ -253,7 +290,7 @@ func TestGatewayStreamsFirstChunkImmediately(t *testing.T) {
 		}{Reader: pipeReader, Closer: pipeReader}, ContentType: "image/webp", Size: 0}, nil
 	}
 	env := newGatewayEnv(t, 4, provider)
-	code := env.publishPost(t, "slow12345", "image/webp", "photo", false)
+	code := env.publishPost(t, "slow12345", "image/webp", "photo", true, false)
 
 	// 上游先停顿再吐出首段，验证网关不会攒满缓冲区才回传。
 	go func() {
@@ -313,7 +350,7 @@ func TestGatewayLimitsConcurrency(t *testing.T) {
 		return storage.Stream{Body: io.NopCloser(strings.NewReader("ok")), ContentType: "image/jpeg", Size: 2}, nil
 	}
 	env := newGatewayEnv(t, 2, provider)
-	code := env.publishPost(t, "conc12345", "image/jpeg", "photo", false)
+	code := env.publishPost(t, "conc12345", "image/jpeg", "photo", true, false)
 
 	results := make(chan int, 3)
 	for index := 0; index < 3; index++ {
@@ -371,7 +408,7 @@ func TestGatewayClosesUpstreamOnDisconnect(t *testing.T) {
 		return storage.Stream{Body: reader, ContentType: "image/jpeg", Size: 0}, nil
 	}
 	env := newGatewayEnv(t, 2, provider)
-	code := env.publishPost(t, "drop12345", "image/jpeg", "photo", false)
+	code := env.publishPost(t, "drop12345", "image/jpeg", "photo", true, false)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, env.server.URL+"/i/"+code, nil)
@@ -403,7 +440,7 @@ func TestGatewayUpstreamErrorsAreDesensitized(t *testing.T) {
 		return storage.Stream{}, storage.ErrUpstream
 	}
 	env := newGatewayEnv(t, 2, provider)
-	code := env.publishPost(t, "err123456", "image/jpeg", "photo", false)
+	code := env.publishPost(t, "err123456", "image/jpeg", "photo", true, false)
 
 	response, body := getImage(t, env.server.URL+"/i/"+code)
 	if response.StatusCode != http.StatusBadGateway {
@@ -418,7 +455,7 @@ func TestGatewayUpstreamErrorsAreDesensitized(t *testing.T) {
 
 func TestGatewayReportsUnavailableWhenProviderMissing(t *testing.T) {
 	env := newGatewayEnv(t, 4, nil)
-	code := env.publishPost(t, "none12345", "image/jpeg", "photo", false)
+	code := env.publishPost(t, "none12345", "image/jpeg", "photo", true, false)
 
 	response, _ := getImage(t, env.server.URL+"/i/"+code)
 	if response.StatusCode != http.StatusServiceUnavailable {

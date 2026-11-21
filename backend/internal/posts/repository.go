@@ -173,7 +173,8 @@ func (r *Repository) Get(ctx context.Context, id int64) (*Post, error) {
 	return post, nil
 }
 
-// PublicImage 按短码查询公开图片：帖已完成且未禁用，图片已存图并有远端标识。
+// PublicImage 按短码查询公开图片：帖子被显式标记为公开且未禁用，图片已存图并有远端标识。
+// 公开标记默认关闭，旧版本已存图的任务不会自动对外，必须经管理员确认后开启。
 // 任一条件不满足都返回 ErrNotFound，让网关在请求上游前就返回 404。
 func (r *Repository) PublicImage(ctx context.Context, shortCode string) (*PublicImage, error) {
 	if shortCode == "" {
@@ -184,8 +185,8 @@ func (r *Repository) PublicImage(ctx context.Context, shortCode string) (*Public
 		`SELECT i.id, i.post_id, i.remote_file_id, i.mime_type, p.upload_mode
 		 FROM post_images i JOIN posts p ON p.id = i.post_id
 		 WHERE i.short_code = ? AND i.status = ? AND i.remote_file_id <> ''
-		   AND p.is_disabled = 0 AND p.status = ?`,
-		shortCode, ImageStatusStored, StatusCompleted,
+		   AND p.is_public = 1 AND p.is_disabled = 0`,
+		shortCode, ImageStatusStored,
 	).Scan(&image.ImageID, &image.PostID, &image.RemoteFileID, &image.MIMEType, &image.UploadMode)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -194,6 +195,23 @@ func (r *Repository) PublicImage(ctx context.Context, shortCode string) (*Public
 		return nil, errors.New("读取图片记录失败")
 	}
 	return image, nil
+}
+
+// SetPublic 设置帖子是否对外公开，由发布流程在管理员确认后调用。
+func (r *Repository) SetPublic(ctx context.Context, postID int64, public bool) error {
+	value := 0
+	if public {
+		value = 1
+	}
+	result, err := r.handle.ExecContext(ctx,
+		`UPDATE posts SET is_public = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, value, postID)
+	if err != nil {
+		return errors.New("更新公开标记失败")
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // SetCover 更新帖子封面路径。

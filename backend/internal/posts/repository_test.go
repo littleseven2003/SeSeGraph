@@ -348,7 +348,7 @@ func mustStoredImage(t *testing.T, repo *Repository, postID int64, order int) st
 	return ""
 }
 
-func TestPublicImageRequiresCompletedPostAndStoredImage(t *testing.T) {
+func TestPublicImageRequiresPublicFlag(t *testing.T) {
 	repo := newTestRepository(t)
 	ctx := context.Background()
 
@@ -357,14 +357,17 @@ func TestPublicImageRequiresCompletedPostAndStoredImage(t *testing.T) {
 		t.Fatalf("创建帖子失败: %v", err)
 	}
 	shortCode := mustStoredImage(t, repo, postID, 1)
-
-	// 帖未完成时不可转发。
-	if _, err := repo.PublicImage(ctx, shortCode); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("未完成帖应返回 ErrNotFound，实际: %v", err)
-	}
-
 	if err := repo.MarkPostFinished(ctx, postID, StatusCompleted, ""); err != nil {
 		t.Fatalf("标记完成失败: %v", err)
+	}
+
+	// 存图完成、帖已完成但未标记公开：旧任务升级后依然不可访问。
+	if _, err := repo.PublicImage(ctx, shortCode); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("未公开帖应返回 ErrNotFound，实际: %v", err)
+	}
+
+	if err := repo.SetPublic(ctx, postID, true); err != nil {
+		t.Fatalf("设置公开失败: %v", err)
 	}
 	image, err := repo.PublicImage(ctx, shortCode)
 	if err != nil {
@@ -372,6 +375,16 @@ func TestPublicImageRequiresCompletedPostAndStoredImage(t *testing.T) {
 	}
 	if image.RemoteFileID != "remote-file-1" || image.UploadMode != "document" || image.MIMEType != "image/png" {
 		t.Errorf("字段不符: %+v", image)
+	}
+
+	if err := repo.SetPublic(ctx, postID, false); err != nil {
+		t.Fatalf("取消公开失败: %v", err)
+	}
+	if _, err := repo.PublicImage(ctx, shortCode); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("取消公开后应返回 ErrNotFound，实际: %v", err)
+	}
+	if err := repo.SetPublic(ctx, 999, true); !errors.Is(err, ErrNotFound) {
+		t.Errorf("不存在的帖子应返回 ErrNotFound，实际: %v", err)
 	}
 }
 
@@ -386,6 +399,9 @@ func TestPublicImageRejectsDisabledPost(t *testing.T) {
 	shortCode := mustStoredImage(t, repo, postID, 1)
 	if err := repo.MarkPostFinished(ctx, postID, StatusCompleted, ""); err != nil {
 		t.Fatalf("标记完成失败: %v", err)
+	}
+	if err := repo.SetPublic(ctx, postID, true); err != nil {
+		t.Fatalf("设置公开失败: %v", err)
 	}
 	if _, err := repo.handle.ExecContext(ctx, `UPDATE posts SET is_disabled = 1 WHERE id = ?`, postID); err != nil {
 		t.Fatalf("禁用帖子失败: %v", err)
@@ -416,6 +432,9 @@ func TestPublicImageRejectsUnstoredAndUnknown(t *testing.T) {
 	}
 	if err := repo.MarkPostFinished(ctx, postID, StatusCompleted, ""); err != nil {
 		t.Fatalf("标记完成失败: %v", err)
+	}
+	if err := repo.SetPublic(ctx, postID, true); err != nil {
+		t.Fatalf("设置公开失败: %v", err)
 	}
 	if _, err := repo.PublicImage(ctx, images[0].ShortCode); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("未存图应返回 ErrNotFound，实际: %v", err)

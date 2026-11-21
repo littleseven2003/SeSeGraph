@@ -8,7 +8,7 @@ import (
 )
 
 // SchemaVersion 是当前代码期望的数据库结构版本，写入 SQLite 的 user_version。
-const SchemaVersion = 4
+const SchemaVersion = 5
 
 // schemaStatements 是首次建库所需的语句，顺序即执行顺序。
 var schemaStatements = []string{
@@ -30,6 +30,7 @@ var schemaStatements = []string{
 		status TEXT DEFAULT 'queued',
 		error_message TEXT DEFAULT '',
 		is_disabled INTEGER DEFAULT 0,
+		is_public INTEGER DEFAULT 0,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	)`,
@@ -107,6 +108,10 @@ func Migrate(ctx context.Context, handle *sql.DB) error {
 			return errors.New("执行初始迁移失败")
 		}
 	}
+	// 旧库升级：post 表补公开标记，默认关闭，需要管理员确认后才开启。
+	if err := ensureColumn(ctx, tx, "posts", "is_public", "ALTER TABLE posts ADD COLUMN is_public INTEGER DEFAULT 0"); err != nil {
+		return errors.New("升级帖子公开标记失败")
+	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", SchemaVersion)); err != nil {
 		return errors.New("写入数据库结构版本失败")
 	}
@@ -114,4 +119,35 @@ func Migrate(ctx context.Context, handle *sql.DB) error {
 		return errors.New("提交迁移事务失败")
 	}
 	return nil
+}
+
+// ensureColumn 在列缺失时执行加列语句，保证旧库升级可重复执行。
+func ensureColumn(ctx context.Context, tx *sql.Tx, table, column, ddl string) error {
+	rows, err := tx.QueryContext(ctx, "PRAGMA table_info("+table+")")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			typeName   string
+			notNull    int
+			defaultV   sql.NullString
+			primaryKey int
+		)
+		if err := rows.Scan(&cid, &name, &typeName, &notNull, &defaultV, &primaryKey); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, ddl)
+	return err
 }
