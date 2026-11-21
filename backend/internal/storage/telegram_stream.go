@@ -79,13 +79,29 @@ func (t *Telegram) openDownload(ctx context.Context, path string) (*http.Respons
 	return response, nil
 }
 
+// resolvePath 优先读缓存，缓存缺失时查询上游并写入。
+func (t *Telegram) resolvePath(ctx context.Context, fileID string) (string, int64, error) {
+	now := t.now()
+	if entry, ok := t.cache.get(fileID, now); ok {
+		return entry.path, entry.size, nil
+	}
+
+	path, size, err := t.getFilePath(ctx, fileID)
+	if err != nil {
+		return "", 0, err
+	}
+	t.cache.set(fileID, pathEntry{path: path, size: size, expires: now.Add(t.cache.ttl)}, now)
+	return path, size, nil
+}
+
 // OpenStream 查询文件路径并打开下载流，不把文件整体载入内存。
+// 缓存里的路径可能已失效：遇到 404 时刷新路径并只重试一次。
 func (t *Telegram) OpenStream(ctx context.Context, fileID string) (Stream, error) {
 	if err := ctx.Err(); err != nil {
 		return Stream{}, err
 	}
 
-	path, size, err := t.getFilePath(ctx, fileID)
+	path, size, err := t.resolvePath(ctx, fileID)
 	if err != nil {
 		return Stream{}, err
 	}
@@ -94,11 +110,27 @@ func (t *Telegram) OpenStream(ctx context.Context, fileID string) (Stream, error
 	if err != nil {
 		return Stream{}, err
 	}
-	if response.StatusCode != http.StatusOK {
+	if response.StatusCode == http.StatusNotFound {
 		_ = response.Body.Close()
+		t.cache.delete(fileID)
+
+		path, size, err = t.getFilePath(ctx, fileID)
+		if err != nil {
+			return Stream{}, err
+		}
+		t.cache.set(fileID, pathEntry{path: path, size: size, expires: t.now().Add(t.cache.ttl)}, t.now())
+
+		response, err = t.openDownload(ctx, path)
+		if err != nil {
+			return Stream{}, err
+		}
 		if response.StatusCode == http.StatusNotFound {
+			_ = response.Body.Close()
 			return Stream{}, ErrFileUnavailable
 		}
+	}
+	if response.StatusCode != http.StatusOK {
+		_ = response.Body.Close()
 		return Stream{}, ErrUpstream
 	}
 

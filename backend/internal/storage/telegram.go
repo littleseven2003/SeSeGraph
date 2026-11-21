@@ -21,6 +21,10 @@ const (
 	DefaultDocumentMaxBytes = 20 << 20
 	// defaultTimeout 覆盖大图上传的常规耗时。
 	defaultTimeout = 120 * time.Second
+	// DefaultPathTTL 是远端文件路径的缓存时长。
+	DefaultPathTTL = 45 * time.Minute
+	// DefaultPathCacheSize 是路径缓存的条目上限。
+	DefaultPathCacheSize = 512
 )
 
 // TelegramConfig 是 Telegram 图床配置。Token 只在本类型内部使用，不对外暴露。
@@ -31,6 +35,11 @@ type TelegramConfig struct {
 	HTTPClient       *http.Client
 	PhotoMaxBytes    int64
 	DocumentMaxBytes int64
+	// PathTTL 与 PathCacheSize 控制下载路径缓存，未设置时使用默认值。
+	PathTTL       time.Duration
+	PathCacheSize int
+	// Now 便于测试替换时钟，未设置时使用 time.Now。
+	Now func() time.Time
 }
 
 // Telegram 通过 Bot API 把图片存入私有频道。
@@ -41,6 +50,8 @@ type Telegram struct {
 	client   *http.Client
 	photoMax int64
 	docMax   int64
+	cache    *pathCache
+	now      func() time.Time
 }
 
 // NewTelegram 创建 Telegram 提供方。
@@ -70,6 +81,11 @@ func NewTelegram(cfg TelegramConfig) (*Telegram, error) {
 		docMax = DefaultDocumentMaxBytes
 	}
 
+	now := cfg.Now
+	if now == nil {
+		now = time.Now
+	}
+
 	return &Telegram{
 		token:    token,
 		chatID:   chatID,
@@ -77,6 +93,8 @@ func NewTelegram(cfg TelegramConfig) (*Telegram, error) {
 		client:   client,
 		photoMax: photoMax,
 		docMax:   docMax,
+		cache:    newPathCache(cfg.PathTTL, cfg.PathCacheSize),
+		now:      now,
 	}, nil
 }
 
