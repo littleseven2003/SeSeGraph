@@ -304,7 +304,9 @@ export function toggleHint(disabled: boolean): string {
     : '撤回后该帖短码立即返回 404，重新开启即恢复访问。'
 }
 
-/** toggleConfirmText 返回二次确认文案。 */
+/** toggleConfirmText 返回二次确认文案，撤回时明确指出源站 404 与缓存副本的边界。 */
 export function toggleConfirmText(disabled: boolean): string {
-  return disabled ? '恢复后分享链接重新可用，确认恢复？' : '撤回后分享链接立即失效，确认撤回？'
+  return disabled
+    ? '恢复后分享链接重新可用，确认恢复？'
+    : '撤回后源站短码立即 404，已缓存的副本可能仍显示。确认撤回？'
 }

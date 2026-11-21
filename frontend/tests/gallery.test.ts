@@ -262,5 +262,7 @@ test('撤回与恢复的按钮、提示与确认文案', () => {
   assert.match(toggleHint(true), /已撤回/)
   assert.match(toggleHint(true), /缓存/)
   assert.match(toggleConfirmText(false), /确认撤回/)
+  assert.match(toggleConfirmText(false), /源站短码立即 404/)
+  assert.match(toggleConfirmText(false), /已缓存的副本可能仍显示/)
   assert.match(toggleConfirmText(true), /恢复/)
 })

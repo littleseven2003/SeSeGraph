@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { togglePost, updatePost, type PostDetail } from '../../api/gallery.ts'
+import { setPostDisabled, updatePost, type PostDetail } from '../../api/gallery.ts'
 import { ApiError } from '../../api/client.ts'
 import {
   DEFAULT_SHARE_TEMPLATE,
@@ -130,7 +130,7 @@ async function doToggle(): Promise<void> {
   toggling.value = true
   toggleError.value = ''
   try {
-    const result = await togglePost(props.detail.id)
+    const result = await setPostDisabled(props.detail.id, !props.detail.disabled)
     confirmToggle.value = false
     feedback.value = result.disabled ? '已撤回该帖' : '已恢复该帖访问'
     emit('toggled')

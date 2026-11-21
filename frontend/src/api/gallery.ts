@@ -110,8 +110,16 @@ export async function updatePost(id: number, meta: PostMetadata): Promise<PostMe
   return (await response.json()) as PostMetadata
 }
 
-// togglePost 切换单帖熔断：禁用后短码立即 404，恢复沿用原有公开授权。
-export async function togglePost(id: number): Promise<{ id: number; disabled: boolean; public: boolean }> {
-  const response = await galleryRequest('/api/posts/' + String(id) + '/toggle', { method: 'PATCH' })
+// setPostDisabled 把单帖熔断写成目标状态：禁用后短码立即 404，恢复沿用原有公开授权。
+// 发送目标值而非翻转，超时重试同一目标保持原状态。
+export async function setPostDisabled(
+  id: number,
+  disabled: boolean,
+): Promise<{ id: number; disabled: boolean; public: boolean }> {
+  const response = await galleryRequest('/api/posts/' + String(id) + '/toggle', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ disabled }),
+  })
   return (await response.json()) as { id: number; disabled: boolean; public: boolean }
 }
