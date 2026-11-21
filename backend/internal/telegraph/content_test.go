@@ -12,12 +12,15 @@ import (
 )
 
 // pageServer 模拟 createPage / editPage。
+// 编辑接口与上游一致，只接受 /editPage/{path} 形式，路径放在表单里会被判为不合法。
 type pageServer struct {
 	mu       sync.Mutex
 	method   string
 	lastForm map[string]string
 	fail     bool
 	noPath   bool
+	badShape bool
+	rawURI   string
 	server   *httptest.Server
 }
 
@@ -26,8 +29,15 @@ func newPageServer(t *testing.T) *pageServer {
 	ps := &pageServer{lastForm: map[string]string{}}
 	ps.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
+		callPath := strings.TrimPrefix(r.URL.Path, "/")
+		// 编辑接口必须在 URL 上带页面路径，否则视为请求形态错误。
+		badShape := callPath == "editPage"
 		ps.mu.Lock()
-		ps.method = strings.TrimPrefix(r.URL.Path, "/")
+		ps.method = callPath
+		ps.rawURI = r.RequestURI
+		if badShape {
+			ps.badShape = true
+		}
 		for key := range r.PostForm {
 			ps.lastForm[key] = r.PostForm.Get(key)
 		}
@@ -35,6 +45,11 @@ func newPageServer(t *testing.T) *pageServer {
 		ps.mu.Unlock()
 
 		w.Header().Set("Content-Type", "application/json")
+		if badShape {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"ok":false,"error":"PATH_REQUIRED"}`))
+			return
+		}
 		if fail {
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write([]byte(`{"ok":false,"error":"TOKEN_LEAK"}`))
@@ -54,6 +69,13 @@ func newPageServer(t *testing.T) *pageServer {
 	}))
 	t.Cleanup(ps.server.Close)
 	return ps
+}
+
+// requestURI 返回原始请求地址，用于核对路径转义。
+func (p *pageServer) requestURI() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.rawURI
 }
 
 func (p *pageServer) requestForm() (string, map[string]string) {
@@ -105,7 +127,7 @@ func TestCreatePageSendsContentAndReturnsURL(t *testing.T) {
 	}
 }
 
-func TestEditPageSendsPath(t *testing.T) {
+func TestEditPageSendsPathInURL(t *testing.T) {
 	server := newPageServer(t)
 	client := New(Config{AccessToken: "secret-access-token", APIBase: server.server.URL})
 
@@ -117,11 +139,52 @@ func TestEditPageSendsPath(t *testing.T) {
 		t.Fatalf("编辑页面失败: %v", err)
 	}
 	method, form := server.requestForm()
-	if method != "editPage" {
-		t.Errorf("调用方法 = %q，期望 editPage", method)
+	if method != "editPage/Test-Page-01" {
+		t.Errorf("调用路径 = %q，期望 editPage/Test-Page-01", method)
 	}
-	if form["path"] != "Test-Page-01" {
-		t.Errorf("path = %q，期望去掉前导斜杠", form["path"])
+	if _, ok := form["path"]; ok {
+		t.Errorf("路径不应放在表单里，实际表单: %v", form)
+	}
+	if form["title"] != "改过的标题" {
+		t.Errorf("表单缺少标题: %v", form)
+	}
+	if server.badShape {
+		t.Error("不应退回不带路径的 editPage 请求")
+	}
+}
+
+func TestEditPageEscapesPath(t *testing.T) {
+	server := newPageServer(t)
+	client := New(Config{AccessToken: "secret-access-token", APIBase: server.server.URL})
+
+	if _, err := client.EditPage(context.Background(), "/Page%2F1", PageRequest{
+		Title:   "转义检查",
+		Content: []Node{Paragraph("x")},
+	}); err != nil {
+		t.Fatalf("编辑页面失败: %v", err)
+	}
+	if uri := server.requestURI(); uri != "/editPage/Page%252F1" {
+		t.Errorf("原始请求地址 = %q，期望转义百分号", uri)
+	}
+	if server.badShape {
+		t.Error("不应退回不带路径的 editPage 请求")
+	}
+}
+
+func TestEditPageRejectsInvalidPath(t *testing.T) {
+	server := newPageServer(t)
+	client := New(Config{AccessToken: "secret-access-token", APIBase: server.server.URL})
+
+	for _, path := range []string{"", "   ", "/", "Page 1", "Page\n1"} {
+		if _, err := client.EditPage(context.Background(), path, PageRequest{
+			Title:   "非法路径",
+			Content: []Node{Paragraph("x")},
+		}); !errors.Is(err, ErrInvalidInput) {
+			t.Errorf("路径 %q 的错误 = %v，期望 ErrInvalidInput", path, err)
+		}
+	}
+	if uri := server.requestURI(); uri != "" {
+		t.Errorf("非法路径不应发出请求，实际 %q", uri)
 	}
 }
 

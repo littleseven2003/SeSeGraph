@@ -104,22 +104,22 @@ func (c *Client) CreatePage(ctx context.Context, request PageRequest) (Page, err
 }
 
 // EditPage 修改已有页面，path 为创建时返回的路径。
+// 编辑接口把页面路径放在 URL 上（/editPage/{path}），不放在表单里。
 func (c *Client) EditPage(ctx context.Context, path string, request PageRequest) (Page, error) {
 	if !c.Configured() {
 		return Page{}, ErrNotConfigured
 	}
 	path = strings.TrimPrefix(strings.TrimSpace(path), "/")
-	if path == "" {
+	if path == "" || strings.ContainsAny(path, "\r\n\t ") {
 		return Page{}, ErrInvalidInput
 	}
 	form, err := c.normalize(request)
 	if err != nil {
 		return Page{}, err
 	}
-	form.Set("path", path)
 
 	var result Page
-	if err := c.post(ctx, "editPage", form, &result); err != nil {
+	if err := c.post(ctx, "editPage/"+url.PathEscape(path), form, &result); err != nil {
 		return Page{}, err
 	}
 	if strings.TrimSpace(result.Path) == "" {

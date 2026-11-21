@@ -138,7 +138,8 @@ type apiEnvelope struct {
 	Result json.RawMessage `json:"result"`
 }
 
-// post 发送表单请求，错误统一为固定说明，不带上游描述与地址。
+// post 发送表单请求到 apiBase/<method>。method 可以带上路径段，
+// 例如编辑页面使用 editPage/{path}，与上游的接口形态一致。
 func (c *Client) post(ctx context.Context, method string, form url.Values, out any) error {
 	if err := ctx.Err(); err != nil {
 		return err
