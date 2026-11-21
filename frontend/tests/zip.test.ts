@@ -78,7 +78,7 @@ test('单张超限时只报告该文件且不展开', () => {
   })
   const result = unpackZip(archive, { limits: { maxImageBytes: 100 } })
   assert.ok(!result.ok)
-  assert.match(result.error, /big\.jpg 超过/)
+  assert.match(result.error, /big\.jpg 超过 100B 上限/)
 })
 
 test('展开总量超限时拒绝', () => {

@@ -54,7 +54,10 @@ function isDirectoryEntry(name: string): boolean {
   return name.endsWith('/')
 }
 
-function formatMegabytes(bytes: number): string {
+// formatSize 按实际量级显示上限，避免小阈值被显示成 0MB。
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}KB`
   return `${Math.floor(bytes / (1024 * 1024))}MB`
 }
 
@@ -115,13 +118,13 @@ export function unpackZip(data: Uint8Array, options: ArchiveOptions = {}): Unpac
   if (oversizeName !== '') {
     return {
       ok: false,
-      error: `${oversizeName} 超过 ${formatMegabytes(limits.maxImageBytes)} 上限，请压缩后重试`,
+      error: `${oversizeName} 超过 ${formatSize(limits.maxImageBytes)} 上限，请压缩后重试`,
     }
   }
   if (overTotal) {
     return {
       ok: false,
-      error: `压缩包展开后超过 ${formatMegabytes(limits.maxTotalBytes)}，请分批上传`,
+      error: `压缩包展开后超过 ${formatSize(limits.maxTotalBytes)}，请分批上传`,
     }
   }
   if (images.length === 0) {
@@ -142,7 +145,7 @@ export function unpackZip(data: Uint8Array, options: ArchiveOptions = {}): Unpac
     if (actualBytes > limits.maxTotalBytes) {
       return {
         ok: false,
-        error: `压缩包展开后超过 ${formatMegabytes(limits.maxTotalBytes)}，请分批上传`,
+        error: `压缩包展开后超过 ${formatSize(limits.maxTotalBytes)}，请分批上传`,
       }
     }
     unpacked.push({ name: image.name, data: bytes })
