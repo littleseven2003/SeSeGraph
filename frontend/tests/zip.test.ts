@@ -91,6 +91,16 @@ test('展开总量超限时拒绝', () => {
   assert.match(result.error, /超过/)
 })
 
+test('默认上限下超过 500 张的包在展开前被拒', () => {
+  const entries: Record<string, Uint8Array> = {}
+  for (let index = 1; index <= 501; index += 1) {
+    entries[`${index}.jpg`] = new Uint8Array([index % 256])
+  }
+  const result = unpackZip(buildArchive(entries))
+  assert.ok(!result.ok)
+  assert.match(result.error, /超过 500 张/)
+})
+
 test('包内没有图片时给出说明', () => {
   const archive = buildArchive({ 'info.txt': '只有说明' })
   const result = unpackZip(archive)
