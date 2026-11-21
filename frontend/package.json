@@ -6,9 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "typecheck": "vue-tsc --noEmit"
+    "typecheck": "vue-tsc --noEmit",
+    "test": "node --test tests/*.test.ts"
   },
   "dependencies": {
+    "fflate": "0.8.3",
     "vue": "^3.5.46",
     "vue-router": "^4.6.5"
   },

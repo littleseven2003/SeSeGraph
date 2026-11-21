@@ -3,6 +3,7 @@ import { fetchStatus } from '../api/client'
 import HomeView from '../views/HomeView.vue'
 import LoginView from '../views/LoginView.vue'
 import SetupView from '../views/SetupView.vue'
+import WorkbenchView from '../views/WorkbenchView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -10,6 +11,7 @@ const router = createRouter({
     { path: '/', name: 'home', component: HomeView },
     { path: '/login', name: 'login', component: LoginView },
     { path: '/setup', name: 'setup', component: SetupView },
+    { path: '/workbench', name: 'workbench', component: WorkbenchView },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })

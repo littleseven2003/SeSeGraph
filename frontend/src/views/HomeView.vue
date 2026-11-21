@@ -58,14 +58,12 @@ async function signOut(): Promise<void> {
           <h1 class="text-xl font-semibold tracking-tight">图集</h1>
           <p class="mt-1 text-sm text-muted">发布记录与封面会显示在这里。</p>
         </div>
-        <button
-          type="button"
-          disabled
-          title="发布工作台将在后续版本开放"
-          class="h-10 cursor-not-allowed rounded-md bg-brand px-4 text-sm font-medium text-brand-ink opacity-60"
+        <router-link
+          :to="{ name: 'workbench' }"
+          class="inline-flex h-10 items-center rounded-md bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong"
         >
           新建图集
-        </button>
+        </router-link>
       </div>
 
       <section class="mt-6 rounded-lg border border-dashed border-line bg-surface px-6 py-14 text-center">
@@ -78,7 +76,7 @@ async function signOut(): Promise<void> {
         </div>
         <h2 class="mt-4 text-base font-semibold">还没有图集</h2>
         <p class="mx-auto mt-2 max-w-[40ch] text-sm text-muted">
-          发布工作台、图片上传与 Telegraph 排版将在后续版本接入，完成后图集会出现在这里。
+          点右上角「新建图集」进入发布工作台，逐张上传会在后续版本接入，完成后图集会出现在这里。
         </p>
       </section>
     </main>
