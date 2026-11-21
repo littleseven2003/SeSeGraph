@@ -7,12 +7,16 @@ import (
 	"errors"
 )
 
-// 已知配置键。
+// 已知配置键。敏感值（Bot Token、Telegraph 令牌）只落库，任何接口都不回显。
 const (
 	KeyTelegraphToken      = "telegraph.access_token"
 	KeyTelegraphAuthorName = "telegraph.author_name"
 	KeyTelegraphShortName  = "telegraph.short_name"
 	KeyTelegraphAuthorURL  = "telegraph.author_url"
+	KeyTelegraphAPIBase    = "telegraph.api_base"
+	KeyTelegramToken       = "telegram.bot_token"
+	KeyTelegramChannel     = "telegram.channel_id"
+	KeyTelegramAPIBase     = "telegram.api_base"
 )
 
 // Store 基于 settings 表读写键值配置。
