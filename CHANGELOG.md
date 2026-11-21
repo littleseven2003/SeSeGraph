@@ -6,9 +6,14 @@
 
 ### 新增
 
-- 设置读写：`GET /api/settings` 汇总生效配置及其来源（环境变量 / 数据库 / 默认值），Bot Token 与 Telegraph 令牌只报告是否已设置；`PUT /api/settings` 校验频道标识、上游地址与作者名后落库，空串清除数据库值并回落到环境变量或默认值，由环境变量提供的字段返回 409。
-- 连通性自检：`POST /api/settings/connectivity` 并行检测两处上游，Telegram 侧依次调用只读的 `getMe`、`getChat`、`getChatMember` 校验 Bot 身份与频道发布权限，Telegraph 侧调用 `getAccountInfo` 校验令牌；两项分别返回状态、耗时与固定说明，任一侧失败不影响另一侧，响应与日志都不含凭据。
-- 配置分层：环境变量优先、数据库次之、默认地址兜底；图床提供方与 Telegraph 上游地址改为从生效配置装配，设置页保存的凭据在重启后生效。
+- 设置读写：`GET /api/settings` 汇总生效配置及其来源（环境变量 / 数据库 / 默认值），Bot Token 与 Telegraph 令牌只报告是否已设置；`PUT /api/settings` 校验频道标识、令牌与作者名后整体落库，空串清除数据库值并回落，由环境变量提供的字段返回 409。删除与写入在同一事务内完成，任一步失败都不会留下半套配置。
+- 连通性自检：`POST /api/settings/test-connection` 并行检测两处上游，Telegram 侧依次调用只读的 `getMe`、`getChat`、`getChatMember` 校验 Bot 身份与频道发布权限，Telegraph 侧调用 `getAccountInfo` 校验令牌；两项分别返回状态、耗时与固定说明，任一侧失败不影响另一侧，响应与日志都不含凭据。检测复用生产侧的禁止重定向策略，3xx 不会把令牌带到新地址。
+- 配置分层：环境变量优先、数据库次之；解析在单次配置快照上完成，避免并发保存时混用新旧值。
+
+### 变更
+
+- 上游地址（`TELEGRAM_API_BASE`、`TELEGRAPH_API_BASE`）只由环境变量或官方默认值决定，设置接口不接受地址修改，避免把已有令牌导向任意主机。
+- 图床提供方与 Telegraph 上游地址改为从生效配置装配，设置页保存的凭据在重启后生效。
 
 ### 说明
 
