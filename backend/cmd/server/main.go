@@ -169,16 +169,15 @@ func startPublisher(ctx context.Context, repository *posts.Repository, manager *
 		log.Print("对外地址不是 HTTPS，发布队列未启动")
 		return func() {}
 	}
-	client, err := manager.Client(ctx)
-	if err != nil {
-		log.Print("Telegraph 未配置，发布队列未启动")
-		return func() {}
+	if _, err := manager.Client(ctx); err != nil {
+		log.Print("Telegraph 未配置，发布队列等待建号后启动")
 	}
-
 	queue, err := publisher.New(publisher.Options{
 		Repository: repository,
-		Pages:      client,
 		PublicURL:  publicURL,
+		Pages: func(ctx context.Context) (publisher.PageAPI, error) {
+			return manager.Client(ctx)
+		},
 	})
 	if err != nil {
 		log.Print("发布队列初始化失败")

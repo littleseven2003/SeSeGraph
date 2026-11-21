@@ -30,16 +30,17 @@ type PageAPI interface {
 // Options 汇总发布器依赖。
 type Options struct {
 	Repository *posts.Repository
-	Pages      PageAPI
-	PublicURL  string
-	Logger     *log.Logger
-	Sleep      func(ctx context.Context, d time.Duration) error
+	// Pages 在每次处理任务时获取页面客户端，允许运行期完成建号。
+	Pages     func(ctx context.Context) (PageAPI, error)
+	PublicURL string
+	Logger    *log.Logger
+	Sleep     func(ctx context.Context, d time.Duration) error
 }
 
 // Publisher 串行处理待发布帖子。
 type Publisher struct {
 	repo      *posts.Repository
-	pages     PageAPI
+	pages     func(ctx context.Context) (PageAPI, error)
 	publicURL string
 	logger    *log.Logger
 	sleep     func(ctx context.Context, d time.Duration) error
@@ -96,12 +97,18 @@ func (p *Publisher) Run(ctx context.Context) {
 
 // ProcessOnce 处理一条待发布任务，返回是否有任务被处理。
 func (p *Publisher) ProcessOnce(ctx context.Context) (bool, error) {
+	// 未完成建号时不动队列，任务保持待处理。
+	pageAPI, err := p.pages(ctx)
+	if err != nil {
+		return false, nil
+	}
+
 	postID, ok, err := p.repo.ClaimPublishable(ctx)
 	if err != nil || !ok {
 		return false, err
 	}
 
-	if err := p.publish(ctx, postID); err != nil {
+	if err := p.publish(ctx, postID, pageAPI); err != nil {
 		_ = p.repo.MarkPublishFailed(ctx, postID, publishErrText)
 		return true, err
 	}
@@ -109,7 +116,7 @@ func (p *Publisher) ProcessOnce(ctx context.Context) (bool, error) {
 }
 
 // publish 完成单帖发布：创建页面、互链、落库。
-func (p *Publisher) publish(ctx context.Context, postID int64) error {
+func (p *Publisher) publish(ctx context.Context, postID int64, pageAPI PageAPI) error {
 	info, err := p.repo.PublishInfo(ctx, postID)
 	if err != nil {
 		return err
@@ -131,7 +138,7 @@ func (p *Publisher) publish(ctx context.Context, postID int64) error {
 			paths = append(paths, strings.TrimPrefix(info.Paths[index], "/"))
 			continue
 		}
-		created, err := p.pages.CreatePage(ctx, telegraph.PageRequest{
+		created, err := pageAPI.CreatePage(ctx, telegraph.PageRequest{
 			Title:      p.pageTitle(info.Title, page),
 			AuthorName: info.AuthorName,
 			Content:    page.Body,
@@ -164,7 +171,7 @@ func (p *Publisher) publish(ctx context.Context, postID int64) error {
 			if _, err := telegraph.ContentBytes(content); err != nil {
 				return err
 			}
-			if _, err := p.pages.EditPage(ctx, paths[index], telegraph.PageRequest{
+			if _, err := pageAPI.EditPage(ctx, paths[index], telegraph.PageRequest{
 				Title:      p.pageTitle(info.Title, page),
 				AuthorName: info.AuthorName,
 				Content:    content,

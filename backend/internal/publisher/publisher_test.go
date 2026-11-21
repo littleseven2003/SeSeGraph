@@ -113,10 +113,12 @@ func newPublishEnv(t *testing.T, images int, description string) *publishEnv {
 	pages := &fakePages{}
 	pub, err := New(Options{
 		Repository: repo,
-		Pages:      pages,
-		PublicURL:  "https://images.example.com",
-		Logger:     log.New(io.Discard, "", 0),
-		Sleep:      func(context.Context, time.Duration) error { return nil },
+		Pages: func(context.Context) (PageAPI, error) {
+			return pages, nil
+		},
+		PublicURL: "https://images.example.com",
+		Logger:    log.New(io.Discard, "", 0),
+		Sleep:     func(context.Context, time.Duration) error { return nil },
 	})
 	if err != nil {
 		t.Fatalf("创建发布器失败: %v", err)
