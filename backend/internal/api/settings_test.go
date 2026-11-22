@@ -319,3 +319,52 @@ func TestConnectivityUnconfigured(t *testing.T) {
 
 // strPtr 返回指向给定字符串的指针。
 func strPtr(value string) *string { return &value }
+
+// TestSettingsMasksCustomEndpoints 确认自定义上游地址（可能含反代凭据）不会回显，
+// 服务端仍按生效地址工作。
+func TestSettingsMasksCustomEndpoints(t *testing.T) {
+	const custom = "http://svc-user:svc-pass-7788@127.0.0.1:18085"
+	env, resolver := newSettingsEnv(t, settings.Env{
+		TelegramAPIBase:  custom,
+		TelegraphAPIBase: custom,
+	})
+	cookie := env.setup(t)
+
+	effective, err := resolver.Effective(context.Background())
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if effective.TelegramAPIBase.Value != custom || effective.TelegraphAPIBase.Value != custom {
+		t.Fatal("服务端生效地址应保留完整取值")
+	}
+
+	read := env.do(t, http.MethodGet, "/api/settings", "", cookie)
+	if read.Code != http.StatusOK {
+		t.Fatalf("读取状态码 = %d", read.Code)
+	}
+	for _, secret := range []string{"svc-pass-7788", "svc-user", "127.0.0.1:18085"} {
+		if strings.Contains(read.Body.String(), secret) {
+			t.Fatalf("读取响应回显了自定义地址片段 %q", secret)
+		}
+	}
+	var view settingsBody
+	if err := decodeJSON(read.Body.Bytes(), &view); err != nil {
+		t.Fatalf("响应不是合法 JSON: %v", err)
+	}
+	if view.Telegram.APIBase != "" || view.Telegram.APIBaseSource != settings.SourceEnv {
+		t.Errorf("Telegram 地址视图 = %+v，期望只报来源", view.Telegram)
+	}
+	if view.Telegraph.APIBase != "" || view.Telegraph.APIBaseSource != settings.SourceEnv {
+		t.Errorf("Telegraph 地址视图 = %+v，期望只报来源", view.Telegraph)
+	}
+
+	saved := env.do(t, http.MethodPut, "/api/settings", `{"telegraph":{"author_name":"SeSe"}}`, cookie)
+	if saved.Code != http.StatusOK {
+		t.Fatalf("保存状态码 = %d，响应: %s", saved.Code, saved.Body.String())
+	}
+	for _, secret := range []string{"svc-pass-7788", "svc-user", "127.0.0.1:18085"} {
+		if strings.Contains(saved.Body.String(), secret) {
+			t.Fatalf("保存响应回显了自定义地址片段 %q", secret)
+		}
+	}
+}

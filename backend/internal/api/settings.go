@@ -39,6 +39,15 @@ type settingsView struct {
 	EnvManaged []string `json:"env_managed"`
 }
 
+// endpointValue 返回可对外的上游地址：官方默认值直接展示，自定义地址只报来源。
+// 自定义地址可能内嵌反代认证信息，因此不回显，服务端仍按生效值发起请求。
+func endpointValue(value settings.Value) string {
+	if value.Source == settings.SourceDefault {
+		return value.Value
+	}
+	return ""
+}
+
 // buildSettingsView 汇总生效配置。敏感项只输出布尔标记。
 func buildSettingsView(effective settings.Effective, publicURL string) settingsView {
 	view := settingsView{PublicURL: publicURL, EnvManaged: []string{}}
@@ -46,14 +55,14 @@ func buildSettingsView(effective settings.Effective, publicURL string) settingsV
 	view.Telegram.TokenSource = effective.TelegramToken.Source
 	view.Telegram.ChannelID = effective.TelegramChannel.Value
 	view.Telegram.ChannelSource = effective.TelegramChannel.Source
-	view.Telegram.APIBase = effective.TelegramAPIBase.Value
+	view.Telegram.APIBase = endpointValue(effective.TelegramAPIBase)
 	view.Telegram.APIBaseSource = effective.TelegramAPIBase.Source
 
 	view.Telegraph.TokenSet = effective.TelegraphToken.Set()
 	view.Telegraph.TokenSource = effective.TelegraphToken.Source
 	view.Telegraph.AuthorName = effective.TelegraphAuthor.Value
 	view.Telegraph.AuthorSource = effective.TelegraphAuthor.Source
-	view.Telegraph.APIBase = effective.TelegraphAPIBase.Value
+	view.Telegraph.APIBase = endpointValue(effective.TelegraphAPIBase)
 	view.Telegraph.APIBaseSource = effective.TelegraphAPIBase.Source
 
 	fields := []struct {
