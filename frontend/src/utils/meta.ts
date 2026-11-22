@@ -84,6 +84,18 @@ function parseKeyValue(lines: string[]): PostMeta | null {
 }
 
 // parseMetaText 按指定模式解析文本；键值模式无命中时回退到首行标题。
+// prefillFromMeta 把包内说明文本转成表单初值。
+// 工作台导入与手动重读共用它，保证解析方式只由设置决定。
+export function prefillFromMeta(text: string, mode: ParseMode): PostMeta {
+  const parsed = parseMetaText(text, mode)
+  return {
+    title: parsed.title,
+    description: parsed.description,
+    tags: parsed.tags,
+    author: parsed.author,
+  }
+}
+
 export function parseMetaText(text: string, mode: ParseMode): PostMeta {
   const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/)
   if (mode === 'key-value') {

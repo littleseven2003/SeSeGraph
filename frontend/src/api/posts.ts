@@ -74,6 +74,8 @@ export interface ServerProgress {
   status: string
   tags: string[]
   image_count: number
+  /** 任务创建时确定的画质，续传按它做大小校验 */
+  upload_mode: string
   stored_count: number
   failed_count: number
   images: ServerProgressImage[]

@@ -8,7 +8,7 @@ import { commitPost, createPost, fetchProgress, publishPost, retryPost, uploadIm
 import { ApiError } from '../api/client.ts'
 import { makeCover } from '../utils/cover.ts'
 import { MAX_IMAGE_COUNT, baseName, checkFile, formatBytes, limitForMode, mimeForName, type UploadMode } from '../utils/image.ts'
-import { parseMetaText, type PostMeta } from '../utils/meta.ts'
+import { prefillFromMeta, type PostMeta } from '../utils/meta.ts'
 import { sortByNaturalName } from '../utils/natural.ts'
 import { isActiveStatus, publishActive } from '../utils/progress.ts'
 import {
@@ -132,8 +132,8 @@ async function loadSettingsDefaults(): Promise<void> {
     const view = await fetchSettings()
     if (view.meta.filenames.length > 0) metaNames.value = view.meta.filenames
     metaParseMode.value = view.meta.parse_mode === 'key-value' ? 'key-value' : 'first-line'
-    // 只在用户还没手动切换、也不在续传时应用默认画质。
-    if (!modeTouched && !locked.value) {
+    // 只在用户还没手动切换、也没有续传任务时应用默认画质。
+    if (!modeTouched && snapshot.value === null && !locked.value) {
       mode.value = view.upload.default_mode === 'document' ? 'document' : 'photo'
     }
   } catch {
@@ -146,6 +146,11 @@ async function hydrate(saved: TaskSnapshot): Promise<void> {
   try {
     const progress = await fetchProgress(saved.postId)
     postId.value = saved.postId
+    // 续传沿用原任务画质：全局默认可能已改，文件大小校验必须按原模式进行。
+    if (progress.upload_mode === 'document' || progress.upload_mode === 'photo') {
+      mode.value = progress.upload_mode
+      modeTouched = true
+    }
     applyServerProgress(progress)
     phase.value = progress.status === 'uploading' ? 'idle' : progress.status === 'failed' ? 'failed' : 'queued'
     if (isActiveStatus(progress.status)) {
@@ -267,14 +272,8 @@ function onZip(file: File): void {
       applyTiles(next)
       restoreOrder()
       if (result.metaText !== '') {
-        // 包内存在说明文件时自动预填，缺失字段仍可手动补充。
-        const parsed = parseMetaText(result.metaText, 'first-line')
-        draft.value = {
-          title: parsed.title,
-          description: parsed.description,
-          tags: parsed.tags,
-          author: parsed.author,
-        }
+        // 包内存在说明文件时自动预填，解析方式与手动重读一致，缺失字段仍可手动补充。
+        draft.value = prefillFromMeta(result.metaText, metaParseMode.value)
       }
       if (result.metaError !== '') {
         message.value = result.metaError

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseMetaText, splitTags } from '../src/utils/meta.ts'
+import { parseMetaText, prefillFromMeta, splitTags } from '../src/utils/meta.ts'
 
 test('首行标题模式：首行标题、其余为说明', () => {
   const meta = parseMetaText('夏日海边写真\n第一段说明\n第二段说明', 'first-line')
@@ -43,4 +43,17 @@ test('空文本不报错，返回空元信息', () => {
 
 test('标签去重并忽略空白项', () => {
   assert.deepEqual(splitTags('写真, 写真 ,  ，海边'), ['写真', '海边'])
+})
+
+test('工作台按设置解析方式预填导入内容', () => {
+  const text = '标题: 键值标题\n说明: 键值说明\n标签: 风景, 旅行'
+  const keyValue = prefillFromMeta(text, 'key-value')
+  assert.equal(keyValue.title, '键值标题')
+  assert.equal(keyValue.description, '键值说明')
+  assert.deepEqual(keyValue.tags, ['风景', '旅行'])
+
+  // 同一文本按首行解析时标题会不同，说明模式确实生效。
+  const firstLine = prefillFromMeta(text, 'first-line')
+  assert.equal(firstLine.title, '标题: 键值标题')
+  assert.notEqual(firstLine.title, keyValue.title)
 })

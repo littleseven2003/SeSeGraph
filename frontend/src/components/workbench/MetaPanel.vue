@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { parseMetaText, splitTags, type ParseMode, type PostMeta } from '../../utils/meta.ts'
 
 // 元信息表单：总标题、总说明、标签与作者，支持从包内文本预填。
@@ -14,6 +14,13 @@ const props = defineProps<{
 const emit = defineEmits<{ (event: 'error', message: string): void }>()
 
 const parseMode = ref<ParseMode>(props.parseDefault ?? 'first-line')
+// 设置异步读取完成后同步默认解析方式，用户手动切换过则不再覆盖。
+watch(
+  () => props.parseDefault,
+  (value) => {
+    if (value === 'first-line' || value === 'key-value') parseMode.value = value
+  },
+)
 const tagInput = ref('')
 
 const hasMetaText = computed(() => props.metaText.trim() !== '')

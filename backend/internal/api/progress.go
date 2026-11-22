@@ -74,6 +74,7 @@ func progressHandler(deps Deps) gin.HandlerFunc {
 			"status":         post.Status,
 			"tags":           tags,
 			"image_count":    post.ImageCount,
+			"upload_mode":    post.UploadMode,
 			"stored_count":   stored,
 			"failed_count":   failed,
 			"images":         items,
