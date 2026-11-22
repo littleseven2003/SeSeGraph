@@ -11,7 +11,11 @@ const emit = defineEmits<{ open: [id: number] }>()
 
 const AUTO_MS = 5500
 const index = ref(0)
-const paused = ref(false)
+// 三种暂停原因各自独立：手动按钮、悬停、区内焦点，再加上封面已解锁。
+const manualPaused = ref(false)
+const hoverPaused = ref(false)
+const focusPaused = ref(false)
+const paused = computed(() => manualPaused.value || hoverPaused.value || focusPaused.value)
 let timer: ReturnType<typeof setInterval> | undefined
 
 const current = computed<GalleryItem | null>(() => props.items[index.value] ?? null)
@@ -78,9 +82,17 @@ function startTimer(): void {
   stopTimer()
   if (props.items.length < 2 || reducedMotion.value) return
   timer = setInterval(() => {
-    if (paused.value) return
+    if (paused.value || revealed.value) return
     step(1)
   }, AUTO_MS)
+}
+
+// 区内焦点：只有焦点真正离开轮播区才解除暂停。
+function onFocusOut(event: FocusEvent): void {
+  const next = event.relatedTarget as Node | null
+  const root = event.currentTarget as HTMLElement | null
+  if (root !== null && next !== null && root.contains(next)) return
+  focusPaused.value = false
 }
 
 function stopTimer(): void {
@@ -94,8 +106,8 @@ watch([index], () => {
   remask()
 })
 
-watch([revealed, reducedMotion, () => props.items.length], () => {
-  if (revealed.value || reducedMotion.value) stopTimer()
+watch([reducedMotion, () => props.items.length], () => {
+  if (reducedMotion.value) stopTimer()
   else startTimer()
 })
 
@@ -123,10 +135,10 @@ onBeforeUnmount(() => {
     class="rounded-2xl bg-surface p-4 shadow-[0_1px_0_0_rgba(27,26,23,0.05),0_24px_60px_-46px_rgba(27,26,23,0.4)] lg:p-5"
     aria-roledescription="carousel"
     aria-label="最新图集"
-    @mouseenter="paused = true"
-    @mouseleave="paused = false"
-    @focusin="paused = true"
-    @focusout="paused = false"
+    @mouseenter="hoverPaused = true"
+    @mouseleave="hoverPaused = false"
+    @focusin="focusPaused = true"
+    @focusout="onFocusOut"
     @keydown.left.prevent="step(-1)"
     @keydown.right.prevent="step(1)"
   >
@@ -231,10 +243,11 @@ onBeforeUnmount(() => {
           <button
             type="button"
             class="h-9 rounded-full px-2.5 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
-            :aria-label="paused ? '继续自动切换' : '暂停自动切换'"
-            @click="paused = !paused"
+            :aria-label="manualPaused ? '继续自动切换' : '暂停自动切换'"
+            :aria-pressed="manualPaused"
+            @click="manualPaused = !manualPaused"
           >
-            {{ paused ? '继续' : '暂停' }}
+            {{ manualPaused ? '继续' : '暂停' }}
           </button>
         </div>
 

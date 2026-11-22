@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { TagCount } from '../../api/gallery.ts'
 
 // 标签筛选条：已选置顶、高频标签常显，其余收进「全部标签」浮层，避免上百个标签撑爆页面。
@@ -15,12 +15,27 @@ const panel = ref<HTMLElement | null>(null)
 const trigger = ref<HTMLButtonElement | null>(null)
 const searchInput = ref<HTMLInputElement | null>(null)
 
-const MAX_VISIBLE = 8
+// 展示上限随视口变化：桌面 8 个、窄屏 4 个，超出部分一律走「全部标签」入口。
+const WIDE_LIMIT = 8
+const NARROW_LIMIT = 4
+const wide = ref(true)
+let mediaQuery: MediaQueryList | undefined
+
+function onMedia(event: MediaQueryListEvent): void {
+  wide.value = event.matches
+}
+
+onMounted(() => {
+  mediaQuery = window.matchMedia('(min-width: 640px)')
+  wide.value = mediaQuery.matches
+  mediaQuery.addEventListener('change', onMedia)
+})
 
 const selectedTags = computed(() => props.selected)
 const restTags = computed(() => props.tags.filter((tag) => !props.selected.includes(tag.name)))
-const visibleTags = computed(() => restTags.value.slice(0, MAX_VISIBLE))
-const hiddenCount = computed(() => Math.max(0, props.tags.length - selectedTags.value.length - visibleTags.value.length))
+const visibleLimit = computed(() => (wide.value ? WIDE_LIMIT : NARROW_LIMIT))
+const visibleTags = computed(() => restTags.value.slice(0, visibleLimit.value))
+const hiddenCount = computed(() => Math.max(0, restTags.value.length - visibleTags.value.length))
 const panelTags = computed(() => {
   const keyword = query.value.trim().toLowerCase()
   if (keyword === '') return props.tags
@@ -76,19 +91,20 @@ watch(open, (value) => {
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', onDocumentPointer)
   document.removeEventListener('keydown', onDocumentKey)
+  mediaQuery?.removeEventListener('change', onMedia)
 })
 </script>
 
 <template>
   <div v-if="props.tags.length > 0" class="relative mt-4">
-    <div class="flex flex-wrap items-center gap-2 pb-1 sm:flex-nowrap sm:overflow-x-auto">
+    <div class="flex min-w-0 flex-wrap items-center gap-2 pb-1 sm:flex-nowrap sm:overflow-x-auto">
       <span class="shrink-0 text-xs text-muted">标签</span>
 
       <button
         v-for="name in selectedTags"
         :key="'on-' + name"
         type="button"
-        class="inline-flex h-11 shrink-0 items-center gap-1.5 rounded-full border border-accent bg-accent px-3.5 text-xs font-medium text-white shadow-[0_2px_0_0_#08544e] transition motion-safe:active:scale-[0.97]"
+        class="inline-flex h-11 min-w-0 max-w-full shrink-0 items-center gap-1.5 rounded-full border border-accent bg-accent px-3.5 text-xs font-medium text-white shadow-[0_2px_0_0_#08544e] transition motion-safe:active:scale-[0.97] [overflow-wrap:anywhere]"
         :aria-label="'移除标签 ' + name"
         @click="toggle(name)"
       >
@@ -102,8 +118,7 @@ onBeforeUnmount(() => {
         v-for="(tag, index) in visibleTags"
         :key="tag.name"
         type="button"
-        class="h-11 shrink-0 items-center gap-1 rounded-full border border-line bg-surface px-3.5 text-xs font-medium text-muted transition hover:border-brand/40 hover:bg-brand-soft/60 hover:text-ink motion-safe:active:scale-[0.97]"
-        :class="index < 4 ? 'inline-flex' : 'hidden sm:inline-flex'"
+        class="inline-flex h-11 min-w-0 max-w-full shrink-0 items-center gap-1 rounded-full border border-line bg-surface px-3.5 text-xs font-medium text-muted transition hover:border-brand/40 hover:bg-brand-soft/60 hover:text-ink motion-safe:active:scale-[0.97] [overflow-wrap:anywhere]"
         @click="toggle(tag.name)"
       >
         <span class="tnum text-muted">#</span>{{ tag.name
@@ -171,7 +186,7 @@ onBeforeUnmount(() => {
           v-for="name in selectedTags"
           :key="'pick-' + name"
           type="button"
-          class="inline-flex items-center gap-1 rounded-full bg-accent-soft px-2.5 py-1 text-xs font-medium text-accent"
+          class="inline-flex min-w-0 max-w-full items-center gap-1 rounded-full bg-accent-soft px-2.5 py-1 text-xs font-medium text-accent [overflow-wrap:anywhere]"
           :aria-label="'取消 ' + name"
           @click="toggle(name)"
         >
@@ -188,7 +203,7 @@ onBeforeUnmount(() => {
           v-for="tag in panelTags"
           :key="'panel-' + tag.name"
           type="button"
-          class="inline-flex h-9 items-center gap-1 rounded-full border px-3 text-xs font-medium transition"
+          class="inline-flex h-9 min-w-0 max-w-full items-center gap-1 rounded-full border px-3 text-xs font-medium transition [overflow-wrap:anywhere]"
           :class="
             selectedTags.includes(tag.name)
               ? 'border-accent bg-accent text-white'

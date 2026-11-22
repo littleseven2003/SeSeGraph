@@ -58,7 +58,12 @@ const narrowPages = computed(() => pageWindow(page.value, PAGE_SIZE, total.value
 const hasFilter = computed(() => keyword.value.trim() !== '' || selectedTags.value.length > 0)
 // 焦点区只在未筛选的画廊首页出现；筛选、翻页或切到列表视图时一律隐藏，下方画廊保留完整数据。
 const showFocus = computed(
-  () => viewMode.value === 'gallery' && !hasFilter.value && page.value === 1 && items.value.length > 0,
+  () =>
+    viewMode.value === 'gallery' &&
+    !hasFilter.value &&
+    !loading.value &&
+    page.value === 1 &&
+    items.value.length > 0,
 )
 const focusItems = computed(() => items.value.slice(0, 5))
 
@@ -117,7 +122,10 @@ function resetAndLoad(): void {
 }
 
 function clearTags(): void {
+  if (selectedTags.value.length === 0) return
   selectedTags.value = []
+  // 清空标签后回到第一页重新取数，等无筛选结果回来再恢复焦点区。
+  resetAndLoad()
 }
 
 function toggleTag(name: string): void {
