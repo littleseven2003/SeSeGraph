@@ -2,6 +2,18 @@
 
 本文件记录本项目各版本的变更，格式参考 Keep a Changelog，版本号遵循 SemVer 2.0.0。
 
+## [未发布]
+
+### 新增
+
+- 流量看护：按自然月统计图片网关的出站字节与请求次数，内存累加、每 30 秒或每 5MB 刷盘 `traffic_stats`；`GET /api/stats/traffic` 返回当月用量与阈值；越过 `TRAFFIC_ALERT_GB` 时通过 Bot 发一条提醒（同月一次），达到 `TRAFFIC_LIMIT_GB` 后网关返回 503 且不再向上游取流。
+- 自动备份：`VACUUM INTO` 生成一致性快照后打包 zip（可选含封面缩略图），保留最近 7 份；`POST /api/backup/trigger` 手动触发、`GET /api/backup/download` 流式下载、`GET /api/backup/status` 查看定时说明与最近一份；`BACKUP_ENABLED` 与 `BACKUP_CRON` 控制每日定时任务，可经 Bot 发送到指定频道。
+- 设置页新增「流量看护」与「自动备份」两块：展示当月用量与阈值状态、最近备份与定时说明，支持立即备份与下载。
+
+### 说明
+
+- 定时备份的 cron 只支持每天固定时刻；备份发送失败时本地文件仍保留，接口返回 `warning` 提示。
+
 ## [v0.5.0] - 2026-11-22
 
 本版把图床配置从「改环境变量后重启」推进到「设置页在线维护、保存即热生效」：Telegram 与 Telegraph 凭据、网络代理与连通性自检都能在页面完成，换 Bot 前会校验已有图片归属，旧库升级也不会让历史图片失效。同时补齐直接部署、单容器 Docker 与 Docker Compose 三种形态所需的镜像、编排与反向代理示例。
