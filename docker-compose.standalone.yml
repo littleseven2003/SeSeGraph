@@ -44,6 +44,14 @@ services:
       UPLOAD_INTERVAL_MS: ${UPLOAD_INTERVAL_MS:-1500}
       UPLOAD_MODE: ${UPLOAD_MODE:-photo}
       PROXY_CONCURRENCY: ${PROXY_CONCURRENCY:-25}
+      # 月度流量看护：留空或 0 表示不启用
+      TRAFFIC_ALERT_GB: ${TRAFFIC_ALERT_GB:-}
+      TRAFFIC_LIMIT_GB: ${TRAFFIC_LIMIT_GB:-}
+      # 自动备份：BACKUP_CRON 默认每天 03:00
+      BACKUP_ENABLED: ${BACKUP_ENABLED:-}
+      BACKUP_CRON: "${BACKUP_CRON:-0 3 * * *}"
+      BACKUP_CHANNEL_ID: ${BACKUP_CHANNEL_ID:-}
+      BACKUP_INCLUDE_THUMBS: ${BACKUP_INCLUDE_THUMBS:-}
     ports:
       # 只绑回环地址，外部流量统一走宿主机反向代理。
       - "127.0.0.1:8080:8080"
