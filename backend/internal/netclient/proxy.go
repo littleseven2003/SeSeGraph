@@ -151,7 +151,8 @@ func NewTransport(cfg Config, service Service) (*http.Transport, error) {
 // systemProxy 按环境变量为一次请求选择代理。
 // 协议专属变量优先，两项都没设置时回退到 ALL_PROXY（标准库不读该变量）；
 // 地址补全、域名匹配与本地地址直连沿用 golang.org/x/net/http/httpproxy 的语义。
-// 与标准库不同，这里每次请求都读取环境变量，容器内变更后无需重启进程。
+// 与标准库不同，这里每次请求都读取当前进程的环境变量，因此响应进程内变更；
+// 容器部署修改环境变量通常需要重建容器，重建后启动即生效。
 func systemProxy(req *http.Request) (*url.URL, error) {
 	if req == nil || req.URL == nil {
 		return nil, nil
