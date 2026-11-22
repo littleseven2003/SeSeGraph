@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/subtle"
 	"errors"
 	"io/fs"
@@ -40,6 +41,8 @@ type Deps struct {
 	Editor *publisher.Editor
 	// Settings 解析运行期可修改的配置，未装配时设置接口不可用。
 	Settings *settings.Resolver
+	// Reload 在设置保存后重新装配生效配置，未装配时保存不触发热更新。
+	Reload func(context.Context) error
 }
 
 // maxAuthBodyBytes 是登录与初始化请求体的上限，超出的请求不会被解码。

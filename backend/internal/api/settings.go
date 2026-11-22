@@ -167,6 +167,14 @@ func updateSettingsHandler(deps Deps) gin.HandlerFunc {
 			return
 		}
 
+		if deps.Reload != nil {
+			// 保存成功后热切换图床提供方；切换失败时旧配置继续生效。
+			if err := deps.Reload(c.Request.Context()); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "配置已保存，但生效失败，请检查后重试"})
+				return
+			}
+		}
+
 		effective, err := deps.Settings.Effective(c.Request.Context())
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取配置失败"})

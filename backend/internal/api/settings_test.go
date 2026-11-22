@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,12 +15,26 @@ import (
 // newSettingsEnv 装配带配置解析器的环境，可注入环境变量优先项。
 func newSettingsEnv(t *testing.T, envValues settings.Env) (*testEnv, *settings.Resolver) {
 	t.Helper()
+	env, resolver, _ := newSettingsEnvWithReload(t, envValues, nil)
+	return env, resolver
+}
+
+// newSettingsEnvWithReload 允许注入保存后的热更新回调，返回可观测的调用次数。
+func newSettingsEnvWithReload(t *testing.T, envValues settings.Env, reload func(context.Context) error) (*testEnv, *settings.Resolver, *int) {
+	t.Helper()
 	var resolver *settings.Resolver
+	calls := 0
 	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
 		resolver = settings.NewResolver(settings.NewStore(handle), envValues)
 		deps.Settings = resolver
+		if reload != nil {
+			deps.Reload = func(ctx context.Context) error {
+				calls++
+				return reload(ctx)
+			}
+		}
 	})
-	return env, resolver
+	return env, resolver, &calls
 }
 
 // settingsBody 解码设置读取响应。
@@ -366,5 +381,56 @@ func TestSettingsMasksCustomEndpoints(t *testing.T) {
 		if strings.Contains(saved.Body.String(), secret) {
 			t.Fatalf("保存响应回显了自定义地址片段 %q", secret)
 		}
+	}
+}
+
+// TestSettingsSaveTriggersReload 确认保存成功后触发热更新，校验失败时不触发。
+func TestSettingsSaveTriggersReload(t *testing.T) {
+	env, _, calls := newSettingsEnvWithReload(t, settings.Env{}, func(context.Context) error { return nil })
+	cookie := env.setup(t)
+
+	if rec := env.do(t, http.MethodPut, "/api/settings", `{"telegraph":{"author_name":"SeSe"}}`, cookie); rec.Code != http.StatusOK {
+		t.Fatalf("保存状态码 = %d，响应: %s", rec.Code, rec.Body.String())
+	}
+	if *calls != 1 {
+		t.Errorf("热更新调用 = %d，期望 1", *calls)
+	}
+
+	if rec := env.do(t, http.MethodPut, "/api/settings", `{"telegram":{"channel_id":"bad channel"}}`, cookie); rec.Code != http.StatusBadRequest {
+		t.Fatalf("非法取值状态码 = %d，期望 400", rec.Code)
+	}
+	if *calls != 1 {
+		t.Errorf("校验失败不应触发热更新，调用次数 = %d", *calls)
+	}
+}
+
+// TestSettingsReloadFailureKeepsOldProvider 确认热更新失败时返回 500，
+// 旧提供方继续服务图片。
+func TestSettingsReloadFailureKeepsOldProvider(t *testing.T) {
+	streams := &fakeStreamProvider{}
+	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
+		deps.Settings = settings.NewResolver(settings.NewStore(handle), settings.Env{})
+		deps.Streams = streams
+		deps.Reload = func(context.Context) error { return errors.New("切换失败") }
+	})
+	cookie := env.setup(t)
+	postID := publishedPost(t, env)
+	code := shortCodeOf(t, env, postID)
+
+	rec := env.do(t, http.MethodPut, "/api/settings", `{"telegraph":{"author_name":"SeSe"}}`, cookie)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("状态码 = %d，期望 500，响应: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "配置已保存") {
+		t.Errorf("响应 = %s，期望说明已保存但生效失败", rec.Body.String())
+	}
+
+	// 旧提供方仍在服务。
+	before := streams.callCount()
+	if got := env.do(t, http.MethodGet, "/i/"+code, "", cookie); got.Code != http.StatusOK {
+		t.Errorf("旧提供方状态码 = %d，期望 200", got.Code)
+	}
+	if streams.callCount() != before+1 {
+		t.Errorf("旧提供方调用 = %d，期望 %d", streams.callCount(), before+1)
 	}
 }

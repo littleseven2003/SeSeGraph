@@ -96,8 +96,26 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		return errDatabase
 	}
 
-	streams := buildStreamProvider(effective)
 	telegraphManager := buildTelegraphManager(store, effective, lookupEnv)
+	switcher := storage.NewSwitcher()
+	if err := applyProvider(switcher, effective); err != nil {
+		log.Print("图床配置不可用，上传队列等待配置")
+	}
+
+	// reloadSettings 重新解析配置并热切换到图床提供方；失败时保留原有提供方。
+	reloadSettings := func(ctx context.Context) error {
+		current, resolveErr := resolver.Effective(ctx)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		if applyErr := applyProvider(switcher, current); applyErr != nil {
+			return applyErr
+		}
+		if telegraphManager != nil {
+			telegraphManager.Reset()
+		}
+		return nil
+	}
 
 	editor, editorErr := publisher.NewEditor(repository, func(ctx context.Context) (publisher.PageAPI, error) {
 		if telegraphManager == nil {
@@ -118,15 +136,16 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		WebFS:            assets,
 		DataDir:          cfg.DataDir,
 		Posts:            repository,
-		Streams:          streams,
+		Streams:          switcher,
 		Telegraph:        telegraphManager,
 		PublicURL:        cfg.PublicURL,
 		Editor:           editor,
 		Settings:         resolver,
+		Reload:           reloadSettings,
 		ImageConcurrency: readImageConcurrency(lookupEnv),
 	})
 
-	stopWorker := startUploadQueue(ctx, repository, cfg.DataDir, streams, lookupEnv)
+	stopWorker := startUploadQueue(ctx, repository, cfg.DataDir, switcher, lookupEnv)
 	defer stopWorker()
 
 	stopPublisher := startPublisher(ctx, repository, telegraphManager, cfg.PublicURL)
@@ -165,24 +184,33 @@ func bootstrapAdmin(ctx context.Context, service *auth.Service, lookupEnv func(s
 	}
 }
 
-// buildStreamProvider 按生效配置创建图床提供方：环境变量优先，其次数据库，
-// 因此设置页保存的凭据在重启后生效。未配置或配置不合法时返回空，
-// 由调用方决定跳过上传队列，并让图片网关返回不可用。
-func buildStreamProvider(effective settings.Effective) storage.StreamProvider {
+// newProvider 按生效配置创建图床提供方；未配置时返回 nil，由调用方决定如何呈现。
+func newProvider(effective settings.Effective) (*storage.Telegram, error) {
 	provider, err := storage.NewTelegram(storage.TelegramConfig{
 		Token:   effective.TelegramToken.Value,
 		ChatID:  effective.TelegramChannel.Value,
 		APIBase: effective.TelegramAPIBase.Value,
 	})
-	switch {
-	case errors.Is(err, storage.ErrNotConfigured):
-		log.Print("图床未配置，上传队列未启动")
-		return nil
-	case err != nil:
-		log.Print("图床配置不可用，上传队列未启动")
-		return nil
+	if errors.Is(err, storage.ErrNotConfigured) {
+		return nil, nil
 	}
-	return provider
+	if err != nil {
+		return nil, err
+	}
+	return provider, nil
+}
+
+// applyProvider 把生效配置装配成提供方并切换到运行期容器。
+func applyProvider(switcher *storage.Switcher, effective settings.Effective) error {
+	provider, err := newProvider(effective)
+	if err != nil {
+		return err
+	}
+	switcher.Swap(provider)
+	if provider == nil {
+		log.Print("图床未配置，上传队列等待配置")
+	}
+	return nil
 }
 
 // startPublisher 在 Telegraph 已配置且对外地址为 HTTPS 时启动发布队列。
@@ -247,11 +275,9 @@ func readImageConcurrency(lookupEnv func(string) (string, bool)) int {
 	return value
 }
 
-// startUploadQueue 在提供方可用时启动上传队列，返回停止函数。
-func startUploadQueue(ctx context.Context, repository *posts.Repository, dataDir string, provider storage.StreamProvider, lookupEnv func(string) (string, bool)) func() {
-	if provider == nil {
-		return func() {}
-	}
+// startUploadQueue 启动上传队列，返回停止函数。
+// 队列始终运行：图床未配置时按提供方的就绪状态等待，配置保存后自动接手。
+func startUploadQueue(ctx context.Context, repository *posts.Repository, dataDir string, provider storage.Provider, lookupEnv func(string) (string, bool)) func() {
 	interval := readUploadInterval(lookupEnv)
 
 	queue, err := worker.New(worker.Options{
