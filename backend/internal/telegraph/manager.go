@@ -31,20 +31,38 @@ type Status struct {
 // Manager 负责账户来源（环境变量或数据库）与令牌持久化。
 // 建号与客户端缓存的读写都在互斥锁内，避免并发点击重复申请账户。
 type Manager struct {
-	base   Config
-	store  Store
-	env    *Client
-	mu     sync.Mutex
-	stored *Client
+	base     Config
+	store    Store
+	envToken string
+	env      *Client
+	mu       sync.Mutex
+	stored   *Client
 }
 
 // NewManager 创建账户管理。base.AccessToken 非空时优先使用环境变量令牌。
+// 环境变量令牌的客户端按需构建，作者名等资料更新后可通过 Reset 重建。
 func NewManager(base Config, store Store) *Manager {
-	manager := &Manager{base: base, store: store}
-	if strings.TrimSpace(base.AccessToken) != "" {
-		manager.env = New(base)
+	return &Manager{base: base, store: store, envToken: strings.TrimSpace(base.AccessToken)}
+}
+
+// storedValue 读取数据库中的单项配置，缺失或出错时返回空串。
+func (m *Manager) storedValue(ctx context.Context, key string) string {
+	if m.store == nil {
+		return ""
 	}
-	return manager
+	value, found, err := m.store.Get(ctx, key)
+	if err != nil || !found {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
+// envAuthor 解析环境变量令牌下应使用的作者名：环境变量优先，其次数据库。
+func (m *Manager) envAuthor(ctx context.Context) string {
+	if author := strings.TrimSpace(m.base.AuthorName); author != "" {
+		return author
+	}
+	return m.storedValue(ctx, settings.KeyTelegraphAuthorName)
 }
 
 // tokenless 返回不带令牌的客户端，用于申请账户。
@@ -54,11 +72,17 @@ func (m *Manager) tokenless() *Client {
 
 // Client 返回带令牌的客户端。环境变量优先，其次使用数据库中的令牌。
 func (m *Manager) Client(ctx context.Context) (*Client, error) {
-	if m.env != nil {
-		return m.env, nil
-	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.envToken != "" {
+		if m.env == nil {
+			cfg := m.base
+			cfg.AccessToken = m.envToken
+			cfg.AuthorName = m.envAuthor(ctx)
+			m.env = New(cfg)
+		}
+		return m.env, nil
+	}
 	if m.stored != nil {
 		return m.stored, nil
 	}
@@ -86,8 +110,8 @@ func (m *Manager) Client(ctx context.Context) (*Client, error) {
 
 // Status 返回当前账户来源与作者名，不会回传令牌。
 func (m *Manager) Status(ctx context.Context) (Status, error) {
-	if m.env != nil {
-		return Status{Configured: true, Source: "env", AuthorName: m.env.AuthorName()}, nil
+	if m.envToken != "" {
+		return Status{Configured: true, Source: "env", AuthorName: m.envAuthor(ctx)}, nil
 	}
 	if m.store == nil {
 		return Status{Configured: false, Source: "none"}, nil
@@ -110,18 +134,19 @@ func (m *Manager) Status(ctx context.Context) (Status, error) {
 	return Status{Configured: true, Source: "stored", AuthorName: author, AuthorURL: authorURL}, nil
 }
 
-// Reset 丢弃数据库令牌对应的缓存客户端，设置更新后重新读取。
-// 环境变量提供的令牌不受影响。
+// Reset 丢弃缓存的客户端，设置更新后重新读取令牌与作者名。
+// 环境变量提供的令牌本身不变，但作者名等资料可能已更新，因此同样重建。
 func (m *Manager) Reset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.env = nil
 	m.stored = nil
 }
 
 // CreateAccount 申请新账户并原子写入令牌与账户资料。
 // 已有账户（环境变量或数据库）时直接复用，不重复申请，避免覆盖导致旧页面失去编辑权。
 func (m *Manager) CreateAccount(ctx context.Context, shortName, authorName string) (Status, error) {
-	if m.env != nil {
+	if m.envToken != "" {
 		return m.Status(ctx)
 	}
 	if m.store == nil {

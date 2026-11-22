@@ -298,3 +298,37 @@ func TestManagerCreateAccountWritesAtomically(t *testing.T) {
 		}
 	}
 }
+
+// TestManagerEnvTokenAuthorReload 验证环境变量只提供令牌时，作者名取自数据库，
+// 保存新作者并 Reset 后立刻使用新作者。
+func TestManagerEnvTokenAuthorReload(t *testing.T) {
+	store := newMapStore()
+	store.values[settings.KeyTelegraphAuthorName] = "旧作者"
+	manager := NewManager(Config{AccessToken: "env-token"}, store)
+	ctx := context.Background()
+
+	client, err := manager.Client(ctx)
+	if err != nil {
+		t.Fatalf("读取客户端失败: %v", err)
+	}
+	if client.AuthorName() != "旧作者" {
+		t.Errorf("作者名 = %q，期望取数据库保存值", client.AuthorName())
+	}
+	status, err := manager.Status(ctx)
+	if err != nil {
+		t.Fatalf("读取状态失败: %v", err)
+	}
+	if status.AuthorName != "旧作者" || status.Source != "env" {
+		t.Errorf("状态 = %+v，期望环境变量令牌配数据库作者", status)
+	}
+
+	store.values[settings.KeyTelegraphAuthorName] = "新作者"
+	manager.Reset()
+	client, err = manager.Client(ctx)
+	if err != nil {
+		t.Fatalf("重置后读取客户端失败: %v", err)
+	}
+	if client.AuthorName() != "新作者" {
+		t.Errorf("重置后作者名 = %q，期望使用新作者", client.AuthorName())
+	}
+}
