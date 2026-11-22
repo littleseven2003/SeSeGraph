@@ -43,6 +43,11 @@ const detailGuard = createLatestGuard()
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
 const pages = computed(() => pageWindow(page.value, PAGE_SIZE, total.value))
 const hasFilter = computed(() => keyword.value.trim() !== '' || selectedTags.value.length > 0)
+// 精选位只在未筛选的第一页出现，且至少要有一张普通帖陪衬，避免只剩一张时不规则。
+const featuredItem = computed<GalleryItem | null>(() =>
+  !hasFilter.value && page.value === 1 && items.value.length >= 2 ? items.value[0] : null,
+)
+const gridItems = computed(() => (featuredItem.value === null ? items.value : items.value.slice(1)))
 
 function messageOf(cause: unknown): string {
   if (cause instanceof ApiError) return cause.message
@@ -181,7 +186,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="min-h-full">
-    <header class="border-b border-line">
+    <header class="border-b border-line/60">
       <div class="mx-auto flex w-full max-w-[1240px] items-center justify-between gap-4 px-5 py-3">
         <div class="flex items-center gap-2.5">
           <BrandMark />
@@ -215,7 +220,7 @@ onBeforeUnmount(() => {
 
     <main class="mx-auto w-full max-w-[1240px] px-5 py-7">
       <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <h1 class="text-xl font-semibold tracking-tight">图集</h1>
+        <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">图集</h1>
         <p class="rounded-full border border-line bg-surface px-2.5 py-0.5 text-xs text-muted tnum">
           共 {{ total }} 组<template v-if="hasFilter"> · 已筛选</template>
         </p>
@@ -246,7 +251,7 @@ onBeforeUnmount(() => {
               type="search"
               aria-label="搜索图集"
               placeholder="搜索标题或标签"
-              class="h-11 w-full rounded-md border border-line bg-surface pl-9 pr-3 text-sm outline-none transition focus:border-ink/40"
+              class="h-11 w-full rounded-full border border-line bg-surface pl-9 pr-3 text-sm outline-none transition focus:border-ink/40 focus:shadow-[0_2px_0_0_rgba(27,26,23,0.06)]"
             />
           </label>
 
@@ -277,7 +282,7 @@ onBeforeUnmount(() => {
 
             <router-link
               :to="{ name: 'workbench' }"
-              class="inline-flex h-11 flex-1 shrink-0 items-center justify-center rounded-md bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong sm:flex-none"
+              class="inline-flex h-11 flex-1 shrink-0 items-center justify-center rounded-full bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong sm:flex-none"
             >
               新建图集
             </router-link>
@@ -310,13 +315,11 @@ onBeforeUnmount(() => {
       </div>
 
       <section class="mt-5">
-        <div v-if="loading" class="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 xl:grid-cols-4">
-          <div v-for="index in 8" :key="index" class="overflow-hidden rounded-md border border-line bg-surface">
-            <div class="aspect-[4/3] w-full animate-pulse bg-canvas"></div>
-            <div class="space-y-2 px-3.5 py-3">
-              <div class="h-4 w-3/4 animate-pulse rounded bg-canvas"></div>
-              <div class="h-3 w-1/2 animate-pulse rounded bg-canvas"></div>
-            </div>
+        <div v-if="loading" class="grid grid-cols-2 gap-4 md:grid-cols-3 md:gap-6">
+          <div v-for="index in 7" :key="index" class="flex flex-col gap-2.5">
+            <div class="aspect-[4/3] w-full animate-pulse rounded-2xl bg-canvas"></div>
+            <div class="h-4 w-3/4 animate-pulse rounded bg-canvas"></div>
+            <div class="h-3 w-1/2 animate-pulse rounded bg-canvas"></div>
           </div>
         </div>
 
@@ -361,9 +364,20 @@ onBeforeUnmount(() => {
         </div>
 
         <template v-else>
-          <div class="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 xl:grid-cols-4">
+          <PostCard
+            v-if="featuredItem !== null"
+            :item="featuredItem"
+            :blurred="blurEnabled"
+            featured
+            @open="openDetail"
+          />
+
+          <div
+            class="grid grid-cols-2 gap-4 md:grid-cols-3 md:gap-6"
+            :class="featuredItem !== null ? 'mt-8' : ''"
+          >
             <PostCard
-              v-for="item in items"
+              v-for="item in gridItems"
               :key="item.id"
               :item="item"
               :blurred="blurEnabled"
