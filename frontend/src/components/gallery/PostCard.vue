@@ -54,7 +54,7 @@ const published = computed(() => formatPublishedAt(props.item.published_at))
 const publishedDate = computed(() => published.value.split(' ')[0] ?? '')
 const visibleTags = computed(() => props.item.tags.slice(0, 2))
 const restTags = computed(() => Math.max(0, props.item.tags.length - visibleTags.value.length))
-// volume 是相纸角上的卷号，用帖子编号补两位，形成归档索引感。
+// volume 是卡片上的卷号，用帖子编号补两位，形成归档索引感。
 const volume = computed(() => '#' + String(props.item.id).padStart(2, '0'))
 const meta = computed(() =>
   publishedDate.value !== '' ? volume.value + ' · ' + publishedDate.value : volume.value + ' · 待冲印',

@@ -33,7 +33,7 @@
   body {
     margin: 0;
     background-color: var(--color-canvas);
-    /* 冲印台微点阵：极淡的暖沙点位，让画布像一张实体工作台。 */
+    /* 画布微点阵：极淡的暖沙点位，让画布像一张实体工作台。 */
     background-image: radial-gradient(rgba(140, 122, 102, 0.14) 1px, transparent 1px);
     background-size: 20px 20px;
     color: var(--color-ink);

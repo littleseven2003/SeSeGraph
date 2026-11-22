@@ -56,7 +56,7 @@ async function submit(): Promise<void> {
       <BrandMark :width="164" />
       <p class="mt-1.5 text-xs font-medium tracking-[0.04em] text-muted">SeSe图册</p>
 
-      <h1 class="mt-8 text-xl font-semibold tracking-tight">布置你的第一间冲印室</h1>
+      <h1 class="mt-8 text-xl font-semibold tracking-tight">启用你的私人图册</h1>
       <p class="mt-1.5 text-sm text-muted">首次启动，创建一个管理员账号即可开始使用。</p>
 
       <form class="mt-6 overflow-hidden rounded-2xl bg-surface p-5 shadow-[0_1px_0_0_rgba(27,26,23,0.05),0_24px_60px_-40px_rgba(27,26,23,0.35)]" novalidate @submit.prevent="submit">
