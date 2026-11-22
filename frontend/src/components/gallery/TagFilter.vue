@@ -35,7 +35,6 @@ const selectedTags = computed(() => props.selected)
 const restTags = computed(() => props.tags.filter((tag) => !props.selected.includes(tag.name)))
 const visibleLimit = computed(() => (wide.value ? WIDE_LIMIT : NARROW_LIMIT))
 const visibleTags = computed(() => restTags.value.slice(0, visibleLimit.value))
-const hiddenCount = computed(() => Math.max(0, restTags.value.length - visibleTags.value.length))
 const panelTags = computed(() => {
   const keyword = query.value.trim().toLowerCase()
   if (keyword === '') return props.tags
@@ -132,7 +131,6 @@ onBeforeUnmount(() => {
       </div>
 
       <button
-        v-if="hiddenCount > 0"
         ref="trigger"
         type="button"
         class="inline-flex h-11 shrink-0 items-center gap-1.5 rounded-full border border-dashed border-line px-3.5 text-xs font-medium text-muted transition hover:border-brand/40 hover:text-ink"
