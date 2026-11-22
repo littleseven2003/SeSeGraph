@@ -360,3 +360,48 @@ func TestProxyFromEnvironment(t *testing.T) {
 		t.Error("环境变量开关应优先于数据库")
 	}
 }
+
+// TestProxyMixedSourcesPerField 验证代理字段逐个判断托管状态：
+// 只托管地址时模式可改、地址不可改；只托管模式时地址仍可写入。
+func TestProxyMixedSourcesPerField(t *testing.T) {
+	ctx := context.Background()
+
+	// 只托管地址：模式可以改，地址改动返回冲突，且不会把被遮蔽的值写进数据库。
+	resolver := NewResolver(newStore(t), Env{ProxyURL: "http://env-proxy.test:3128"})
+	custom := netclient.ModeCustom
+	if err := resolver.Update(ctx, Patch{ProxyMode: &custom}); err != nil {
+		t.Fatalf("托管地址时仍应允许改模式: %v", err)
+	}
+	effective, _ := resolver.Effective(ctx)
+	if effective.ProxyMode.Value != netclient.ModeCustom || effective.ProxyMode.Source != SourceStored {
+		t.Errorf("模式 = %+v，期望数据库取值 custom", effective.ProxyMode)
+	}
+	if effective.ProxyURL.Source != SourceEnv {
+		t.Errorf("地址来源 = %q，期望环境变量", effective.ProxyURL.Source)
+	}
+
+	other := "socks5://127.0.0.1:1080"
+	err := resolver.Update(ctx, Patch{ProxyURL: &other})
+	var conflict *FieldConflict
+	if !errors.As(err, &conflict) || len(conflict.Fields) != 1 || conflict.Fields[0] != "proxy.url" {
+		t.Fatalf("错误 = %v，期望 proxy.url 冲突", err)
+	}
+	if stored, _, _ := resolver.store.Get(ctx, KeyProxyURL); stored != "" {
+		t.Errorf("被环境变量遮蔽的地址不应落库: %q", stored)
+	}
+
+	// 只托管模式：地址可以正常写入。
+	resolver = NewResolver(newStore(t), Env{ProxyMode: "custom"})
+	if err := resolver.Update(ctx, Patch{ProxyURL: &other}); err != nil {
+		t.Fatalf("托管模式时仍应允许写地址: %v", err)
+	}
+	effective, _ = resolver.Effective(ctx)
+	if effective.ProxyURL.Value != other || effective.ProxyURL.Source != SourceStored {
+		t.Errorf("地址 = %+v，期望数据库取值", effective.ProxyURL)
+	}
+	direct := netclient.ModeDirect
+	err = resolver.Update(ctx, Patch{ProxyMode: &direct})
+	if !errors.As(err, &conflict) || len(conflict.Fields) != 1 || conflict.Fields[0] != "proxy.mode" {
+		t.Fatalf("错误 = %v，期望 proxy.mode 冲突", err)
+	}
+}

@@ -339,42 +339,52 @@ func applyProxy(patch Patch, current Effective, values map[string]string, delete
 		return
 	}
 
+	// 模式与地址各自判断托管状态：只托管其中一项时，另一项仍可正常写入。
 	mode := current.ProxyMode.Value
 	if patch.ProxyMode != nil {
-		mode = strings.TrimSpace(*patch.ProxyMode)
-	}
-	url := current.ProxyURL.Value
-	if patch.ProxyURL != nil {
-		url = strings.TrimSpace(*patch.ProxyURL)
-	}
-
-	if current.ProxyMode.Source != SourceEnv {
-		normalized := netclient.ModeOrDefault(mode)
-		if raw := strings.TrimSpace(mode); raw != "" && raw != normalized {
+		raw := strings.TrimSpace(*patch.ProxyMode)
+		normalized := netclient.ModeOrDefault(raw)
+		if raw != "" && raw != normalized {
 			*invalid = append(*invalid, "proxy.mode")
 			return
 		}
-		if url != "" || normalized == netclient.ModeCustom {
-			if err := netclient.Validate(netclient.ModeCustom, url); err != nil {
-				*invalid = append(*invalid, "proxy.url")
-				return
-			}
+		mode = normalized
+	}
+	url := current.ProxyURL.Value
+	urlChanged := false
+	if patch.ProxyURL != nil {
+		url = strings.TrimSpace(*patch.ProxyURL)
+		urlChanged = url != current.ProxyURL.Value
+	}
+
+	// 交叉校验：自定义模式需要能解析的地址，其余模式下写入的地址也必须合法。
+	if mode == netclient.ModeCustom {
+		if err := netclient.Validate(netclient.ModeCustom, url); err != nil {
+			*invalid = append(*invalid, "proxy.url")
+			return
 		}
-		if patch.ProxyMode != nil && normalized != current.ProxyMode.Value {
-			values[KeyProxyMode] = normalized
+	} else if urlChanged && url != "" {
+		if err := netclient.Validate(netclient.ModeCustom, url); err != nil {
+			*invalid = append(*invalid, "proxy.url")
+			return
 		}
-		if patch.ProxyURL != nil {
-			switch {
-			case url == "":
-				*deletes = append(*deletes, KeyProxyURL)
-			case url != current.ProxyURL.Value:
-				values[KeyProxyURL] = url
-			}
+	}
+
+	if patch.ProxyMode != nil && mode != current.ProxyMode.Value {
+		if current.ProxyMode.Source == SourceEnv {
+			*conflicts = append(*conflicts, "proxy.mode")
+		} else {
+			values[KeyProxyMode] = mode
 		}
-	} else if patch.ProxyMode != nil && netclient.ModeOrDefault(*patch.ProxyMode) != current.ProxyMode.Value {
-		*conflicts = append(*conflicts, "proxy.mode")
-	} else if patch.ProxyURL != nil && strings.TrimSpace(*patch.ProxyURL) != current.ProxyURL.Value {
-		*conflicts = append(*conflicts, "proxy.url")
+	}
+	if patch.ProxyURL != nil && urlChanged {
+		if current.ProxyURL.Source == SourceEnv {
+			*conflicts = append(*conflicts, "proxy.url")
+		} else if url == "" {
+			*deletes = append(*deletes, KeyProxyURL)
+		} else {
+			values[KeyProxyURL] = url
+		}
 	}
 
 	applyToggle(patch.ProxyTelegram, current.ProxyTelegram, KeyProxyTelegram, "proxy.telegram", values, conflicts)
