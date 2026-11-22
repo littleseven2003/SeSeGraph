@@ -13,6 +13,7 @@
 - 连通性面板与接口：`POST /api/settings/test-connection` 并行检测两处上游，Telegram 侧依次调用只读的 `getMe`、`getChat`、`getChatMember` 校验 Bot 身份与频道发布权限，Telegraph 侧调用 `getAccountInfo` 校验令牌；两项分别返回状态、耗时与固定说明，任一侧失败不影响另一侧，页面内直接展示结果。
 - 配置分层：环境变量优先、数据库次之；解析在单次配置快照上完成，避免并发保存时混用新旧值。
 - 代理配置：支持 `direct`（直连）、`system`（跟随 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`）与 `custom`（`http`、`https`、`socks5`，可带账密）三种模式，可分别对 Telegram Bot API 与 Telegraph API 启用；自定义地址在读写响应中只报告是否已设置，服务端仍使用完整取值。同样的四项可由 `PROXY_MODE`、`PROXY_URL`、`PROXY_FOR_TELEGRAM`、`PROXY_FOR_TELEGRAPH` 环境变量托管，托管后界面只读。
+- 部署编排：多阶段 `Dockerfile`（Node 构建前端 → 静态编译 Go → Alpine 运行层，内置 `HEALTHCHECK`，以非 root 运行）、`docker-compose.yml`（应用 + Caddy 自动 HTTPS，读 `.env` 的 `DOMAIN`）、`docker-compose.standalone.yml`（只跑应用，接入已有反向代理）、`.dockerignore`，以及 `deploy/sesegraph.service`、`deploy/nginx.conf.example`、`deploy/Caddyfile.example` 三个部署示例。两套 Compose 都带一次性 `init` 服务，首次部署自动建好数据目录并交给 uid 1000；systemd 模板用 `StateDirectory` 创建数据目录；两套编排都透传 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY`。Compose 的 Caddy 关闭访问日志，避免 `X-Setup-Token` 等自定义请求头被记录。
 
 ### 变更
 
