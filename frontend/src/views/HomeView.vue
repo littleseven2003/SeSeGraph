@@ -5,6 +5,7 @@ import { ApiError, logout } from '../api/client'
 import {
   fetchGallery,
   fetchPostDetail,
+  refreshPostViews,
   fetchTags,
   type GalleryItem,
   type PostDetail,
@@ -44,6 +45,10 @@ const signingOut = ref(false)
 const drawerOpen = ref(false)
 const detail = ref<PostDetail | null>(null)
 const detailLoading = ref(false)
+const viewsRefreshing = ref(false)
+const viewsNotice = ref('')
+const viewsNoticeTone = ref<'ok' | 'muted'>('ok')
+let viewsNoticeTimer: ReturnType<typeof setTimeout> | undefined
 const detailError = ref('')
 const detailId = ref<number | null>(null)
 
@@ -152,6 +157,7 @@ function toggleBlur(): void {
 async function openDetail(id: number): Promise<void> {
   drawerOpen.value = true
   detailId.value = id
+  viewsNotice.value = ''
   void loadDetail()
 }
 
@@ -173,6 +179,49 @@ async function loadDetail(): Promise<void> {
   }
 }
 
+// scheduleViewsNotice 让刷新反馈短暂出现后自动消失。
+function scheduleViewsNotice(): void {
+  if (viewsNoticeTimer !== undefined) clearTimeout(viewsNoticeTimer)
+  viewsNoticeTimer = setTimeout(() => {
+    viewsNotice.value = ''
+  }, 1800)
+}
+
+// refreshViews 手动刷新当前详情帖的浏览量，切帖后旧响应不再回写。
+async function refreshViews(): Promise<void> {
+  const current = detail.value
+  if (current === null || viewsRefreshing.value) return
+  const id = current.id
+  viewsRefreshing.value = true
+  viewsNotice.value = ''
+  try {
+    const result = await refreshPostViews(id)
+    if (detail.value?.id === id) {
+      detail.value = {
+        ...detail.value,
+        views_count: result.views_count,
+        views_updated_at: result.views_updated_at,
+      }
+      viewsNotice.value = result.cached ? '刚刚已更新' : '已更新'
+      viewsNoticeTone.value = result.cached ? 'muted' : 'ok'
+      scheduleViewsNotice()
+    }
+    items.value = items.value.map((item) =>
+      item.id === id
+        ? { ...item, views_count: result.views_count, views_updated_at: result.views_updated_at }
+        : item,
+    )
+  } catch (cause) {
+    if (detail.value?.id === id) {
+      viewsNotice.value = messageOf(cause)
+      viewsNoticeTone.value = 'muted'
+      scheduleViewsNotice()
+    }
+  } finally {
+    viewsRefreshing.value = false
+  }
+}
+
 function onToggled(): void {
   void loadDetail()
   void loadList(page.value)
@@ -190,6 +239,11 @@ function closeDetail(): void {
   drawerOpen.value = false
   detail.value = null
   detailError.value = ''
+  viewsNotice.value = ''
+  if (viewsNoticeTimer !== undefined) {
+    clearTimeout(viewsNoticeTimer)
+    viewsNoticeTimer = undefined
+  }
 }
 
 async function signOut(): Promise<void> {
@@ -220,6 +274,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (searchTimer !== undefined) clearTimeout(searchTimer)
+  if (viewsNoticeTimer !== undefined) clearTimeout(viewsNoticeTimer)
 })
 </script>
 
@@ -492,6 +547,10 @@ onBeforeUnmount(() => {
       :detail="detail"
       :loading="detailLoading"
       :error="detailError"
+      :views-refreshing="viewsRefreshing"
+      :views-notice="viewsNotice"
+      :views-notice-tone="viewsNoticeTone"
+      @refresh-views="refreshViews"
       @close="closeDetail"
       @retry="loadDetail"
       @saved="onSaved"

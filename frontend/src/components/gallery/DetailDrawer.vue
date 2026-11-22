@@ -9,6 +9,8 @@ import {
   focusStep,
   formatFileSize,
   formatPublishedAt,
+  formatViewsExact,
+  showsViews,
   imageShareUrl,
   postShareUrl,
   metadataFromDetail,
@@ -28,9 +30,12 @@ const props = defineProps<{
   detail: PostDetail | null
   loading: boolean
   error: string
+  viewsRefreshing?: boolean
+  viewsNotice?: string
+  viewsNoticeTone?: 'ok' | 'muted'
 }>()
 
-const emit = defineEmits<{ close: []; retry: []; saved: []; toggled: [] }>()
+const emit = defineEmits<{ close: []; retry: []; saved: []; toggled: []; refreshViews: [] }>()
 
 const closeButton = ref<HTMLButtonElement | null>(null)
 const panel = ref<HTMLElement | null>(null)
@@ -58,6 +63,19 @@ const status = computed(() =>
     : statusLabel(props.detail.status, props.detail.publish_state, props.detail.disabled),
 )
 const published = computed(() => (props.detail === null ? '' : formatPublishedAt(props.detail.published_at)))
+// 浏览量只在已发布、未撤回且同步过时展示；未同步的已发布帖显示「尚未统计」。
+const showViews = computed(() => (props.detail === null ? false : showsViews(props.detail)))
+const viewsText = computed(() =>
+  props.detail === null ? '' : formatViewsExact(props.detail.views_count) + ' 次浏览',
+)
+const viewsTitle = computed(() =>
+  props.detail === null || props.detail.views_updated_at === null
+    ? '尚未同步浏览量'
+    : '更新于 ' + formatPublishedAt(props.detail.views_updated_at),
+)
+const canRefreshViews = computed(
+  () => props.detail !== null && props.detail.publish_state === 'published' && !props.detail.disabled,
+)
 const created = computed(() => (props.detail === null ? '' : formatPublishedAt(props.detail.created_at)))
 // 分享链接一律使用服务端公开地址，管理页面的域名不能代表图片出口。
 const shareUrl = computed(() => (props.detail === null ? '' : postShareUrl(props.detail)))
@@ -420,6 +438,48 @@ watch(
             <span class="rounded px-1.5 py-0.5 text-xs font-medium" :class="toneClass">{{ status.label }}</span>
             <span class="text-xs text-muted tnum">{{ detail.image_count }} 张图</span>
             <span class="text-xs text-muted">{{ detail.upload_mode === 'document' ? '原图模式' : '画质模式' }}</span>
+            <span
+              v-if="showViews"
+              class="inline-flex items-center gap-1 text-xs text-muted tnum"
+              :title="viewsTitle"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-3.5 w-3.5" aria-hidden="true">
+                <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" stroke-linecap="round" stroke-linejoin="round" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+              {{ viewsText }}
+            </span>
+            <span v-else-if="canRefreshViews" class="text-xs text-muted">尚未统计</span>
+            <button
+              v-if="canRefreshViews"
+              type="button"
+              class="inline-flex h-8 items-center gap-1 rounded-full border border-line bg-surface px-2.5 text-xs text-muted transition hover:border-ink/25 hover:text-ink disabled:opacity-60"
+              :disabled="viewsRefreshing"
+              :title="viewsTitle"
+              aria-label="刷新浏览量"
+              @click="emit('refreshViews')"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.75"
+                class="h-3.5 w-3.5"
+                :class="viewsRefreshing ? 'motion-safe:animate-spin' : ''"
+                aria-hidden="true"
+              >
+                <path d="M20 11a8 8 0 1 0-2.34 5.66" stroke-linecap="round" />
+                <path d="M20 5v6h-6" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              刷新浏览量
+            </button>
+            <span
+              v-if="viewsNotice"
+              class="text-xs tnum"
+              :class="viewsNoticeTone === 'muted' ? 'text-muted' : 'text-accent'"
+              aria-live="polite"
+              >{{ viewsNotice }}</span
+            >
           </div>
 
           <p v-if="detail.description !== ''" class="mt-3 whitespace-pre-line text-sm leading-relaxed text-ink/85">
