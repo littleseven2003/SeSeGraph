@@ -380,8 +380,8 @@ onBeforeUnmount(() => {
           v-for="item in SETTING_NAV"
           :key="item.id"
           :href="'#' + item.id"
-          class="inline-flex h-11 shrink-0 items-center rounded border px-3 text-xs font-medium transition hover:border-ink/25 hover:text-ink"
-          :class="activeSection === item.id ? 'border-accent bg-accent-soft text-accent' : 'border-line text-muted'"
+          class="inline-flex h-11 shrink-0 items-center rounded-full border px-3.5 text-xs font-medium transition"
+          :class="activeSection === item.id ? 'border-brand-soft bg-brand-soft text-ink' : 'border-line text-muted hover:bg-canvas hover:text-ink'"
           @click="selectSection(item.id)"
         >
           {{ item.label }}
@@ -419,7 +419,7 @@ onBeforeUnmount(() => {
           <button
             type="button"
             :disabled="saving"
-            class="mt-3 h-11 w-full rounded-full bg-brand px-4 text-sm font-medium text-brand-ink shadow-[0_2px_0_0_#9e2b12] transition hover:bg-brand-strong motion-safe:active:translate-y-[2px] active:shadow-none disabled:opacity-60"
+            class="mt-3 h-11 w-full rounded-full bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
             @click="save"
           >
             {{ saving ? '保存中…' : '保存设置' }}
@@ -837,7 +837,7 @@ onBeforeUnmount(() => {
           <button
             type="button"
             :disabled="saving"
-            class="h-11 shrink-0 rounded-full bg-brand px-4 text-sm font-medium text-brand-ink shadow-[0_2px_0_0_#9e2b12] transition hover:bg-brand-strong motion-safe:active:translate-y-[2px] active:shadow-none disabled:opacity-60"
+            class="h-11 shrink-0 rounded-full bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
             @click="save"
           >
             {{ saving ? '保存中…' : '保存设置' }}

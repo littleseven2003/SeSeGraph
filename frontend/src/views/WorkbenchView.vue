@@ -789,7 +789,7 @@ onBeforeUnmount(() => {
                 <div class="mt-3 space-y-2">
                   <button
                     type="button"
-                    class="h-11 w-full rounded-full bg-brand px-4 text-sm font-medium text-brand-ink shadow-[0_2px_0_0_#9e2b12] transition hover:bg-brand-strong motion-safe:active:translate-y-[2px] active:shadow-none disabled:opacity-60"
+                    class="h-11 w-full rounded-full bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
                     :disabled="busy || phase === 'queued' || finished"
                     @click="publish"
                   >
@@ -844,7 +844,7 @@ onBeforeUnmount(() => {
             </button>
             <button
               type="button"
-              class="h-11 shrink-0 rounded-full bg-brand px-4 text-sm font-medium text-brand-ink shadow-[0_2px_0_0_#9e2b12] transition hover:bg-brand-strong motion-safe:active:translate-y-[2px] active:shadow-none disabled:opacity-60"
+              class="h-11 shrink-0 rounded-full bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
               :disabled="busy || phase === 'queued' || finished"
               @click="publish"
             >

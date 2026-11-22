@@ -34,7 +34,7 @@ const limitText = computed(() =>
           class="h-11 rounded-full px-3.5 text-xs font-medium transition disabled:opacity-50"
           :class="
             props.mode === option.value
-              ? 'bg-accent text-white shadow-[0_2px_0_0_#08544e]'
+              ? 'bg-accent text-white'
               : 'text-muted hover:bg-surface hover:text-ink'
           "
           :disabled="props.disabled"
@@ -54,7 +54,7 @@ const limitText = computed(() =>
 
     <div
       v-if="props.layout !== 'stack'"
-      class="flex rounded-md border border-line p-0.5"
+      class="flex rounded-full bg-canvas p-1"
       role="group"
       aria-label="画质模式"
     >
@@ -65,7 +65,7 @@ const limitText = computed(() =>
           class="h-11 rounded-full px-3.5 text-xs font-medium transition disabled:opacity-50"
           :class="
             props.mode === option.value
-              ? 'bg-accent text-white shadow-[0_2px_0_0_#08544e]'
+              ? 'bg-accent text-white'
               : 'text-muted hover:bg-surface hover:text-ink'
           "
           :disabled="props.disabled"

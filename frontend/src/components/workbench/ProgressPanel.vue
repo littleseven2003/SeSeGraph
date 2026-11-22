@@ -56,7 +56,7 @@ const tone = computed(() => {
         <button
           v-if="canRetry"
           type="button"
-          class="h-11 rounded-md bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+          class="h-11 rounded-full bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
           :disabled="props.retrying"
           @click="emit('retry')"
         >
@@ -73,7 +73,7 @@ const tone = computed(() => {
       ></div>
     </div>
 
-    <div v-if="props.progress.status === 'completed'" class="mt-4 rounded-md border border-line bg-surface px-3 py-2">
+    <div v-if="props.progress.status === 'completed'" class="mt-4 rounded-xl bg-canvas px-3.5 py-2.5">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div>
           <p class="text-sm font-medium">Telegraph 发布</p>
@@ -84,7 +84,7 @@ const tone = computed(() => {
         <button
           v-if="canPublish"
           type="button"
-          class="h-11 rounded-md bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+          class="h-11 rounded-full bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
           :disabled="publishActive(props.progress) || props.publishing"
           @click="emit('publish')"
         >

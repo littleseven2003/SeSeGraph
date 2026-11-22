@@ -8,7 +8,7 @@ import { useCoverReveal } from './useCoverReveal.ts'
 const props = defineProps<{ item: GalleryItem; blurred: boolean }>()
 const emit = defineEmits<{ open: [id: number] }>()
 
-const { showBlur, activate } = useCoverReveal(() => props.blurred)
+const { showBlur, activate, onCoverEnter, onCoverLeave } = useCoverReveal(() => props.blurred)
 
 function onOpen(): void {
   activate(() => emit('open', props.item.id))
@@ -61,6 +61,8 @@ const copyLabel = computed(() => {
       :aria-label="`打开《${item.title}》详情`"
       data-reveal="cover"
       @click="onOpen"
+      @mouseenter="onCoverEnter"
+      @mouseleave="onCoverLeave"
     >
       <img
         v-if="item.cover_url !== ''"

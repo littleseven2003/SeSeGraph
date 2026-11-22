@@ -291,7 +291,7 @@ watch(
           <button
             v-if="detail !== null && !editing"
             type="button"
-            class="h-10 rounded-md border border-line px-3 text-xs font-medium transition hover:bg-canvas disabled:opacity-60"
+            class="h-11 rounded-full border border-line px-3.5 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
             :disabled="toggling"
             @click="startEdit"
           >
@@ -300,7 +300,7 @@ watch(
           <button
             v-if="detail !== null && !editing"
             type="button"
-            class="h-10 rounded-md border px-3 text-xs font-medium transition disabled:opacity-60"
+            class="h-11 rounded-full border px-3.5 text-xs font-medium transition disabled:opacity-60"
             :class="detail.disabled ? 'border-accent/40 text-accent hover:bg-accent/10' : 'border-line text-danger hover:bg-danger-soft'"
             :disabled="toggling"
             @click="askToggle"
@@ -310,7 +310,7 @@ watch(
           <button
             ref="closeButton"
             type="button"
-            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-line text-muted transition hover:bg-canvas"
+            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-line text-muted transition hover:bg-canvas hover:text-ink"
             aria-label="关闭详情"
             @click="emit('close')"
           >
@@ -328,7 +328,7 @@ watch(
           <p class="text-sm text-danger">{{ error }}</p>
           <button
             type="button"
-            class="mt-3 h-9 rounded-md border border-line px-3 text-sm font-medium transition hover:bg-surface"
+            class="mt-3 h-11 rounded-full border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
             @click="emit('retry')"
           >
             重试
@@ -341,7 +341,7 @@ watch(
             <input
               v-model="draft.title"
               type="text"
-              class="mt-1 h-9 w-full rounded-md border border-line bg-canvas px-2 text-sm outline-none transition focus:border-brand focus:bg-surface"
+              class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-brand focus:bg-surface"
             />
           </label>
           <label class="block">
@@ -349,7 +349,7 @@ watch(
             <textarea
               v-model="draft.description"
               rows="4"
-              class="mt-1 w-full rounded-md border border-line bg-canvas px-2 py-1.5 text-sm leading-relaxed outline-none transition focus:border-brand focus:bg-surface"
+              class="mt-1 w-full rounded-xl border border-line bg-canvas px-3 py-2 text-sm leading-relaxed outline-none transition focus:border-brand focus:bg-surface"
             ></textarea>
           </label>
           <label class="block">
@@ -357,7 +357,7 @@ watch(
             <input
               v-model="draft.authorName"
               type="text"
-              class="mt-1 h-9 w-full rounded-md border border-line bg-canvas px-2 text-sm outline-none transition focus:border-brand focus:bg-surface"
+              class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-brand focus:bg-surface"
             />
           </label>
 
@@ -369,14 +369,14 @@ watch(
           <div class="flex items-center gap-2">
             <button
               type="submit"
-              class="h-9 rounded-md bg-brand px-3 text-xs font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+              class="h-11 rounded-full bg-brand px-4 text-xs font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
               :disabled="saving"
             >
               {{ saving ? '正在保存…' : '保存' }}
             </button>
             <button
               type="button"
-              class="h-9 rounded-md border border-line px-3 text-xs font-medium transition hover:bg-canvas"
+              class="h-11 rounded-full border border-line px-3.5 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
               :disabled="saving"
               @click="cancelEdit"
             >
@@ -386,12 +386,12 @@ watch(
         </form>
 
         <template v-else-if="detail !== null">
-          <div v-if="confirmToggle" class="mb-3 rounded-md border border-line bg-canvas px-3 py-2">
+          <div v-if="confirmToggle" class="mb-3 rounded-xl bg-canvas px-3.5 py-3">
             <p class="text-xs text-ink">{{ toggleConfirmText(detail.disabled) }}</p>
             <div class="mt-2 flex items-center gap-2">
               <button
                 type="button"
-                class="h-8 rounded-md bg-brand px-2.5 text-xs font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+                class="h-9 rounded-full bg-brand px-3 text-xs font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
                 :disabled="toggling"
                 @click="doToggle"
               >
@@ -399,7 +399,7 @@ watch(
               </button>
               <button
                 type="button"
-                class="h-8 rounded-md border border-line px-2.5 text-xs font-medium transition hover:bg-surface"
+                class="h-9 rounded-full border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
                 :disabled="toggling"
                 @click="confirmToggle = false"
               >
@@ -411,7 +411,7 @@ watch(
 
           <p
             v-if="detail.disabled"
-            class="mb-3 rounded-md border border-danger/25 bg-danger-soft px-3 py-2 text-xs text-danger"
+            class="mb-3 rounded-xl bg-danger-soft px-3.5 py-2.5 text-xs text-danger"
           >
             {{ toggleHint(true) }}
           </p>
@@ -435,11 +435,11 @@ watch(
             >
           </div>
 
-          <section class="mt-4 rounded-md border border-line bg-canvas px-3 py-3">
+          <section class="mt-4 rounded-2xl bg-canvas px-3.5 py-3.5">
             <div class="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                class="inline-flex h-11 min-w-[8.5rem] flex-1 items-center justify-center rounded-md border px-3 text-sm font-medium transition disabled:cursor-not-allowed"
+                class="inline-flex h-11 min-w-[8.5rem] flex-1 items-center justify-center rounded-full border px-3.5 text-sm font-medium transition disabled:cursor-not-allowed"
                 :class="
                   shareReady
                     ? 'border-brand bg-brand text-brand-ink hover:bg-brand-strong'
@@ -452,7 +452,7 @@ watch(
               </button>
               <button
                 type="button"
-                class="inline-flex h-11 min-w-[8.5rem] flex-1 items-center justify-center rounded-md border px-3 text-sm font-medium transition disabled:cursor-not-allowed"
+                class="inline-flex h-11 min-w-[8.5rem] flex-1 items-center justify-center rounded-full border px-3.5 text-sm font-medium transition disabled:cursor-not-allowed"
                 :class="
                   shareReady
                     ? 'border-line bg-surface text-ink hover:border-ink/25'
@@ -509,7 +509,7 @@ watch(
 
           <section class="mt-5">
             <h3 class="text-xs font-medium text-muted">图片清单</h3>
-            <ul class="mt-2 divide-y divide-line rounded-md border border-line">
+            <ul class="mt-2 divide-y divide-line/70 overflow-hidden rounded-xl bg-surface">
               <li
                 v-for="image in detail.images"
                 :key="image.short_code"
@@ -553,7 +553,7 @@ watch(
                 v-model="templateDraft"
                 aria-label="分享文案模板"
                 rows="3"
-                class="w-full rounded-md border border-line bg-canvas px-2 py-1.5 text-xs leading-relaxed outline-none transition focus:border-brand focus:bg-surface"
+                class="w-full rounded-xl border border-line bg-canvas px-2.5 py-2 text-xs leading-relaxed outline-none transition focus:border-brand focus:bg-surface"
               ></textarea>
               <div class="flex flex-wrap gap-1">
                 <button
@@ -569,14 +569,14 @@ watch(
               <div class="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  class="h-9 rounded-md bg-brand px-2.5 text-xs font-medium text-brand-ink transition hover:bg-brand-strong"
+                  class="h-9 rounded-full bg-brand px-3 text-xs font-medium text-brand-ink transition hover:bg-brand-strong"
                   @click="applyTemplate"
                 >
                   保存模板
                 </button>
                 <button
                   type="button"
-                  class="h-9 rounded-md border border-line px-2.5 text-xs font-medium transition hover:bg-canvas"
+                  class="h-9 rounded-full border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
                   @click="resetTemplate"
                 >
                   恢复默认
