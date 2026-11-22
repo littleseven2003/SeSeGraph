@@ -25,9 +25,14 @@
 - 上游地址（`TELEGRAM_API_BASE`、`TELEGRAPH_API_BASE`）只由环境变量或官方默认值决定，设置接口不接受地址修改，避免把已有令牌导向任意主机；自定义地址只返回来源与配置状态，不回显，避免反代地址中的认证信息出现在界面或响应里。
 - 详情卡片页脚改为「发布时间 + 时间」顺序，移动端搜索占位文案收窄，避免 390px 下被截断。
 
+### 新增
+
+- 部署编排：多阶段 `Dockerfile`（Node 构建前端 → 静态编译 Go → Alpine 运行层，内置 `HEALTHCHECK`，以非 root 运行）、`docker-compose.yml`（应用 + Caddy 自动 HTTPS，读 `.env` 的 `DOMAIN`）、`docker-compose.standalone.yml`（只跑应用，接入已有反向代理）、`.dockerignore`，以及 `deploy/sesegraph.service`、`deploy/nginx.conf.example`、`deploy/Caddyfile.example` 三个部署示例。
+
 ### 说明
 
 - 保存后的配置立即用于连通性自检与图床；上传队列与图片网关同样按新配置装配，无需重启。
+- 容器实机验证仍未执行，`Dockerfile` 与编排按静态检查与本地等价命令校验，列入开口项。
 
 ## [v0.4.0] - 2026-11-22
 
