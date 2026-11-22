@@ -18,6 +18,9 @@ import {
   connectionTone,
   endpointText,
   ENV_MANAGED_HINT,
+  FIELD_PROXY_MODE,
+  FIELD_PROXY_TELEGRAM,
+  FIELD_PROXY_TELEGRAPH,
   FIELD_PROXY_URL,
   FIELD_TELEGRAM_CHANNEL,
   FIELD_TELEGRAM_TOKEN,
@@ -341,13 +344,16 @@ onMounted(() => {
                     type="radio"
                     name="proxy-mode"
                     :value="option.value"
-                    :disabled="saving"
+                    :disabled="saving || managed(FIELD_PROXY_MODE)"
                     class="h-4 w-4 accent-brand"
                   />
                   <span>{{ option.label }}</span>
                 </label>
               </div>
-              <p class="mt-1 text-xs text-muted">当前生效：{{ proxyModeLabel(view.proxy.mode) }}</p>
+              <p class="mt-1 text-xs text-muted">
+                <template v-if="managed(FIELD_PROXY_MODE)">{{ ENV_MANAGED_HINT }}</template>
+                <template v-else>当前生效：{{ proxyModeLabel(view.proxy.mode) }}</template>
+              </p>
             </fieldset>
 
             <label class="block">
@@ -357,13 +363,13 @@ onMounted(() => {
                   v-model="form.proxyUrl"
                   type="password"
                   autocomplete="off"
-                  :disabled="saving"
+                  :disabled="saving || managed(FIELD_PROXY_URL)"
                   :placeholder="proxyURLHint(view.proxy.url_set, view.proxy.mode)"
                   class="h-10 min-w-0 flex-1 rounded-md border border-line bg-canvas px-3 text-sm outline-none transition focus:border-brand focus:bg-surface disabled:opacity-60"
                   :class="fieldErrors.includes(FIELD_PROXY_URL) ? 'border-danger' : ''"
                 />
                 <button
-                  v-if="view.proxy.url_set && view.proxy.mode !== 'custom'"
+                  v-if="view.proxy.url_set && view.proxy.mode !== 'custom' && !managed(FIELD_PROXY_URL)"
                   type="button"
                   :disabled="saving"
                   class="h-10 shrink-0 rounded-md border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas disabled:opacity-60"
@@ -373,7 +379,10 @@ onMounted(() => {
                 </button>
               </div>
               <p class="mt-1 text-xs text-muted">
-                {{ proxyURLText(view.proxy.url_set, view.proxy.url_source) }}；切回直连后才能清除已保存的地址。
+                <template v-if="managed(FIELD_PROXY_URL)">{{ ENV_MANAGED_HINT }}</template>
+                <template v-else>
+                  {{ proxyURLText(view.proxy.url_set, view.proxy.url_source) }}；切回直连后才能清除已保存的地址。
+                </template>
               </p>
             </label>
 
@@ -382,7 +391,7 @@ onMounted(() => {
                 <input
                   v-model="form.proxyTelegram"
                   type="checkbox"
-                  :disabled="saving || form.proxyMode === 'direct'"
+                  :disabled="saving || form.proxyMode === 'direct' || managed(FIELD_PROXY_TELEGRAM)"
                   class="h-4 w-4 accent-brand"
                 />
                 <span>Telegram Bot API 走代理</span>
@@ -391,7 +400,7 @@ onMounted(() => {
                 <input
                   v-model="form.proxyTelegraph"
                   type="checkbox"
-                  :disabled="saving || form.proxyMode === 'direct'"
+                  :disabled="saving || form.proxyMode === 'direct' || managed(FIELD_PROXY_TELEGRAPH)"
                   class="h-4 w-4 accent-brand"
                 />
                 <span>Telegraph API 走代理</span>

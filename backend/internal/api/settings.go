@@ -101,8 +101,8 @@ func buildSettingsView(effective settings.Effective, publicURL string) settingsV
 	view.Proxy.ModeSource = effective.ProxyMode.Source
 	view.Proxy.URLSet = effective.ProxyURL.Set()
 	view.Proxy.URLSource = effective.ProxyURL.Source
-	view.Proxy.TelegramEnabled = effective.ProxyTelegram
-	view.Proxy.TelegraphEnabled = effective.ProxyTelegraph
+	view.Proxy.TelegramEnabled = effective.ProxyEnabled(netclient.ServiceTelegram)
+	view.Proxy.TelegraphEnabled = effective.ProxyEnabled(netclient.ServiceTelegraph)
 
 	fields := []struct {
 		name  string
@@ -114,6 +114,10 @@ func buildSettingsView(effective settings.Effective, publicURL string) settingsV
 		{"telegraph.token", effective.TelegraphToken},
 		{"telegraph.author_name", effective.TelegraphAuthor},
 		{"telegraph.api_base", effective.TelegraphAPIBase},
+		{"proxy.mode", effective.ProxyMode},
+		{"proxy.url", effective.ProxyURL},
+		{"proxy.telegram", effective.ProxyTelegram},
+		{"proxy.telegraph", effective.ProxyTelegraph},
 	}
 	for _, field := range fields {
 		if field.value.Source == settings.SourceEnv {

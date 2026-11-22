@@ -9,6 +9,9 @@ export const FIELD_TELEGRAM_TOKEN = 'telegram.token'
 export const FIELD_TELEGRAM_CHANNEL = 'telegram.channel_id'
 export const FIELD_TELEGRAPH_AUTHOR = 'telegraph.author_name'
 export const FIELD_PROXY_URL = 'proxy.url'
+export const FIELD_PROXY_MODE = 'proxy.mode'
+export const FIELD_PROXY_TELEGRAM = 'proxy.telegram'
+export const FIELD_PROXY_TELEGRAPH = 'proxy.telegraph'
 
 /** 代理模式选项，顺序即界面顺序。 */
 export const PROXY_MODES = [

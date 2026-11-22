@@ -456,6 +456,54 @@ func TestSettingsProxyDefaultsAndMasking(t *testing.T) {
 	}
 }
 
+// TestSettingsProxyFromEnvironment 验证环境变量托管的代理配置只读：
+// 响应列出托管字段，修改返回 409。
+func TestSettingsProxyFromEnvironment(t *testing.T) {
+	env, _ := newSettingsEnv(t, settings.Env{
+		ProxyMode:      "system",
+		ProxyTelegram:  "true",
+		ProxyTelegraph: "true",
+	})
+	cookie := env.setup(t)
+
+	rec := env.do(t, http.MethodGet, "/api/settings", "", cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("读取状态码 = %d", rec.Code)
+	}
+	var view struct {
+		Proxy struct {
+			Mode             string `json:"mode"`
+			ModeSource       string `json:"mode_source"`
+			TelegramEnabled  bool   `json:"telegram_enabled"`
+			TelegraphEnabled bool   `json:"telegraph_enabled"`
+		} `json:"proxy"`
+		EnvManaged []string `json:"env_managed"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
+		t.Fatalf("解析响应失败: %v", err)
+	}
+	if view.Proxy.Mode != "system" || view.Proxy.ModeSource != "env" {
+		t.Errorf("代理模式 = %+v，期望 system/env", view.Proxy)
+	}
+	if !view.Proxy.TelegramEnabled || !view.Proxy.TelegraphEnabled {
+		t.Errorf("开关 = %+v，期望两项都启用", view.Proxy)
+	}
+	managed := strings.Join(view.EnvManaged, ",")
+	for _, field := range []string{"proxy.mode", "proxy.telegram", "proxy.telegraph"} {
+		if !strings.Contains(managed, field) {
+			t.Errorf("托管字段应包含 %s，实际: %s", field, managed)
+		}
+	}
+
+	rec = env.do(t, http.MethodPut, "/api/settings", `{"proxy":{"mode":"direct"}}`, cookie)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("修改托管字段状态码 = %d，期望 409，响应: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "环境变量") {
+		t.Errorf("响应 = %s，期望说明由环境变量提供", rec.Body.String())
+	}
+}
+
 // TestSettingsRejectsInvalidProxy 验证非法代理配置返回字段级错误且不写入。
 func TestSettingsRejectsInvalidProxy(t *testing.T) {
 	env, resolver := newSettingsEnv(t, settings.Env{})

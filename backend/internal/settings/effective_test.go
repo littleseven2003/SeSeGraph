@@ -169,7 +169,7 @@ func TestProxyDefaultsAndUpdate(t *testing.T) {
 	if effective.ProxyMode.Value != netclient.ModeDirect || effective.ProxyMode.Source != SourceDefault {
 		t.Errorf("默认代理模式 = %+v，期望 direct", effective.ProxyMode)
 	}
-	if effective.ProxyURL.Set() || effective.ProxyTelegram || effective.ProxyTelegraph {
+	if effective.ProxyURL.Set() || effective.ProxyEnabled(netclient.ServiceTelegram) || effective.ProxyEnabled(netclient.ServiceTelegraph) {
 		t.Errorf("未配置时代理地址与开关应为空: %+v", effective.ProxyConfig())
 	}
 
@@ -194,8 +194,9 @@ func TestProxyDefaultsAndUpdate(t *testing.T) {
 	if effective.ProxyURL.Value != rawURL || effective.ProxyURL.Source != SourceStored {
 		t.Errorf("代理地址 = %+v，期望按存储值生效", effective.ProxyURL)
 	}
-	if !effective.ProxyTelegram || effective.ProxyTelegraph {
-		t.Errorf("开关 = telegram:%v telegraph:%v，期望只对 Telegram 启用", effective.ProxyTelegram, effective.ProxyTelegraph)
+	if !effective.ProxyEnabled(netclient.ServiceTelegram) || effective.ProxyEnabled(netclient.ServiceTelegraph) {
+		t.Errorf("开关 = telegram:%v telegraph:%v，期望只对 Telegram 启用",
+			effective.ProxyEnabled(netclient.ServiceTelegram), effective.ProxyEnabled(netclient.ServiceTelegraph))
 	}
 	config := effective.ProxyConfig()
 	if config.Mode != netclient.ModeCustom || config.URL != rawURL || !config.Telegram || config.Telegraph {
@@ -307,3 +308,55 @@ func TestUpdateWithBotWritesOwnershipTogether(t *testing.T) {
 
 // ptr 返回指向给定值的指针，便于构造补丁。
 func ptr(value string) *string { return &value }
+
+// TestProxyFromEnvironment 验证代理配置可由环境变量托管：取值优先、来源标记，
+// 且模式与地址不允许被数据库覆盖。
+func TestProxyFromEnvironment(t *testing.T) {
+	ctx := context.Background()
+	resolver := NewResolver(newStore(t), Env{
+		ProxyMode:      "system",
+		ProxyURL:       "http://env-proxy.test:3128",
+		ProxyTelegram:  "true",
+		ProxyTelegraph: "false",
+	})
+
+	effective, err := resolver.Effective(ctx)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if effective.ProxyMode.Value != netclient.ModeSystem || effective.ProxyMode.Source != SourceEnv {
+		t.Errorf("模式 = %+v，期望 system/env", effective.ProxyMode)
+	}
+	if effective.ProxyURL.Value != "http://env-proxy.test:3128" || effective.ProxyURL.Source != SourceEnv {
+		t.Errorf("地址 = %+v，期望环境变量取值", effective.ProxyURL)
+	}
+	if !effective.ProxyEnabled(netclient.ServiceTelegram) || effective.ProxyEnabled(netclient.ServiceTelegraph) {
+		t.Error("开关应与环境变量一致")
+	}
+
+	custom := netclient.ModeCustom
+	err = resolver.Update(ctx, Patch{ProxyMode: &custom})
+	var conflict *FieldConflict
+	if !errors.As(err, &conflict) || len(conflict.Fields) != 1 || conflict.Fields[0] != "proxy.mode" {
+		t.Fatalf("错误 = %v，期望 proxy.mode 冲突", err)
+	}
+
+	enabled := false
+	err = resolver.Update(ctx, Patch{ProxyTelegram: &enabled})
+	if !errors.As(err, &conflict) || len(conflict.Fields) != 1 || conflict.Fields[0] != "proxy.telegram" {
+		t.Fatalf("错误 = %v，期望 proxy.telegram 冲突", err)
+	}
+
+	// 环境变量只提供开关时，模式与地址仍可写入数据库。
+	resolver = NewResolver(newStore(t), Env{ProxyTelegram: "1"})
+	if err := resolver.Update(ctx, Patch{ProxyMode: &custom, ProxyURL: ptr("socks5://127.0.0.1:1080")}); err != nil {
+		t.Fatalf("保存失败: %v", err)
+	}
+	effective, _ = resolver.Effective(ctx)
+	if effective.ProxyMode.Source != SourceStored || effective.ProxyMode.Value != netclient.ModeCustom {
+		t.Errorf("模式 = %+v，期望数据库取值", effective.ProxyMode)
+	}
+	if !effective.ProxyEnabled(netclient.ServiceTelegram) {
+		t.Error("环境变量开关应优先于数据库")
+	}
+}

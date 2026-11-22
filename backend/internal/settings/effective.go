@@ -67,6 +67,11 @@ type Env struct {
 	TelegraphToken   string
 	TelegraphAuthor  string
 	TelegraphAPIBase string
+	// 代理配置：模式、自定义地址与两项上游的启用开关（true / false）。
+	ProxyMode      string
+	ProxyURL       string
+	ProxyTelegram  string
+	ProxyTelegraph string
 }
 
 // Value 是一项生效配置及其来源。敏感项只通过 Value 在校验与自检内部使用，不对外输出。
@@ -90,9 +95,18 @@ type Effective struct {
 	ProxyMode Value
 	// ProxyURL 是自定义代理地址，可能带账密，只在传输层内部使用，任何接口都不回显。
 	ProxyURL Value
-	// ProxyTelegram 与 ProxyTelegraph 分别控制两项上游是否启用代理。
-	ProxyTelegram  bool
-	ProxyTelegraph bool
+	// ProxyTelegram 与 ProxyTelegraph 是两项上游的启用开关与来源（true / false）。
+	ProxyTelegram  Value
+	ProxyTelegraph Value
+}
+
+// ProxyEnabled 报告某项服务是否启用代理。
+func (e Effective) ProxyEnabled(service netclient.Service) bool {
+	value := e.ProxyTelegram
+	if service == netclient.ServiceTelegraph {
+		value = e.ProxyTelegraph
+	}
+	return strings.EqualFold(strings.TrimSpace(value.Value), "true")
 }
 
 // ProxyConfig 把生效配置转成传输层需要的代理配置。
@@ -100,8 +114,8 @@ func (e Effective) ProxyConfig() netclient.Config {
 	return netclient.Config{
 		Mode:      e.ProxyMode.Value,
 		URL:       e.ProxyURL.Value,
-		Telegram:  e.ProxyTelegram,
-		Telegraph: e.ProxyTelegraph,
+		Telegram:  e.ProxyEnabled(netclient.ServiceTelegram),
+		Telegraph: e.ProxyEnabled(netclient.ServiceTelegraph),
 	}
 }
 
@@ -156,19 +170,41 @@ func (r *Resolver) effectiveFrom(stored map[string]string) Effective {
 		TelegraphToken:   resolve(r.env.TelegraphToken, stored, KeyTelegraphToken, ""),
 		TelegraphAuthor:  resolve(r.env.TelegraphAuthor, stored, KeyTelegraphAuthorName, ""),
 		TelegraphAPIBase: resolveEndpoint(r.env.TelegraphAPIBase, DefaultTelegraphAPIBase),
-		ProxyMode:        resolveProxyMode(stored[KeyProxyMode]),
-		ProxyURL:         resolve("", stored, KeyProxyURL, ""),
-		ProxyTelegram:    stored[KeyProxyTelegram] == "1",
-		ProxyTelegraph:   stored[KeyProxyTelegraph] == "1",
+		ProxyMode:        resolveProxyMode(r.env.ProxyMode, stored[KeyProxyMode]),
+		ProxyURL:         resolve(r.env.ProxyURL, stored, KeyProxyURL, ""),
+		ProxyTelegram:    resolveFlag(r.env.ProxyTelegram, stored[KeyProxyTelegram]),
+		ProxyTelegraph:   resolveFlag(r.env.ProxyTelegraph, stored[KeyProxyTelegraph]),
 	}
 }
 
-// resolveProxyMode 解析代理模式，未设置时回落到直连。
-func resolveProxyMode(raw string) Value {
-	if value := strings.TrimSpace(raw); value != "" {
+// resolveProxyMode 解析代理模式：环境变量优先，其次数据库，最后回落到直连。
+func resolveProxyMode(envMode, storedMode string) Value {
+	if value := strings.TrimSpace(envMode); value != "" {
+		return Value{Value: netclient.ModeOrDefault(value), Source: SourceEnv}
+	}
+	if value := strings.TrimSpace(storedMode); value != "" {
 		return Value{Value: netclient.ModeOrDefault(value), Source: SourceStored}
 	}
 	return Value{Value: netclient.ModeDirect, Source: SourceDefault}
+}
+
+// resolveFlag 解析布尔开关，未设置时按未启用处理。
+func resolveFlag(envValue, storedValue string) Value {
+	if value := strings.TrimSpace(envValue); value != "" {
+		return Value{Value: normalizeFlag(value), Source: SourceEnv}
+	}
+	if value := strings.TrimSpace(storedValue); value != "" {
+		return Value{Value: normalizeFlag(value), Source: SourceStored}
+	}
+	return Value{Value: "false", Source: SourceDefault}
+}
+
+// normalizeFlag 把常见的开关写法归一化为 true / false。
+func normalizeFlag(raw string) string {
+	if strings.EqualFold(raw, "true") || raw == "1" || strings.EqualFold(raw, "yes") {
+		return "true"
+	}
+	return "false"
 }
 
 // Effective 在单次配置快照上解析当前生效配置。
@@ -274,7 +310,7 @@ func (r *Resolver) classify(stored map[string]string, patch Patch) (Effective, m
 	apply(patch.TelegramToken, current.TelegramToken, KeyTelegramToken, "telegram.token", validateCredential)
 	apply(patch.TelegramChannel, current.TelegramChannel, KeyTelegramChannel, "telegram.channel_id", validateChannel)
 	apply(patch.TelegraphAuthor, current.TelegraphAuthor, KeyTelegraphAuthorName, "telegraph.author_name", validateAuthor)
-	applyProxy(patch, current, values, &deletes, &invalid)
+	applyProxy(patch, current, values, &deletes, &invalid, &conflicts)
 
 	if len(invalid) > 0 {
 		return Effective{}, nil, nil, &FieldProblem{Fields: invalid}
@@ -298,7 +334,7 @@ func (r *Resolver) classify(stored map[string]string, patch Patch) (Effective, m
 
 // applyProxy 归类代理配置。模式与地址需要一起校验：
 // 自定义模式必须有合法地址，任何模式下的地址都必须能解析。
-func applyProxy(patch Patch, current Effective, values map[string]string, deletes *[]string, invalid *[]string) {
+func applyProxy(patch Patch, current Effective, values map[string]string, deletes *[]string, invalid *[]string, conflicts *[]string) {
 	if patch.ProxyMode == nil && patch.ProxyURL == nil && patch.ProxyTelegram == nil && patch.ProxyTelegraph == nil {
 		return
 	}
@@ -312,34 +348,56 @@ func applyProxy(patch Patch, current Effective, values map[string]string, delete
 		url = strings.TrimSpace(*patch.ProxyURL)
 	}
 
-	normalized := netclient.ModeOrDefault(mode)
-	if raw := strings.TrimSpace(mode); raw != "" && raw != normalized {
-		*invalid = append(*invalid, "proxy.mode")
-		return
-	}
-	if url != "" || normalized == netclient.ModeCustom {
-		if err := netclient.Validate(netclient.ModeCustom, url); err != nil {
-			*invalid = append(*invalid, "proxy.url")
+	if current.ProxyMode.Source != SourceEnv {
+		normalized := netclient.ModeOrDefault(mode)
+		if raw := strings.TrimSpace(mode); raw != "" && raw != normalized {
+			*invalid = append(*invalid, "proxy.mode")
 			return
 		}
+		if url != "" || normalized == netclient.ModeCustom {
+			if err := netclient.Validate(netclient.ModeCustom, url); err != nil {
+				*invalid = append(*invalid, "proxy.url")
+				return
+			}
+		}
+		if patch.ProxyMode != nil && normalized != current.ProxyMode.Value {
+			values[KeyProxyMode] = normalized
+		}
+		if patch.ProxyURL != nil {
+			switch {
+			case url == "":
+				*deletes = append(*deletes, KeyProxyURL)
+			case url != current.ProxyURL.Value:
+				values[KeyProxyURL] = url
+			}
+		}
+	} else if patch.ProxyMode != nil && netclient.ModeOrDefault(*patch.ProxyMode) != current.ProxyMode.Value {
+		*conflicts = append(*conflicts, "proxy.mode")
+	} else if patch.ProxyURL != nil && strings.TrimSpace(*patch.ProxyURL) != current.ProxyURL.Value {
+		*conflicts = append(*conflicts, "proxy.url")
 	}
 
-	if normalized != current.ProxyMode.Value {
-		values[KeyProxyMode] = normalized
+	applyToggle(patch.ProxyTelegram, current.ProxyTelegram, KeyProxyTelegram, "proxy.telegram", values, conflicts)
+	applyToggle(patch.ProxyTelegraph, current.ProxyTelegraph, KeyProxyTelegraph, "proxy.telegraph", values, conflicts)
+}
+
+// applyToggle 归类代理开关：环境变量提供时不可修改，数据库值只在变化时写入。
+func applyToggle(raw *bool, current Value, key, field string, values map[string]string, conflicts *[]string) {
+	if raw == nil {
+		return
 	}
-	switch {
-	case patch.ProxyURL == nil:
-	case url == "":
-		*deletes = append(*deletes, KeyProxyURL)
-	case url != current.ProxyURL.Value:
-		values[KeyProxyURL] = url
+	enabled := "false"
+	if *raw {
+		enabled = "true"
 	}
-	if patch.ProxyTelegram != nil && *patch.ProxyTelegram != current.ProxyTelegram {
-		values[KeyProxyTelegram] = proxyFlag(*patch.ProxyTelegram)
+	if enabled == current.Value {
+		return
 	}
-	if patch.ProxyTelegraph != nil && *patch.ProxyTelegraph != current.ProxyTelegraph {
-		values[KeyProxyTelegraph] = proxyFlag(*patch.ProxyTelegraph)
+	if current.Source == SourceEnv {
+		*conflicts = append(*conflicts, field)
+		return
 	}
+	values[key] = proxyFlag(*raw)
 }
 
 // proxyFlag 把启用开关转成存储取值。

@@ -94,6 +94,10 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		TelegraphToken:   envValue(lookupEnv, "TELEGRAPH_ACCESS_TOKEN"),
 		TelegraphAuthor:  envValue(lookupEnv, "TELEGRAPH_AUTHOR_NAME"),
 		TelegraphAPIBase: envValue(lookupEnv, "TELEGRAPH_API_BASE"),
+		ProxyMode:        envValue(lookupEnv, "PROXY_MODE"),
+		ProxyURL:         envValue(lookupEnv, "PROXY_URL"),
+		ProxyTelegram:    envValue(lookupEnv, "PROXY_FOR_TELEGRAM"),
+		ProxyTelegraph:   envValue(lookupEnv, "PROXY_FOR_TELEGRAPH"),
 	})
 	effective, err := resolver.Effective(ctx)
 	if err != nil {
