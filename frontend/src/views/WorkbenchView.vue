@@ -126,7 +126,13 @@ const phaseText = computed(() => {
 })
 
 onMounted(() => {
+  // 手机端有吸底操作条，页脚需要额外留白。
+  document.body.classList.add('has-bottom-actions')
   void bootstrap()
+})
+
+onBeforeUnmount(() => {
+  document.body.classList.remove('has-bottom-actions')
 })
 
 // bootstrap 先把设置与续传进度读完再开放文件入口，
@@ -627,7 +633,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="min-h-full" :class="tiles.length > 0 ? 'pb-24 lg:pb-0' : ''">
+  <div class="min-h-full">
     <header class="sticky top-0 z-20 border-b border-line bg-surface">
       <div class="mx-auto flex w-full max-w-[1240px] items-center justify-between gap-4 px-5 py-3">
         <div class="flex min-w-0 items-center gap-1.5">

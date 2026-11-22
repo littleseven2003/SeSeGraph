@@ -53,3 +53,10 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* 有吸底操作条时，页脚多留一条栏的高度，避免版本信息被固定栏压住。 */
+@media (max-width: 1023px) {
+  body.has-bottom-actions .site-footer {
+    padding-bottom: 5.25rem;
+  }
+}
