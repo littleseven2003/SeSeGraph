@@ -137,8 +137,17 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 }
 
+// readiness 是提供方的可选接口：未就绪时队列保持等待，不领取任务。
+type readiness interface {
+	Ready() bool
+}
+
 // ProcessOnce 领取并处理一个任务，返回是否领取到任务。
+// 图床尚未配置时直接返回，避免把排队中的图片判为失败。
 func (w *Worker) ProcessOnce(ctx context.Context) (bool, error) {
+	if probe, ok := w.provider.(readiness); ok && !probe.Ready() {
+		return false, nil
+	}
 	postID, ok, err := w.repo.ClaimNext(ctx)
 	if err != nil || !ok {
 		return false, err

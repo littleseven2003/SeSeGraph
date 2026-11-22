@@ -435,3 +435,40 @@ func TestExhaustedRetryAfterDelaysNextPost(t *testing.T) {
 		t.Errorf("上传调用 = %d，期望 4（首个 3 次 + 次个 1 次）", e.provider.callCount())
 	}
 }
+
+// TestProcessOnceWaitsWhileProviderNotReady 验证图床未配置时队列不领取任务，
+// 排队中的图片不会被判为失败。
+func TestProcessOnceWaitsWhileProviderNotReady(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	id := e.queuedPost(t, 1, "photo")
+
+	switcher := storage.NewSwitcher()
+	queue, err := New(Options{
+		Repository: e.repo,
+		Provider:   switcher,
+		DataDir:    e.dataDir,
+		Interval:   time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("创建队列失败: %v", err)
+	}
+
+	processed, err := queue.ProcessOnce(ctx)
+	if err != nil {
+		t.Fatalf("未配置时不应报错: %v", err)
+	}
+	if processed {
+		t.Error("未配置时不应领取任务")
+	}
+	stored, err := e.repo.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("读取帖子失败: %v", err)
+	}
+	if stored.Status != posts.StatusQueued {
+		t.Errorf("状态 = %q，期望保持 queued", stored.Status)
+	}
+	if e.provider.callCount() != 0 {
+		t.Errorf("上传次数 = %d，期望 0", e.provider.callCount())
+	}
+}

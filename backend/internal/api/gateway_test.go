@@ -534,3 +534,18 @@ func TestGatewayReportsUnavailableWhenProviderMissing(t *testing.T) {
 func init() {
 	gin.SetMode(gin.TestMode)
 }
+
+// TestGatewayUnavailableWhileProviderNotReady 验证运行期图床切走后网关返回 503，
+// 与未配置状态对外表现一致，且不缓存失败结果。
+func TestGatewayUnavailableWhileProviderNotReady(t *testing.T) {
+	env := newGatewayEnv(t, 4, storage.NewSwitcher())
+	code := env.publishPost(t, "notready01", "image/jpeg", "document", true, false)
+
+	response, _ := getImage(t, env.server.URL+"/i/"+code)
+	if response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("状态码 = %d，期望 503", response.StatusCode)
+	}
+	if cache := response.Header.Get("Cache-Control"); cache != "no-store" {
+		t.Errorf("Cache-Control = %q，期望 no-store", cache)
+	}
+}

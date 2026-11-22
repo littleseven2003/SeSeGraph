@@ -110,6 +110,14 @@ func (m *Manager) Status(ctx context.Context) (Status, error) {
 	return Status{Configured: true, Source: "stored", AuthorName: author, AuthorURL: authorURL}, nil
 }
 
+// Reset 丢弃数据库令牌对应的缓存客户端，设置更新后重新读取。
+// 环境变量提供的令牌不受影响。
+func (m *Manager) Reset() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.stored = nil
+}
+
 // CreateAccount 申请新账户并原子写入令牌与账户资料。
 // 已有账户（环境变量或数据库）时直接复用，不重复申请，避免覆盖导致旧页面失去编辑权。
 func (m *Manager) CreateAccount(ctx context.Context, shortName, authorName string) (Status, error) {

@@ -126,6 +126,10 @@ func (g *imageGateway) handle(c *gin.Context) {
 	case errors.Is(err, storage.ErrFileUnavailable):
 		notFound(c)
 		return
+	case errors.Is(err, storage.ErrNotConfigured):
+		c.Header("Cache-Control", "no-store")
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "图片暂不可用"})
+		return
 	case err != nil:
 		if c.Request.Context().Err() != nil {
 			return
