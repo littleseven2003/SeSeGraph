@@ -7,8 +7,15 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/provider"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/settings"
 )
+
+// providerChanged 判断 Telegram 图床凭据是否有变化，作者名等改动无需重新校验。
+func providerChanged(current, prepared settings.Effective) bool {
+	return current.TelegramToken.Value != prepared.TelegramToken.Value ||
+		current.TelegramChannel.Value != prepared.TelegramChannel.Value
+}
 
 // maxSettingsBodyBytes 是设置更新请求体的上限，只承载几项短文本配置。
 const maxSettingsBodyBytes = 4096
@@ -126,11 +133,16 @@ func (r settingsPatchRequest) toPatch() settings.Patch {
 }
 
 // updateSettingsHandler 校验并保存设置，成功后返回最新视图。
+// 保存全程持有设置锁：先做字段与图床凭据校验，再落库并热切换，避免并发保存交错生效。
 func updateSettingsHandler(deps Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if deps.Settings == nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器内部错误"})
 			return
+		}
+		if deps.SettingsLock != nil {
+			deps.SettingsLock.Lock()
+			defer deps.SettingsLock.Unlock()
 		}
 		var req settingsPatchRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -148,9 +160,47 @@ func updateSettingsHandler(deps Deps) gin.HandlerFunc {
 			return
 		}
 
-		err := deps.Settings.Update(c.Request.Context(), patch)
+		// 先在内存中解析补丁：校验失败不会写库。
+		prepared, err := deps.Settings.Prepare(c.Request.Context(), patch)
 		var problem *settings.FieldProblem
 		var conflict *settings.FieldConflict
+		switch {
+		case err == nil:
+		case errors.As(err, &problem):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "配置取值不合法", "fields": problem.Fields})
+			return
+		case errors.As(err, &conflict):
+			c.JSON(http.StatusConflict, gin.H{
+				"error":  "以下配置由环境变量提供，无法在界面修改",
+				"fields": conflict.Fields,
+			})
+			return
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存配置失败"})
+			return
+		}
+
+		// 图床凭据变化时先验证候选配置，避免落库后才发现无法激活。
+		current, err := deps.Settings.Effective(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取配置失败"})
+			return
+		}
+		if deps.ValidateProvider != nil && providerChanged(current, prepared) {
+			if err := deps.ValidateProvider(c.Request.Context(), prepared); err != nil {
+				switch {
+				case errors.Is(err, provider.ErrBotMismatch):
+					c.JSON(http.StatusConflict, gin.H{"error": "图库已有其他 Bot 上传的图片，切换后这些图片将无法读取"})
+				case errors.Is(err, provider.ErrVerify):
+					c.JSON(http.StatusConflict, gin.H{"error": "无法验证新的 Bot 凭据，请检查令牌与网络"})
+				default:
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "校验图床配置失败，请稍后重试"})
+				}
+				return
+			}
+		}
+
+		err = deps.Settings.Update(c.Request.Context(), patch)
 		switch {
 		case err == nil:
 		case errors.As(err, &problem):

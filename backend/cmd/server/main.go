@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -19,6 +20,7 @@ import (
 	"github.com/littleseven2003/SeSeGraph/backend/internal/config"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/db"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/provider"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/publisher"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/settings"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/storage"
@@ -98,18 +100,42 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 
 	telegraphManager := buildTelegraphManager(store, effective, lookupEnv)
 	switcher := storage.NewSwitcher()
-	if err := applyProvider(switcher, effective); err != nil {
-		log.Print("图床配置不可用，上传队列等待配置")
-	}
+	guard := provider.NewGuard(switcher, settingsStore, repository.CountStoredImages)
 
-	// reloadSettings 重新解析配置并热切换到图床提供方；失败时保留原有提供方。
-	reloadSettings := func(ctx context.Context) error {
+	// activate 按生效配置校验并激活图床；切换失败时保留原有提供方。
+	activate := func(ctx context.Context) error {
 		current, resolveErr := resolver.Effective(ctx)
 		if resolveErr != nil {
 			return resolveErr
 		}
-		if applyErr := applyProvider(switcher, current); applyErr != nil {
-			return applyErr
+		candidate, buildErr := newProvider(current)
+		if buildErr != nil {
+			return buildErr
+		}
+		return guard.Activate(ctx, candidate)
+	}
+	if err := activate(ctx); err != nil {
+		if errors.Is(err, provider.ErrBotMismatch) {
+			log.Print("图库已有其他 Bot 上传的图片，图床未激活")
+		} else {
+			log.Print("图床配置不可用，上传队列等待配置")
+		}
+	}
+
+	settingsLock := &sync.Mutex{}
+	validateProvider := func(ctx context.Context, expected settings.Effective) error {
+		candidate, err := newProvider(expected)
+		if err != nil {
+			return err
+		}
+		_, err = guard.Validate(ctx, candidate)
+		return err
+	}
+
+	// reloadSettings 在保存设置后重新校验并热切换；失败时旧提供方继续服务。
+	reloadSettings := func(ctx context.Context) error {
+		if err := activate(ctx); err != nil {
+			return err
 		}
 		if telegraphManager != nil {
 			telegraphManager.Reset()
@@ -142,6 +168,8 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		Editor:           editor,
 		Settings:         resolver,
 		Reload:           reloadSettings,
+		ValidateProvider: validateProvider,
+		SettingsLock:     settingsLock,
 		ImageConcurrency: readImageConcurrency(lookupEnv),
 	})
 
@@ -198,19 +226,6 @@ func newProvider(effective settings.Effective) (*storage.Telegram, error) {
 		return nil, err
 	}
 	return provider, nil
-}
-
-// applyProvider 把生效配置装配成提供方并切换到运行期容器。
-func applyProvider(switcher *storage.Switcher, effective settings.Effective) error {
-	provider, err := newProvider(effective)
-	if err != nil {
-		return err
-	}
-	switcher.Swap(provider)
-	if provider == nil {
-		log.Print("图床未配置，上传队列等待配置")
-	}
-	return nil
 }
 
 // startPublisher 在 Telegraph 已配置且对外地址为 HTTPS 时启动发布队列。

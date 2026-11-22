@@ -127,13 +127,9 @@ func resolveEndpoint(envValue, fallback string) Value {
 	return Value{Value: fallback, Source: SourceDefault}
 }
 
-// Effective 在单次配置快照上解析当前生效配置。
-func (r *Resolver) Effective(ctx context.Context) (Effective, error) {
-	stored, err := r.snapshot(ctx)
-	if err != nil {
-		return Effective{}, err
-	}
-	effective := Effective{
+// effectiveFrom 在一份配置快照上解析生效配置。
+func (r *Resolver) effectiveFrom(stored map[string]string) Effective {
+	return Effective{
 		TelegramToken:    resolve(r.env.TelegramToken, stored, KeyTelegramToken, ""),
 		TelegramChannel:  resolve(r.env.TelegramChannel, stored, KeyTelegramChannel, ""),
 		TelegramAPIBase:  resolveEndpoint(r.env.TelegramAPIBase, DefaultTelegramAPIBase),
@@ -141,7 +137,15 @@ func (r *Resolver) Effective(ctx context.Context) (Effective, error) {
 		TelegraphAuthor:  resolve(r.env.TelegraphAuthor, stored, KeyTelegraphAuthorName, ""),
 		TelegraphAPIBase: resolveEndpoint(r.env.TelegraphAPIBase, DefaultTelegraphAPIBase),
 	}
-	return effective, nil
+}
+
+// Effective 在单次配置快照上解析当前生效配置。
+func (r *Resolver) Effective(ctx context.Context) (Effective, error) {
+	stored, err := r.snapshot(ctx)
+	if err != nil {
+		return Effective{}, err
+	}
+	return r.effectiveFrom(stored), nil
 }
 
 // Patch 描述一次设置更新：nil 表示不变，空串表示清除数据库值并回落到环境变量或默认值。
@@ -157,15 +161,37 @@ func (p Patch) Empty() bool {
 	return p.TelegramToken == nil && p.TelegramChannel == nil && p.TelegraphAuthor == nil
 }
 
+// Prepare 校验补丁并返回应用后的生效配置，不写入数据库。
+// 保存前可先用它装配候选图床，避免切换失败时落下一份跑不起来的配置。
+func (r *Resolver) Prepare(ctx context.Context, patch Patch) (Effective, error) {
+	stored, err := r.snapshot(ctx)
+	if err != nil {
+		return Effective{}, err
+	}
+	effective, _, _, err := r.classify(stored, patch)
+	return effective, err
+}
+
 // Update 校验并写入配置。任何字段不合法或与环境变量冲突时整体不写入。
 func (r *Resolver) Update(ctx context.Context, patch Patch) error {
 	if r.store == nil {
 		return errors.New("配置存储不可用")
 	}
-	current, err := r.Effective(ctx)
+	stored, err := r.snapshot(ctx)
 	if err != nil {
 		return err
 	}
+	_, values, removes, err := r.classify(stored, patch)
+	if err != nil {
+		return err
+	}
+	// 删除与写入在同一事务内完成，任一步失败都不会留下半套配置。
+	return r.store.Replace(ctx, values, removes)
+}
+
+// classify 把补丁归类为写入项、清理项，并返回应用后的生效配置。
+func (r *Resolver) classify(stored map[string]string, patch Patch) (Effective, map[string]string, []string, error) {
+	current := r.effectiveFrom(stored)
 
 	values := make(map[string]string, 5)
 	deletes := make([]string, 0, 5)
@@ -202,13 +228,23 @@ func (r *Resolver) Update(ctx context.Context, patch Patch) error {
 	apply(patch.TelegraphAuthor, current.TelegraphAuthor, KeyTelegraphAuthorName, "telegraph.author_name", validateAuthor)
 
 	if len(invalid) > 0 {
-		return &FieldProblem{Fields: invalid}
+		return Effective{}, nil, nil, &FieldProblem{Fields: invalid}
 	}
 	if len(conflicts) > 0 {
-		return &FieldConflict{Fields: conflicts}
+		return Effective{}, nil, nil, &FieldConflict{Fields: conflicts}
 	}
-	// 删除与写入在同一事务内完成，任一步失败都不会留下半套配置。
-	return r.store.Replace(ctx, values, deletes)
+
+	merged := make(map[string]string, len(stored)+len(values))
+	for key, value := range stored {
+		merged[key] = value
+	}
+	for _, key := range deletes {
+		delete(merged, key)
+	}
+	for key, value := range values {
+		merged[key] = value
+	}
+	return r.effectiveFrom(merged), values, deletes, nil
 }
 
 // validateCredential 校验令牌的形态：非空、无空白字符、长度受限。

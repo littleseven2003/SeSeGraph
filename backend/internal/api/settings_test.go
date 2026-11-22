@@ -7,8 +7,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/littleseven2003/SeSeGraph/backend/internal/provider"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/settings"
 )
 
@@ -432,5 +435,145 @@ func TestSettingsReloadFailureKeepsOldProvider(t *testing.T) {
 	}
 	if streams.callCount() != before+1 {
 		t.Errorf("旧提供方调用 = %d，期望 %d", streams.callCount(), before+1)
+	}
+}
+
+// TestSettingsRejectsUnverifiableProviderBeforeSaving 确认凭据校验失败时返回 409，
+// 数据库保持原值，未写入新的 Bot。
+func TestSettingsRejectsUnverifiableProviderBeforeSaving(t *testing.T) {
+	env, resolver := newSettingsEnv(t, settings.Env{})
+	env.router = NewRouter(Deps{
+		Version: "test", Commit: "abc", Auth: env.auth, Sessions: env.sessions,
+		SetupToken: env.setupToken, Logger: env.logger, DataDir: env.dataDir, Posts: env.posts,
+		Settings: resolver,
+		ValidateProvider: func(context.Context, settings.Effective) error {
+			return provider.ErrVerify
+		},
+	})
+	cookie := env.setup(t)
+
+	rec := env.do(t, http.MethodPut, "/api/settings", `{"telegram":{"token":"111:token-b"}}`, cookie)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("状态码 = %d，期望 409，响应: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "无法验证新的 Bot 凭据") {
+		t.Errorf("响应 = %s，期望说明凭据无法验证", rec.Body.String())
+	}
+	effective, err := resolver.Effective(context.Background())
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if effective.TelegramToken.Set() {
+		t.Errorf("令牌 = %+v，校验失败时不应写入", effective.TelegramToken)
+	}
+}
+
+// TestSettingsBotMismatchKeepsImages 模拟图库已有图片时换成另一个 Bot：
+// 保存被拒绝，原短码仍可访问。
+func TestSettingsBotMismatchKeepsImages(t *testing.T) {
+	streams := &fakeStreamProvider{}
+	var resolver *settings.Resolver
+	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
+		resolver = settings.NewResolver(settings.NewStore(handle), settings.Env{})
+		deps.Settings = resolver
+		deps.Streams = streams
+		deps.ValidateProvider = func(context.Context, settings.Effective) error {
+			return provider.ErrBotMismatch
+		}
+	})
+	cookie := env.setup(t)
+	postID := publishedPost(t, env)
+	code := shortCodeOf(t, env, postID)
+
+	if rec := env.do(t, http.MethodGet, "/i/"+code, "", cookie); rec.Code != http.StatusOK {
+		t.Fatalf("切换前短码状态 = %d，期望 200", rec.Code)
+	}
+	rec := env.do(t, http.MethodPut, "/api/settings", `{"telegram":{"token":"111:token-b"}}`, cookie)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("切换状态码 = %d，期望 409，响应: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "已有其他 Bot") {
+		t.Errorf("响应 = %s，期望说明图片归属冲突", rec.Body.String())
+	}
+
+	effective, err := resolver.Effective(context.Background())
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if effective.TelegramToken.Set() {
+		t.Errorf("令牌 = %+v，冲突时不应写入", effective.TelegramToken)
+	}
+	if rec := env.do(t, http.MethodGet, "/i/"+code, "", cookie); rec.Code != http.StatusOK {
+		t.Errorf("拒绝切换后短码状态 = %d，期望仍为 200", rec.Code)
+	}
+}
+
+// TestSettingsSavesApplyInOrder 确认并发保存串行生效：先落库的请求先热切换，
+// 结束后读回与运行时看到同一版本。
+func TestSettingsSavesApplyInOrder(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var observed []string
+	var observedMu sync.Mutex
+	first := true
+
+	var resolver *settings.Resolver
+	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
+		resolver = settings.NewResolver(settings.NewStore(handle), settings.Env{})
+		deps.Settings = resolver
+		deps.SettingsLock = &sync.Mutex{}
+		deps.Reload = func(ctx context.Context) error {
+			effective, err := resolver.Effective(ctx)
+			if err != nil {
+				return err
+			}
+			observedMu.Lock()
+			observed = append(observed, effective.TelegramToken.Value)
+			blocked := first
+			first = false
+			observedMu.Unlock()
+			if blocked {
+				close(started)
+				<-release
+			}
+			return nil
+		}
+	})
+	cookie := env.setup(t)
+
+	done := make(chan int, 2)
+	save := func(token string) {
+		rec := env.do(t, http.MethodPut, "/api/settings", `{"telegram":{"token":"`+token+`"}}`, cookie)
+		done <- rec.Code
+	}
+	go save("111:token-a")
+	<-started
+	go save("111:token-b")
+	time.Sleep(100 * time.Millisecond)
+	observedMu.Lock()
+	pending := len(observed)
+	observedMu.Unlock()
+	if pending != 1 {
+		t.Errorf("第一个请求热切换期间观察到 %d 次切换，期望后一个请求仍在等待", pending)
+	}
+	close(release)
+
+	for i := 0; i < 2; i++ {
+		if code := <-done; code != http.StatusOK {
+			t.Fatalf("保存状态码 = %d，期望 200", code)
+		}
+	}
+
+	observedMu.Lock()
+	defer observedMu.Unlock()
+	if len(observed) != 2 || observed[0] != "111:token-a" || observed[1] != "111:token-b" {
+		t.Errorf("热切换顺序 = %v，期望按提交顺序生效", observed)
+	}
+	effective, err := resolver.Effective(context.Background())
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if effective.TelegramToken.Value != "111:token-b" {
+		t.Errorf("最终令牌 = %q，期望最后一次提交", effective.TelegramToken.Value)
 	}
 }

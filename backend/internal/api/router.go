@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/auth"
@@ -43,6 +44,10 @@ type Deps struct {
 	Settings *settings.Resolver
 	// Reload 在设置保存后重新装配生效配置，未装配时保存不触发热更新。
 	Reload func(context.Context) error
+	// ValidateProvider 在保存前校验候选图床配置，未装配时跳过。
+	ValidateProvider func(context.Context, settings.Effective) error
+	// SettingsLock 串行化设置保存，保证落库顺序与生效顺序一致。
+	SettingsLock *sync.Mutex
 }
 
 // maxAuthBodyBytes 是登录与初始化请求体的上限，超出的请求不会被解码。
