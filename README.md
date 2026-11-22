@@ -37,7 +37,7 @@
 | 图片网关 | `GET /i/{short_code}` 流式反代，仅转发显式公开的帖子，短码随机高熵，隔离凭据与远端文件标识 | 已完成 |
 | 流量看护 | 自然月出站流量统计、预警、超限熔断 | 开发中 |
 | 单帖熔断 | 单帖撤回后短码立即 404 且不再请求 Telegram，重新开启秒级恢复；已缓存的副本可能仍显示 | 已完成 |
-| 代理配置 | 直连 / 跟随系统环境变量 / 自定义 HTTP、SOCKS5，配置热生效 | 开发中 |
+| 代理配置 | 直连 / 跟随系统环境变量 / 自定义 HTTP、HTTPS、SOCKS5，可分别对 Telegram 与 Telegraph 启用，保存后重建传输层；自定义地址含账密但不回显 | 已完成 |
 | 自动备份 | 定时 `VACUUM INTO` 热备，打包后经 Bot 送至私有频道 | 开发中 |
 | 存储抽象 | `StorageProvider` 接口与 Telegram 提供方（`sendPhoto` / `sendDocument`） | 已完成 |
 
@@ -65,10 +65,18 @@
 
 1. 通过 [@BotFather](https://t.me/BotFather) 创建 Bot，取得 Bot Token。
 2. 新建私有频道，将该 Bot 添加为频道管理员并授予发布权限。
-3. 将频道 ID 与 Token 填入进程环境变量（见 `.env.example`）。本版只在启动时读取进程环境变量，设置页与连通性自检随对应功能交付。
+3. 将频道 ID 与 Token 填入进程环境变量（见 `.env.example`），也可以登录后在 `/settings` 页面保存，保存后图床立即切换。
 4. 确认 Bot 能访问 Telegram API 且对频道有发布权限。
 
 相关环境变量：`TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHANNEL_ID`、`UPLOAD_INTERVAL_MS`（发送间隔，默认 1500 毫秒）、`TELEGRAM_API_BASE`（可选，接入自建反代或本地联调）。
+
+网络受限的环境可在 `/settings` 的「网络代理」中配置：
+
+- `direct`：直连，不使用代理；
+- `system`：跟随进程环境变量 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`（容器里挂载这些变量即可）；
+- `custom`：自定义 `http://`、`https://` 或 `socks5://` 地址，可带账密。
+
+Telegram 与 Telegraph 可以分别启用代理。保存后立即重建传输层，上传队列、图片网关、发布队列与连通性自检都使用新配置；自定义地址只报告是否已设置，响应与日志不出现地址取值。自定义模式下地址不能清空，需要清除时先切回直连。
 
 Telegraph 发布需要一个访问令牌，二选一：
 
