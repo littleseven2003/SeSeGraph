@@ -1,0 +1,21 @@
+# 构建上下文裁剪：只保留构建所需源码，避免把本地数据与依赖打进镜像
+.git
+.gitignore
+.github
+.cache
+.pnpm-store
+bin
+data
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.*
+!/.env.example
+README.md
+CHANGELOG.md
+LICENSE
+frontend/node_modules
+frontend/dist
+backend/internal/web/assets/static
+backend/internal/web/assets/index.html

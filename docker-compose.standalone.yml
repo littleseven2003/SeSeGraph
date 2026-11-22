@@ -1,0 +1,43 @@
+# 只用 Compose 启动应用本体，接入宿主机已有的 Nginx / Caddy / 宝塔面板
+# 用法：docker compose -f docker-compose.standalone.yml up -d
+# 反向代理指向 http://127.0.0.1:8080，并保持流式响应不缓冲。
+services:
+  sesegraph:
+    build:
+      context: .
+      args:
+        VERSION: ${VERSION:-dev}
+        COMMIT: ${COMMIT:-unknown}
+    image: sesegraph:local
+    restart: unless-stopped
+    environment:
+      LISTEN_ADDR: ":8080"
+      DATA_DIR: /app/data
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ADMIN_SETUP_TOKEN: ${ADMIN_SETUP_TOKEN:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHANNEL_ID: ${TELEGRAM_CHANNEL_ID:-}
+      TELEGRAM_API_BASE: ${TELEGRAM_API_BASE:-}
+      TELEGRAPH_ACCESS_TOKEN: ${TELEGRAPH_ACCESS_TOKEN:-}
+      TELEGRAPH_AUTHOR_NAME: ${TELEGRAPH_AUTHOR_NAME:-}
+      TELEGRAPH_API_BASE: ${TELEGRAPH_API_BASE:-}
+      PROXY_MODE: ${PROXY_MODE:-}
+      PROXY_URL: ${PROXY_URL:-}
+      PROXY_FOR_TELEGRAM: ${PROXY_FOR_TELEGRAM:-}
+      PROXY_FOR_TELEGRAPH: ${PROXY_FOR_TELEGRAPH:-}
+      UPLOAD_INTERVAL_MS: ${UPLOAD_INTERVAL_MS:-1500}
+      UPLOAD_MODE: ${UPLOAD_MODE:-photo}
+      PROXY_CONCURRENCY: ${PROXY_CONCURRENCY:-25}
+    ports:
+      # 只绑回环地址，外部流量统一走宿主机反向代理。
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3

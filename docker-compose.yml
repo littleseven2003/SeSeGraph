@@ -1,0 +1,63 @@
+# SeSeGraph 一键部署：应用容器 + Caddy 自动 HTTPS
+# 准备：cp .env.example .env，至少填写 DOMAIN、ADMIN_PASSWORD；再执行 docker compose up -d
+# 应用只在内部网络暴露 8080，由 Caddy 终结 TLS 并反向代理。
+services:
+  sesegraph:
+    build:
+      context: .
+      args:
+        VERSION: ${VERSION:-dev}
+        COMMIT: ${COMMIT:-unknown}
+    image: sesegraph:local
+    restart: unless-stopped
+    environment:
+      LISTEN_ADDR: ":8080"
+      DATA_DIR: /app/data
+      PUBLIC_URL: "https://${DOMAIN:?请在 .env 中设置 DOMAIN}"
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ADMIN_SETUP_TOKEN: ${ADMIN_SETUP_TOKEN:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHANNEL_ID: ${TELEGRAM_CHANNEL_ID:-}
+      TELEGRAM_API_BASE: ${TELEGRAM_API_BASE:-}
+      TELEGRAPH_ACCESS_TOKEN: ${TELEGRAPH_ACCESS_TOKEN:-}
+      TELEGRAPH_AUTHOR_NAME: ${TELEGRAPH_AUTHOR_NAME:-}
+      TELEGRAPH_API_BASE: ${TELEGRAPH_API_BASE:-}
+      PROXY_MODE: ${PROXY_MODE:-}
+      PROXY_URL: ${PROXY_URL:-}
+      PROXY_FOR_TELEGRAM: ${PROXY_FOR_TELEGRAM:-}
+      PROXY_FOR_TELEGRAPH: ${PROXY_FOR_TELEGRAPH:-}
+      UPLOAD_INTERVAL_MS: ${UPLOAD_INTERVAL_MS:-1500}
+      UPLOAD_MODE: ${UPLOAD_MODE:-photo}
+      PROXY_CONCURRENCY: ${PROXY_CONCURRENCY:-25}
+    volumes:
+      # 数据目录必须可写；容器内以 uid 1000 运行，宿主目录先 chown 1000:1000。
+      - ./data:/app/data
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?请在 .env 中设置 DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      sesegraph:
+        condition: service_healthy
+
+volumes:
+  caddy_data:
+  caddy_config:

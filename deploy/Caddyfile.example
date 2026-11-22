@@ -1,0 +1,19 @@
+# 宿主机已有 Caddy 时可直接引用本文件：把内嵌版编译进自定义 Caddy 或作为站点片段。
+# 用法：caddy run --config /etc/caddy/Caddyfile
+# 说明：SeSeGraph 监听 127.0.0.1:8080，TLS 由 Caddy 终结。
+
+gallery.example.com {
+	encode zstd gzip
+
+	# 图片网关按块流式输出，关闭反向代理缓冲
+	reverse_proxy 127.0.0.1:8080 {
+		flush_interval -1
+	}
+
+	header {
+		# 页面与接口不缓存，静态资源由应用自身带指纹缓存
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+}

@@ -1,0 +1,14 @@
+# Compose 使用的 Caddy 配置：域名取自 .env 的 DOMAIN，证书由 Caddy 自动申请与续期
+{$DOMAIN} {
+	encode zstd gzip
+
+	# 图片网关是流式转发，关闭缓冲以免大图先落盘再输出
+	reverse_proxy sesegraph:8080 {
+		flush_interval -1
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
