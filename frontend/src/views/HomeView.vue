@@ -187,10 +187,10 @@ onBeforeUnmount(() => {
           <BrandMark />
           <div class="flex items-center gap-2">
             <p class="text-sm font-semibold tracking-tight">SeSeGraph</p>
-            <span class="rounded-full bg-brand-soft px-2 py-0.5 text-xs font-medium leading-none text-brand-strong"
-              >图集画廊</span
+            <span
+              class="hidden -rotate-2 rounded border border-dashed border-brand/40 bg-brand-soft px-2 py-0.5 text-xs font-medium leading-none text-brand-strong sm:inline-block"
+              >SeSe图册</span
             >
-            <span class="hidden h-0.5 w-6 rounded-full bg-gradient-to-r from-brand to-accent sm:block"></span>
           </div>
         </div>
 
@@ -215,8 +215,10 @@ onBeforeUnmount(() => {
 
     <main class="mx-auto w-full max-w-[1240px] px-5 py-7">
       <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <h1 class="text-lg font-semibold tracking-tight">图集</h1>
-        <p class="text-sm text-muted tnum">共 {{ total }} 个<template v-if="hasFilter"> · 已筛选</template></p>
+        <h1 class="text-xl font-semibold tracking-tight">图集</h1>
+        <p class="rounded-full border border-line bg-surface px-2.5 py-0.5 text-xs text-muted tnum">
+          共 {{ total }} 组<template v-if="hasFilter"> · 已筛选</template>
+        </p>
         <button
           v-if="hasFilter"
           type="button"
@@ -255,9 +257,14 @@ onBeforeUnmount(() => {
               :aria-pressed="blurEnabled"
               @click="toggleBlur"
             >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4 shrink-0" aria-hidden="true">
+                <path d="M2.5 12S6 6.5 12 6.5 21.5 12 21.5 12 18 17.5 12 17.5 2.5 12 2.5 12Z" stroke-linecap="round" />
+                <circle cx="12" cy="12" r="2.6" />
+                <path v-if="blurEnabled" d="M4 20L20 4" stroke-linecap="round" />
+              </svg>
               <span
-                class="relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition"
-                :class="blurEnabled ? 'bg-ink' : 'bg-line'"
+                class="relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition motion-safe:active:scale-95"
+                :class="blurEnabled ? 'bg-accent' : 'bg-line'"
                 aria-hidden="true"
               >
                 <span
@@ -284,19 +291,21 @@ onBeforeUnmount(() => {
           v-for="tag in tags"
           :key="tag.name"
           type="button"
-          class="inline-flex h-11 shrink-0 items-center rounded border px-3 text-xs font-medium transition motion-safe:active:scale-[0.97]"
+          class="inline-flex h-11 shrink-0 items-center gap-1 rounded-full border px-3.5 text-xs font-medium transition motion-safe:active:scale-[0.97]"
           :class="
             selectedTags.includes(tag.name)
-              ? 'border-accent bg-accent text-white'
+              ? 'border-accent bg-accent text-white shadow-[0_2px_0_0_#08544e]'
               : 'border-line bg-surface text-muted hover:border-brand/40 hover:bg-brand-soft/60 hover:text-ink'
           "
           :aria-pressed="selectedTags.includes(tag.name)"
           @click="toggleTag(tag.name)"
         >
-          {{ tag.name
-          }}<span class="ml-1.5 tnum" :class="selectedTags.includes(tag.name) ? 'text-white/75' : 'text-muted'">{{
-            tag.count
-          }}</span>
+          <span class="tnum text-muted">#</span>{{ tag.name
+          }}<span
+            class="tnum rounded-full px-1.5 text-xs"
+            :class="selectedTags.includes(tag.name) ? 'bg-white text-accent' : 'bg-canvas text-muted'"
+            >{{ tag.count }}</span
+          >
         </button>
       </div>
 

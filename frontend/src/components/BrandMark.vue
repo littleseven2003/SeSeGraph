@@ -5,15 +5,15 @@ withDefaults(defineProps<{ size?: number }>(), { size: 32 })
 
 <template>
   <svg
+    class="brand-mark"
     :width="size"
     :height="size"
     viewBox="0 0 32 32"
     fill="none"
-    class="shrink-0"
     aria-hidden="true"
     focusable="false"
   >
-    <g transform="rotate(-7 16 16)">
+    <g class="paper" transform="rotate(-7 16 16)">
       <rect x="7.2" y="6.4" width="20.6" height="18" rx="3" fill="#ffd7cc" />
     </g>
     <rect x="4.5" y="7.6" width="21.8" height="18.4" rx="3" fill="#ffffff" stroke="#e8e4da" stroke-width="1" />
@@ -26,3 +26,16 @@ withDefaults(defineProps<{ size?: number }>(), { size: 32 })
     <path d="M4.5 21.4h21.8" stroke="#e8e4da" stroke-width="0.8" stroke-linecap="round" opacity="0.9" />
   </svg>
 </template>
+
+<style scoped>
+.paper {
+  transform-origin: 16px 16px;
+  transition: transform 220ms ease;
+}
+
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .brand-mark:hover .paper {
+    transform: rotate(-11deg);
+  }
+}
+</style>

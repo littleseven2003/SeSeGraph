@@ -65,11 +65,11 @@ const status = computed(() => statusLabel(props.item.status, props.item.publish_
 const chipClass = computed(() => {
   switch (status.value.tone) {
     case 'progress':
-      return 'bg-warn-soft text-warn'
+      return 'border-warn/30 bg-warn-soft text-warn'
     case 'error':
-      return 'bg-danger-soft text-danger'
+      return 'border-danger/30 bg-white/90 text-danger'
     default:
-      return 'bg-ink/75 text-white'
+      return 'border-accent/30 bg-white/90 text-accent'
   }
 })
 const published = computed(() => formatPublishedAt(props.item.published_at))
@@ -77,6 +77,8 @@ const published = computed(() => formatPublishedAt(props.item.published_at))
 const publishedDate = computed(() => published.value.split(' ')[0] ?? '')
 const visibleTags = computed(() => props.item.tags.slice(0, 2))
 const restTags = computed(() => Math.max(0, props.item.tags.length - visibleTags.value.length))
+// volume 是相纸角上的卷号，用帖子编号补两位，形成归档索引感。
+const volume = computed(() => '#' + String(props.item.id).padStart(2, '0'))
 const copyLabel = computed(() => {
   if (copyState.value === 'copied') return '已复制'
   if (copyState.value === 'failed') return '复制失败'
@@ -86,12 +88,12 @@ const copyLabel = computed(() => {
 
 <template>
   <article
-    class="group flex flex-col overflow-hidden rounded-md border border-line bg-surface transition duration-200 motion-safe:hover:-translate-y-0.5 hover:border-brand/30 hover:shadow-[0_10px_24px_-12px_rgba(208,66,35,0.18)]"
+    class="polaroid group flex flex-col rounded-md border border-line bg-surface p-2 pb-0 transition duration-200 motion-safe:hover:-translate-y-0.5 hover:border-brand/30 hover:shadow-[0_10px_24px_-12px_rgba(208,66,35,0.18)]"
     :class="showBlur ? 'is-blurred' : ''"
   >
     <button
       type="button"
-      class="relative block aspect-[4/3] w-full overflow-hidden bg-canvas"
+      class="relative block aspect-[4/3] w-full overflow-hidden rounded-[4px] bg-canvas"
       :aria-label="`打开《${item.title}》详情`"
       data-reveal="cover"
       @click="onOpen"
@@ -111,19 +113,19 @@ const copyLabel = computed(() => {
         </svg>
       </span>
       <span
-        class="absolute left-2.5 top-2.5 inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium leading-none backdrop-blur-sm"
+        class="absolute left-2 top-2 inline-flex -rotate-2 items-center gap-1.5 rounded border px-2 py-1 text-xs font-medium leading-none shadow-[0_1px_0_0_rgba(27,26,23,0.12)]"
         :class="chipClass"
       >
         <span v-if="status.tone === 'ok'" class="h-1.5 w-1.5 rounded-full bg-[#34d399]" aria-hidden="true"></span>
         {{ status.label }}
       </span>
       <span
-        class="absolute right-2.5 top-2.5 rounded bg-ink/75 px-2 py-1 text-xs font-medium leading-none text-white tnum backdrop-blur-sm"
-        >{{ item.image_count }} 张</span
+        class="absolute bottom-2 right-2 rounded bg-white/85 px-1.5 py-0.5 text-xs font-medium leading-none text-ink tnum"
+        >{{ item.image_count }}P</span
       >
     </button>
 
-    <div class="flex flex-1 flex-col gap-2 px-3.5 pb-3.5 pt-3">
+    <div class="flex flex-1 flex-col gap-2 px-1.5 pb-3.5 pt-2.5">
       <p class="line-clamp-2 text-sm font-semibold leading-snug">
         {{ item.title }}
       </p>
@@ -132,20 +134,20 @@ const copyLabel = computed(() => {
         <span
           v-for="tag in visibleTags"
           :key="tag"
-          class="rounded bg-canvas px-1.5 py-0.5 text-xs leading-relaxed text-muted"
-          >{{ tag }}</span
+          class="rounded-full bg-canvas px-1.5 py-0.5 text-xs leading-relaxed text-muted"
+          >#{{ tag }}</span
         >
         <span v-if="restTags > 0" class="px-1 py-0.5 text-xs leading-relaxed text-muted">+{{ restTags }}</span>
       </div>
 
       <p class="mt-auto truncate text-xs text-muted tnum">
-        {{ publishedDate !== '' ? '发布于 ' + publishedDate : '存图后待发布' }}
+        {{ publishedDate !== '' ? volume + ' · ' + publishedDate : volume + ' · 待冲印' }}
       </p>
 
       <div class="flex items-center gap-2">
         <button
           type="button"
-          class="h-11 flex-1 rounded-md border border-line text-sm font-medium transition hover:bg-canvas"
+          class="h-11 flex-1 rounded-md border border-line text-xs font-medium transition hover:bg-canvas sm:text-sm"
           @click="onOpen"
         >
           打开
@@ -153,9 +155,21 @@ const copyLabel = computed(() => {
         <button
           v-if="shareUrl !== ''"
           type="button"
-          class="h-11 flex-1 rounded-md border border-brand/25 bg-brand-soft text-sm font-medium text-brand-strong transition hover:border-brand/45 hover:bg-brand-soft/70 motion-safe:active:scale-[0.98]"
+          class="inline-flex h-11 flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border px-1 text-xs font-medium transition motion-safe:active:scale-[0.98] sm:px-2 sm:text-sm"
+          :class="
+            copyState === 'idle'
+              ? 'border-brand/25 bg-brand-soft text-brand-strong hover:border-brand/45 hover:bg-brand-soft/70'
+              : 'border-accent/30 bg-accent-soft text-accent'
+          "
           @click="copyLink"
         >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="hidden h-4 w-4 shrink-0 sm:block" aria-hidden="true">
+            <template v-if="copyState === 'idle'">
+              <rect x="9" y="9" width="11" height="11" rx="2" />
+              <path d="M15 5.5A2.5 2.5 0 0 0 12.5 3H6a2 2 0 0 0-2 2v7.5A2.5 2.5 0 0 0 6.5 15" stroke-linecap="round" />
+            </template>
+            <path v-else d="M5 12.5l4.5 4.5L19 7" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
           {{ copyLabel }}
         </button>
       </div>
