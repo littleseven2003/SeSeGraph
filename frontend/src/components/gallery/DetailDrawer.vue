@@ -35,6 +35,9 @@ const emit = defineEmits<{ close: []; retry: []; saved: []; toggled: [] }>()
 const closeButton = ref<HTMLButtonElement | null>(null)
 const panel = ref<HTMLElement | null>(null)
 const feedback = ref('')
+// copiedAction 记录刚刚复制成功的动作，按钮文字短暂反馈，避免只靠底部提示。
+const copiedAction = ref('')
+let copiedTimer: number | undefined
 const shareTemplate = ref(DEFAULT_SHARE_TEMPLATE)
 const templateDraft = ref(DEFAULT_SHARE_TEMPLATE)
 const templateNotice = ref('')
@@ -87,13 +90,20 @@ const toneClass = computed(() => {
   }
 })
 
-// copy 复制文本并把结果写进抽屉内的即时反馈。
-async function copy(text: string, label: string): Promise<void> {
+// copy 复制文本并把结果写在复制按钮下方，成功时按钮文字短暂变为已复制。
+async function copy(text: string, label: string, action = ''): Promise<void> {
   if (text === '') {
     feedback.value = '暂无可复制的链接'
     return
   }
-  feedback.value = (await copyText(text)) ? label + '已复制' : '复制失败，请手动选择'
+  const ok = await copyText(text)
+  feedback.value = ok ? label + '已复制' : '复制失败，请手动选择'
+  if (!ok || action === '') return
+  copiedAction.value = action
+  if (copiedTimer !== undefined) window.clearTimeout(copiedTimer)
+  copiedTimer = window.setTimeout(() => {
+    copiedAction.value = ''
+  }, 1800)
 }
 
 function askToggle(): void {
@@ -168,7 +178,7 @@ function copyShareText(): void {
     count: props.detail.images.length,
     tags: props.detail.tags,
   })
-  void copy(text, '分享文案')
+  void copy(text, '分享文案', 'share')
 }
 
 // focusable 列出抽屉内可聚焦元素，用于把 Tab 循环限制在抽屉里。
@@ -234,6 +244,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
+  if (copiedTimer !== undefined) window.clearTimeout(copiedTimer)
   document.body.style.overflow = ''
   // 关闭后把焦点还给打开抽屉的元素，键盘用户不会丢失位置。
   if (previousFocus !== null && previousFocus.isConnected) previousFocus.focus()
@@ -246,6 +257,7 @@ watch(
     activeId = next
     confirmToggle.value = false
     feedback.value = ''
+    copiedAction.value = ''
     editing.value = false
     editError.value = ''
     toggleError.value = ''
@@ -265,13 +277,15 @@ watch(
       <header class="flex items-start justify-between gap-3 border-b border-line px-5 py-4">
         <div class="min-w-0">
           <p class="text-xs font-medium tracking-wide text-muted">图集详情</p>
-          <h2 class="mt-1 truncate text-base font-semibold">{{ detail?.title ?? '正在读取…' }}</h2>
+          <h2 class="mt-1 line-clamp-2 text-base font-semibold leading-snug">
+            {{ detail?.title ?? '正在读取…' }}
+          </h2>
         </div>
         <div class="flex shrink-0 items-center gap-2">
           <button
             v-if="detail !== null && !editing"
             type="button"
-            class="h-9 rounded-md border border-line px-3 text-xs font-medium transition hover:bg-canvas disabled:opacity-60"
+            class="h-10 rounded-md border border-line px-3 text-xs font-medium transition hover:bg-canvas disabled:opacity-60"
             :disabled="toggling"
             @click="startEdit"
           >
@@ -280,7 +294,7 @@ watch(
           <button
             v-if="detail !== null && !editing"
             type="button"
-            class="h-9 rounded-md border px-3 text-xs font-medium transition disabled:opacity-60"
+            class="h-10 rounded-md border px-3 text-xs font-medium transition disabled:opacity-60"
             :class="detail.disabled ? 'border-accent/40 text-accent hover:bg-accent/10' : 'border-line text-danger hover:bg-danger-soft'"
             :disabled="toggling"
             @click="askToggle"
@@ -290,7 +304,7 @@ watch(
           <button
             ref="closeButton"
             type="button"
-            class="flex h-9 w-9 items-center justify-center rounded-md border border-line text-muted transition hover:bg-canvas"
+            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-line text-muted transition hover:bg-canvas"
             aria-label="关闭详情"
             @click="emit('close')"
           >
@@ -402,6 +416,53 @@ watch(
             <span class="text-xs text-muted">{{ detail.upload_mode === 'document' ? '原图模式' : '画质模式' }}</span>
           </div>
 
+          <p v-if="detail.description !== ''" class="mt-3 whitespace-pre-line text-sm leading-relaxed text-ink/85">
+            {{ detail.description }}
+          </p>
+
+          <div v-if="detail.tags.length > 0" class="mt-2.5 flex flex-wrap gap-1">
+            <span
+              v-for="tag in detail.tags"
+              :key="tag"
+              class="rounded bg-canvas px-1.5 py-0.5 text-xs text-muted"
+              >{{ tag }}</span
+            >
+          </div>
+
+          <section class="mt-4 rounded-md border border-line bg-canvas px-3 py-3">
+            <div class="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                class="inline-flex h-11 min-w-[8.5rem] flex-1 items-center justify-center rounded-md border px-3 text-sm font-medium transition disabled:cursor-not-allowed"
+                :class="
+                  shareReady
+                    ? 'border-brand bg-brand text-brand-ink hover:bg-brand-strong'
+                    : 'border-line bg-surface text-muted'
+                "
+                :disabled="!shareReady"
+                @click="copy(shareUrl, '链接', 'link')"
+              >
+                {{ copiedAction === 'link' ? '已复制链接' : '复制链接' }}
+              </button>
+              <button
+                type="button"
+                class="inline-flex h-11 min-w-[8.5rem] flex-1 items-center justify-center rounded-md border px-3 text-sm font-medium transition disabled:cursor-not-allowed"
+                :class="
+                  shareReady
+                    ? 'border-line bg-surface text-ink hover:border-ink/25'
+                    : 'border-line bg-canvas text-muted'
+                "
+                :disabled="!shareReady"
+                @click="copyShareText"
+              >
+                {{ copiedAction === 'share' ? '已复制文案' : '复制分享文案' }}
+              </button>
+            </div>
+            <p class="mt-2 min-h-[16px] text-xs text-muted" aria-live="polite">
+              {{ feedback !== '' ? feedback : shareReady ? '' : '发布完成并生成互链后可分享整帖' }}
+            </p>
+          </section>
+
           <dl class="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
             <div>
               <dt class="text-muted">发布时间</dt>
@@ -417,19 +478,6 @@ watch(
             </div>
           </dl>
 
-          <p v-if="detail.description !== ''" class="mt-4 whitespace-pre-line text-sm text-ink/85">
-            {{ detail.description }}
-          </p>
-
-          <div v-if="detail.tags.length > 0" class="mt-3 flex flex-wrap gap-1">
-            <span
-              v-for="tag in detail.tags"
-              :key="tag"
-              class="rounded bg-canvas px-1.5 py-0.5 text-xs text-muted"
-              >{{ tag }}</span
-            >
-          </div>
-
           <section v-if="detail.telegraph_urls.length > 0" class="mt-5">
             <h3 class="text-xs font-medium text-muted">分页链接</h3>
             <ol class="mt-2 space-y-1">
@@ -439,12 +487,12 @@ watch(
                   :href="url"
                   target="_blank"
                   rel="noreferrer noopener"
-                  class="min-w-0 flex-1 truncate text-xs text-brand hover:underline"
+                  class="inline-flex min-h-6 min-w-0 flex-1 items-center truncate text-xs text-brand hover:underline"
                   >{{ url }}</a
                 >
                 <button
                   type="button"
-                  class="h-8 shrink-0 rounded border border-line px-2 text-xs text-muted transition hover:bg-canvas"
+                  class="h-9 shrink-0 rounded border border-line px-2.5 text-xs text-muted transition hover:bg-canvas"
                   @click="copy(url, '链接')"
                 >
                   复制
@@ -455,7 +503,7 @@ watch(
 
           <section class="mt-5">
             <h3 class="text-xs font-medium text-muted">图片清单</h3>
-            <ul class="mt-2 divide-y divide-line rounded-lg border border-line">
+            <ul class="mt-2 divide-y divide-line rounded-md border border-line">
               <li
                 v-for="image in detail.images"
                 :key="image.short_code"
@@ -472,12 +520,12 @@ watch(
                     :href="imageLink(image)"
                     target="_blank"
                     rel="noreferrer noopener"
-                    class="shrink-0 text-xs text-brand hover:underline"
+                    class="inline-flex min-h-6 shrink-0 items-center text-xs text-brand hover:underline"
                     >查看外链</a
                   >
                   <button
                     type="button"
-                    class="h-8 shrink-0 rounded border border-line px-2 text-xs text-muted transition hover:bg-canvas"
+                    class="h-9 shrink-0 rounded border border-line px-2.5 text-xs text-muted transition hover:bg-canvas"
                     @click="copy(imageLink(image), '单图外链')"
                   >
                     复制
@@ -488,76 +536,54 @@ watch(
             </ul>
             <p v-if="detail.images.length === 0" class="mt-2 text-xs text-muted">还没有已上传的图片。</p>
           </section>
+
+          <details class="mt-5 border-t border-line pt-3 text-xs">
+            <summary class="inline-flex min-h-6 cursor-pointer select-none items-center py-1 text-muted hover:text-ink">
+              分享文案模板
+            </summary>
+            <div class="mt-2 space-y-2">
+              <textarea
+                id="share-template"
+                v-model="templateDraft"
+                aria-label="分享文案模板"
+                rows="3"
+                class="w-full rounded-md border border-line bg-canvas px-2 py-1.5 text-xs leading-relaxed outline-none transition focus:border-brand focus:bg-surface"
+              ></textarea>
+              <div class="flex flex-wrap gap-1">
+                <button
+                  v-for="token in SHARE_PLACEHOLDERS"
+                  :key="token"
+                  type="button"
+                  class="inline-flex min-h-6 items-center rounded border border-line px-2 py-1 font-mono text-xs text-muted transition hover:bg-canvas hover:text-ink"
+                  @click="insertPlaceholder(token)"
+                >
+                  {{ token }}
+                </button>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  class="h-9 rounded-md bg-brand px-2.5 text-xs font-medium text-brand-ink transition hover:bg-brand-strong"
+                  @click="applyTemplate"
+                >
+                  保存模板
+                </button>
+                <button
+                  type="button"
+                  class="h-9 rounded-md border border-line px-2.5 text-xs font-medium transition hover:bg-canvas"
+                  @click="resetTemplate"
+                >
+                  恢复默认
+                </button>
+                <span class="text-muted" aria-live="polite">{{ templateNotice }}</span>
+              </div>
+              <p class="whitespace-pre-line rounded bg-canvas px-2 py-1.5 text-xs leading-relaxed text-muted">
+                {{ renderShareText(templateDraft, previewValues) }}
+              </p>
+            </div>
+          </details>
         </template>
       </div>
-
-      <footer class="border-t border-line px-5 py-3">
-        <div class="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            class="h-9 flex-1 rounded-md bg-brand px-3 text-xs font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
-            :disabled="detail === null || !shareReady"
-            @click="copy(shareUrl, '链接')"
-          >
-            复制纯链接
-          </button>
-          <button
-            type="button"
-            class="h-9 flex-1 rounded-md border border-line px-3 text-xs font-medium transition hover:bg-canvas disabled:opacity-60"
-            :disabled="detail === null || !shareReady"
-            @click="copyShareText"
-          >
-            复制分享文案
-          </button>
-        </div>
-        <p class="mt-2 min-h-[18px] text-xs text-muted" aria-live="polite">
-          {{ feedback !== '' ? feedback : shareReady || detail === null ? '' : '发布完成并生成互链后可分享整帖' }}
-        </p>
-
-        <details class="mt-1 text-xs">
-          <summary class="cursor-pointer select-none text-muted hover:text-ink">分享文案模板</summary>
-          <div class="mt-2 space-y-2">
-            <label class="sr-only" for="share-template">分享文案模板</label>
-            <textarea
-              id="share-template"
-              v-model="templateDraft"
-              rows="3"
-              class="w-full rounded-md border border-line bg-canvas px-2 py-1.5 text-xs leading-relaxed outline-none transition focus:border-brand focus:bg-surface"
-            ></textarea>
-            <div class="flex flex-wrap gap-1">
-              <button
-                v-for="token in SHARE_PLACEHOLDERS"
-                :key="token"
-                type="button"
-                class="rounded border border-line px-1.5 py-0.5 font-mono text-xs text-muted transition hover:bg-canvas hover:text-ink"
-                @click="insertPlaceholder(token)"
-              >
-                {{ token }}
-              </button>
-            </div>
-            <div class="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                class="h-8 rounded-md bg-brand px-2.5 text-xs font-medium text-brand-ink transition hover:bg-brand-strong"
-                @click="applyTemplate"
-              >
-                保存模板
-              </button>
-              <button
-                type="button"
-                class="h-8 rounded-md border border-line px-2.5 text-xs font-medium transition hover:bg-canvas"
-                @click="resetTemplate"
-              >
-                恢复默认
-              </button>
-              <span class="text-muted" aria-live="polite">{{ templateNotice }}</span>
-            </div>
-            <p class="whitespace-pre-line rounded bg-canvas px-2 py-1.5 text-xs leading-relaxed text-muted">
-              {{ renderShareText(templateDraft, previewValues) }}
-            </p>
-          </div>
-        </details>
-      </footer>
     </aside>
   </div>
 </template>
