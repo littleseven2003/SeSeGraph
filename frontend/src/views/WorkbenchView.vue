@@ -254,7 +254,9 @@ function onZip(file: File): void {
           author: parsed.author,
         }
       }
-      if (result.skipped > 0 && message.value === '') {
+      if (result.metaError !== '') {
+        message.value = result.metaError
+      } else if (result.skipped > 0 && message.value === '') {
         message.value = `已忽略 ${result.skipped} 个非图片文件`
       }
       void refreshCover()

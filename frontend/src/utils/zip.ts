@@ -14,12 +14,15 @@ export interface ArchiveLimits {
   maxImageBytes: number
   /** 全部图片展开后的总上限 */
   maxTotalBytes: number
+  /** 说明文件展开后的上限，与图片限制相互独立 */
+  maxMetaBytes: number
 }
 
 export const DEFAULT_ARCHIVE_LIMITS: ArchiveLimits = {
   maxImages: 500,
   maxImageBytes: 20 * 1024 * 1024,
   maxTotalBytes: 512 * 1024 * 1024,
+  maxMetaBytes: 64 * 1024,
 }
 
 // 解压后的单张图片。
@@ -36,6 +39,8 @@ export interface UnpackedArchive {
   metaName: string
   /** 被跳过的非图片条目数量，用于界面提示 */
   skipped: number
+  /** 说明文件被忽略的原因，为空表示没有异常 */
+  metaError: string
 }
 
 export type UnpackResult = ({ ok: true } & UnpackedArchive) | { ok: false; error: string }
@@ -72,6 +77,7 @@ export function unpackZip(data: Uint8Array, options: ArchiveOptions = {}): Unpac
   const wanted = new Set<string>()
   let metaEntry = ''
   let metaName = ''
+  let metaError = ''
   let skipped = 0
   let totalBytes = 0
   let overCount = 0
@@ -102,6 +108,12 @@ export function unpackZip(data: Uint8Array, options: ArchiveOptions = {}): Unpac
         return false
       }
       if (metaEntry === '' && wantedMeta.has(baseName(file.name).toLowerCase())) {
+        // 说明文件单独限制大小，避免异常压缩包用它撑爆内存。
+        if (file.originalSize > limits.maxMetaBytes) {
+          metaError = `${baseName(file.name)} 超过 ${formatSize(limits.maxMetaBytes)} 上限，已忽略`
+          skipped += 1
+          return false
+        }
         metaEntry = file.name
         metaName = baseName(file.name)
         wanted.add(file.name)
@@ -158,5 +170,6 @@ export function unpackZip(data: Uint8Array, options: ArchiveOptions = {}): Unpac
     metaText: metaBytes ? new TextDecoder('utf-8').decode(metaBytes) : '',
     metaName,
     skipped,
+    metaError,
   }
 }

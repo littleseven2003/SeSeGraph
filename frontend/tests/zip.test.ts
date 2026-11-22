@@ -117,3 +117,21 @@ test('封面按 400px 宽度等比缩放，小图不放大', () => {
 test('二进制转 data URL 可用于请求体', () => {
   assert.equal(toDataUrl(new Uint8Array([104, 105]), 'image/webp'), 'data:image/webp;base64,aGk=')
 })
+
+test('说明文件超过独立上限时忽略并给出提示', () => {
+  const archive = buildArchive({
+    '1.jpg': new Uint8Array([1]),
+    'info.txt': '标题：很长的说明'.repeat(20),
+  })
+  const result = expectOk(unpackZip(archive, { limits: { maxMetaBytes: 32 } }))
+  assert.deepEqual(result.images.map((image) => image.name), ['1.jpg'])
+  assert.equal(result.metaText, '')
+  assert.equal(result.metaName, '')
+  assert.match(result.metaError, /info\.txt 超过 .* 上限，已忽略/)
+  assert.equal(result.skipped, 1)
+
+  // 未超限时正常读取。
+  const small = expectOk(unpackZip(buildArchive({ '1.jpg': new Uint8Array([1]), 'info.txt': '标题：小' })))
+  assert.equal(small.metaText, '标题：小')
+  assert.equal(small.metaError, '')
+})
