@@ -95,6 +95,12 @@ func (f *fakeFileAPI) setFailPath(path string) {
 	f.failPath = path
 }
 
+func (f *fakeFileAPI) setContentType(contentType string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.contentType = contentType
+}
+
 func (f *fakeFileAPI) setGetFileStatus(status int, body string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -403,5 +409,33 @@ func TestPathCacheExpiresAndEvicts(t *testing.T) {
 		if _, ok := cache.get(key, current); !ok {
 			t.Errorf("条目 %q 不应被淘汰", key)
 		}
+	}
+}
+
+// TestOpenStreamInfersImageTypeFromPath 验证下载头是通用二进制流时按扩展名补出图片类型。
+func TestOpenStreamInfersImageTypeFromPath(t *testing.T) {
+	ctx := context.Background()
+	api := newFakeFileAPI(t)
+	provider := newDownloadProvider(t, api, time.Now)
+
+	api.setContentType("application/octet-stream")
+	stream, err := provider.OpenStream(ctx, "file-jpg")
+	if err != nil {
+		t.Fatalf("读取失败: %v", err)
+	}
+	_ = stream.Body.Close()
+	if stream.ContentType != "image/jpeg" {
+		t.Errorf("Content-Type = %q，期望按路径补出 image/jpeg", stream.ContentType)
+	}
+
+	// 上游明确给出非图片类型时保持原值，由网关决定如何回落。
+	api.setContentType("text/html")
+	html, err := provider.OpenStream(ctx, "file-html")
+	if err != nil {
+		t.Fatalf("读取失败: %v", err)
+	}
+	_ = html.Body.Close()
+	if html.ContentType != "text/html" {
+		t.Errorf("Content-Type = %q，期望保留上游的 text/html", html.ContentType)
 	}
 }

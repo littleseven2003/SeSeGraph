@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 )
 
@@ -97,6 +98,22 @@ func (t *Telegram) resolvePath(ctx context.Context, fileID string) (string, int6
 // OpenStream 查询文件路径并打开下载流，不把文件整体载入内存。
 // 缓存里的路径可能已失效：遇到 404 时刷新路径并只重试一次。
 // VerifyFile 用当前凭据确认一个远端文件可读，只查询文件信息，不下载内容。
+// imageTypeFromPath 按文件扩展名推断图片类型，无法判断时返回空串。
+func imageTypeFromPath(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".png":
+		return "image/png"
+	case ".webp":
+		return "image/webp"
+	case ".gif":
+		return "image/gif"
+	default:
+		return ""
+	}
+}
+
 // Telegram 的 file_id 只对上传它的 Bot 有效，因此可用于判断旧图片是否属于当前 Bot。
 func (t *Telegram) VerifyFile(ctx context.Context, fileID string) error {
 	_, _, err := t.getFilePath(ctx, fileID)
@@ -141,7 +158,15 @@ func (t *Telegram) OpenStream(ctx context.Context, fileID string) (Stream, error
 		return Stream{}, ErrUpstream
 	}
 
+	// Telegram 的下载接口常把图片标成 application/octet-stream，
+	// 此时按文件路径的扩展名推断，避免网关把图片当二进制流发给浏览器。
 	contentType := strings.TrimSpace(response.Header.Get("Content-Type"))
+	switch strings.ToLower(contentType) {
+	case "", "application/octet-stream":
+		if guessed := imageTypeFromPath(path); guessed != "" {
+			contentType = guessed
+		}
+	}
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}

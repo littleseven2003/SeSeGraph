@@ -693,3 +693,25 @@ func TestGatewayRejectsNewRequestsWhileStreamingAtLimit(t *testing.T) {
 	close(gate)
 	<-firstDone
 }
+
+// TestGatewayFallsBackToStoredMIME 验证上游只给通用二进制流时，回落到入库探测的图片类型。
+func TestGatewayFallsBackToStoredMIME(t *testing.T) {
+	provider := &fakeStreamProvider{}
+	provider.open = func(context.Context, string) (storage.Stream, error) {
+		return storage.Stream{
+			Body:        io.NopCloser(strings.NewReader("image-bytes")),
+			ContentType: "application/octet-stream",
+			Size:        11,
+		}, nil
+	}
+	env := newGatewayEnv(t, 4, provider)
+	code := env.publishPost(t, "octphoto01", "image/png", "photo", true, false)
+
+	response, _ := getImage(t, env.server.URL+"/i/"+code)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("状态码 = %d，期望 200", response.StatusCode)
+	}
+	if got := response.Header.Get("Content-Type"); got != "image/png" {
+		t.Errorf("Content-Type = %q，期望回落到入库类型 image/png", got)
+	}
+}

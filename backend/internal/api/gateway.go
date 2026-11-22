@@ -27,14 +27,34 @@ const (
 	octetStream = "application/octet-stream"
 )
 
-// safeContentType 只放行受支持的图片类型（与上传白名单一致），其余统一回落为二进制流。
-func safeContentType(candidate string) string {
+// imageType 返回受支持的图片类型（与上传白名单一致），其余返回空串。
+func imageType(candidate string) string {
 	value := strings.ToLower(strings.TrimSpace(candidate))
 	if index := strings.IndexByte(value, ';'); index >= 0 {
 		value = strings.TrimSpace(value[:index])
 	}
 	if allowedImageTypes[value] {
 		return value
+	}
+	return ""
+}
+
+// resolveContentType 选择响应类型：优先上游给出的图片类型；
+// 上游只给空值或通用二进制流时才回落到入库时探测的结果；
+// 上游明确给出非图片类型时按二进制流处理，不冒用入库类型。
+func resolveContentType(primary, fallback string) string {
+	value := strings.ToLower(strings.TrimSpace(primary))
+	if index := strings.IndexByte(value, ';'); index >= 0 {
+		value = strings.TrimSpace(value[:index])
+	}
+	if allowedImageTypes[value] {
+		return value
+	}
+	if value != "" && value != octetStream {
+		return octetStream
+	}
+	if known := imageType(fallback); known != "" {
+		return known
 	}
 	return octetStream
 }
@@ -166,14 +186,15 @@ func (g *imageGateway) handle(c *gin.Context) {
 	}
 	defer func() { _ = stream.Body.Close() }()
 
-	// 原图模式使用入库时嗅探的 MIME；photo 模式以 Telegram 回传格式为准。
+	// 原图模式使用入库时嗅探的 MIME；photo 模式以 Telegram 回传格式为准，
+	// 上游没给出可识别的图片类型时回落到入库结果，避免图片被当成二进制流下载。
 	contentType := strings.TrimSpace(image.MIMEType)
 	if image.UploadMode != storage.ModeDocument {
-		if upstream := strings.TrimSpace(stream.ContentType); upstream != "" {
-			contentType = upstream
-		}
+		contentType = resolveContentType(stream.ContentType, image.MIMEType)
+	} else {
+		contentType = resolveContentType(image.MIMEType, stream.ContentType)
 	}
-	c.Header("Content-Type", safeContentType(contentType))
+	c.Header("Content-Type", contentType)
 	c.Header("Cache-Control", imageCacheControl)
 	c.Header("Content-Disposition", "inline")
 	c.Header("X-Content-Type-Options", "nosniff")
