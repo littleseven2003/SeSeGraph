@@ -225,8 +225,8 @@ onBeforeUnmount(() => {
           清除筛选
         </button>
 
-        <div class="flex w-full items-center gap-2 sm:ml-auto sm:w-auto">
-          <label class="relative min-w-0 flex-1 sm:w-[260px] sm:flex-none">
+        <div class="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto sm:flex-nowrap">
+          <label class="relative w-full min-w-0 sm:w-[260px] sm:flex-none">
             <svg
               viewBox="0 0 24 24"
               fill="none"
@@ -247,31 +247,33 @@ onBeforeUnmount(() => {
             />
           </label>
 
-          <button
-            type="button"
-            class="inline-flex h-11 shrink-0 items-center gap-2 rounded-md border border-line bg-surface px-3 text-sm font-medium transition hover:border-ink/25"
-            :aria-pressed="blurEnabled"
-            @click="toggleBlur"
-          >
-            <span
-              class="relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition"
-              :class="blurEnabled ? 'bg-ink' : 'bg-line'"
-              aria-hidden="true"
+          <div class="flex w-full items-center gap-2 sm:w-auto">
+            <button
+              type="button"
+              class="inline-flex h-11 flex-1 shrink-0 items-center justify-center gap-2 rounded-md border border-line bg-surface px-3 text-sm font-medium transition hover:border-ink/25 sm:flex-none"
+              :aria-pressed="blurEnabled"
+              @click="toggleBlur"
             >
               <span
-                class="absolute h-3 w-3 rounded-full bg-white transition"
-                :class="blurEnabled ? 'left-3.5' : 'left-0.5'"
-              ></span>
-            </span>
-            防社死模糊
-          </button>
+                class="relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition"
+                :class="blurEnabled ? 'bg-ink' : 'bg-line'"
+                aria-hidden="true"
+              >
+                <span
+                  class="absolute h-3 w-3 rounded-full bg-white transition"
+                  :class="blurEnabled ? 'left-3.5' : 'left-0.5'"
+                ></span>
+              </span>
+              防社死模糊
+            </button>
 
-          <router-link
-            :to="{ name: 'workbench' }"
-            class="inline-flex h-11 shrink-0 items-center rounded-md bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong"
-          >
-            新建图集
-          </router-link>
+            <router-link
+              :to="{ name: 'workbench' }"
+              class="inline-flex h-11 flex-1 shrink-0 items-center justify-center rounded-md bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong sm:flex-none"
+            >
+              新建图集
+            </router-link>
+          </div>
         </div>
       </div>
 
