@@ -186,7 +186,7 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	backupManager := backup.New(backup.Options{
 		DataDir:       cfg.DataDir,
 		Handle:        store,
-		IncludeThumbs: !isFalse(envValue(lookupEnv, "BACKUP_COMMENTS_OFF")),
+		IncludeThumbs: !isFalse(envValue(lookupEnv, "BACKUP_INCLUDE_THUMBS")),
 		Sender:        backupSender(resolver, lookupEnv, switcher),
 	})
 	backupSchedule := ""
