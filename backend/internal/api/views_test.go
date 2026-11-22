@@ -78,6 +78,7 @@ type viewsRefreshBody struct {
 	ViewsCount     int     `json:"views_count"`
 	ViewsUpdatedAt *string `json:"views_updated_at"`
 	Cached         bool    `json:"cached"`
+	Failed         bool    `json:"failed"`
 }
 
 func TestRefreshViewsRequiresAuth(t *testing.T) {

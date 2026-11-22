@@ -202,8 +202,9 @@ async function refreshViews(): Promise<void> {
         views_count: result.views_count,
         views_updated_at: result.views_updated_at,
       }
-      viewsNotice.value = result.cached ? '刚刚已更新' : '已更新'
-      viewsNoticeTone.value = result.cached ? 'muted' : 'ok'
+      // 失败后的冷却命中不能声称「刚刚已更新」，只提示显示的是缓存。
+      viewsNotice.value = result.failed ? '暂未更新' : result.cached ? '刚刚已更新' : '已更新'
+      viewsNoticeTone.value = result.failed || result.cached ? 'muted' : 'ok'
       scheduleViewsNotice()
     }
     items.value = items.value.map((item) =>

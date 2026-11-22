@@ -27,6 +27,8 @@ export interface ViewsRefresh {
   views_count: number
   views_updated_at: string | null
   cached: boolean
+  /** 最近一次联网失败时为 true，界面应显示缓存而不是「刚刚已更新」。 */
+  failed: boolean
 }
 
 export interface GalleryPage {

@@ -16,6 +16,8 @@ type viewsRefreshResponse struct {
 	ViewsCount     int     `json:"views_count"`
 	ViewsUpdatedAt *string `json:"views_updated_at"`
 	Cached         bool    `json:"cached"`
+	// Failed 表示最近一次联网失败，界面应显示缓存而不是「刚刚已更新」。
+	Failed bool `json:"failed"`
 }
 
 // refreshViewsHandler 手动刷新单帖浏览量。冷却期内直接返回本地缓存。
@@ -52,6 +54,7 @@ func refreshViewsHandler(deps Deps) gin.HandlerFunc {
 			ViewsCount:     result.Count,
 			ViewsUpdatedAt: optionalTimestamp(result.UpdatedAt),
 			Cached:         result.Cached,
+			Failed:         result.Failed,
 		})
 	}
 }
