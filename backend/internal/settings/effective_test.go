@@ -155,5 +155,44 @@ func TestPatchEmpty(t *testing.T) {
 	}
 }
 
+// TestUpdateWithBotWritesOwnershipTogether 验证 Bot 归属与配置落在同一个事务：
+// 归属写入失败时配置一并回滚，避免数据库是 B、运行时是 A。
+func TestUpdateWithBotWritesOwnershipTogether(t *testing.T) {
+	ctx := context.Background()
+	resolver := newResolver(t, Env{})
+
+	if err := resolver.UpdateWithBot(ctx, Patch{TelegramToken: ptr("111:test-one")}, 111); err != nil {
+		t.Fatalf("写入失败: %v", err)
+	}
+	stored, err := resolver.store.Snapshot(ctx)
+	if err != nil {
+		t.Fatalf("快照失败: %v", err)
+	}
+	if stored[KeyTelegramBotID] != "111" {
+		t.Errorf("Bot 归属 = %q，期望 111", stored[KeyTelegramBotID])
+	}
+
+	// 让本次写入失败，验证归属与配置一起回滚。
+	if _, err := resolver.store.handle.ExecContext(ctx,
+		`CREATE TRIGGER fail_token BEFORE INSERT ON settings
+		 WHEN NEW.key = 'telegram.bot_token' BEGIN SELECT RAISE(ABORT, 'fail'); END`); err != nil {
+		t.Fatalf("创建触发器失败: %v", err)
+	}
+	if err := resolver.UpdateWithBot(ctx, Patch{TelegramToken: ptr("222:test-two")}, 222); err == nil {
+		t.Fatal("写入失败时应返回错误")
+	}
+
+	stored, err = resolver.store.Snapshot(ctx)
+	if err != nil {
+		t.Fatalf("快照失败: %v", err)
+	}
+	if stored[KeyTelegramToken] != "111:test-one" {
+		t.Errorf("令牌 = %q，期望保留旧值", stored[KeyTelegramToken])
+	}
+	if stored[KeyTelegramBotID] != "111" {
+		t.Errorf("Bot 归属 = %q，失败时不应写入新编号", stored[KeyTelegramBotID])
+	}
+}
+
 // ptr 返回指向给定值的指针，便于构造补丁。
 func ptr(value string) *string { return &value }

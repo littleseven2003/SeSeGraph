@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -174,6 +175,13 @@ func (r *Resolver) Prepare(ctx context.Context, patch Patch) (Effective, error) 
 
 // Update 校验并写入配置。任何字段不合法或与环境变量冲突时整体不写入。
 func (r *Resolver) Update(ctx context.Context, patch Patch) error {
+	return r.UpdateWithBot(ctx, patch, 0)
+}
+
+// UpdateWithBot 校验并写入配置，同时把 Bot 归属写进同一个事务。
+// botID 为 0 时不改动归属记录；任一步失败时配置与归属都不会写入，
+// 调用方据此保证「数据库里的配置」与「运行时的提供方」不会各自一半是新值。
+func (r *Resolver) UpdateWithBot(ctx context.Context, patch Patch, botID int64) error {
 	if r.store == nil {
 		return errors.New("配置存储不可用")
 	}
@@ -184,6 +192,9 @@ func (r *Resolver) Update(ctx context.Context, patch Patch) error {
 	_, values, removes, err := r.classify(stored, patch)
 	if err != nil {
 		return err
+	}
+	if botID != 0 {
+		values[KeyTelegramBotID] = strconv.FormatInt(botID, 10)
 	}
 	// 删除与写入在同一事务内完成，任一步失败都不会留下半套配置。
 	return r.store.Replace(ctx, values, removes)
