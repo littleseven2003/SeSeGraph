@@ -18,7 +18,7 @@ import {
   shouldFeatureFirst,
 } from '../utils/gallery'
 import DetailDrawer from '../components/gallery/DetailDrawer.vue'
-import BrandMark from '../components/BrandMark.vue'
+import BrandLockup from '../components/BrandLockup.vue'
 import PostCard from '../components/gallery/PostCard.vue'
 import TagFilter from '../components/gallery/TagFilter.vue'
 
@@ -209,16 +209,7 @@ onBeforeUnmount(() => {
   <div class="min-h-full">
     <header class="border-b border-line/60">
       <div class="mx-auto flex w-full max-w-[1240px] items-center justify-between gap-4 px-5 py-3">
-        <div class="flex items-center gap-2.5">
-          <BrandMark />
-          <div class="flex items-center gap-2">
-            <p class="text-sm font-semibold tracking-tight">SeSeGraph</p>
-            <span
-              class="hidden rounded border border-dashed border-brand/40 bg-brand-soft px-2 py-0.5 text-xs font-medium leading-none text-brand-strong sm:inline-block"
-              >SeSe图册</span
-            >
-          </div>
-        </div>
+        <BrandLockup />
 
         <div class="flex items-center gap-1">
           <router-link

@@ -2,7 +2,7 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ApiError, setupAccount } from '../api/client'
-import BrandMark from '../components/BrandMark.vue'
+import BrandLockup from '../components/BrandLockup.vue'
 
 const router = useRouter()
 const username = ref('')
@@ -53,13 +53,7 @@ async function submit(): Promise<void> {
 <template>
   <main class="flex min-h-full items-center justify-center px-5 py-12">
     <div class="w-full max-w-[400px]">
-      <div class="flex items-center gap-2.5">
-        <BrandMark />
-        <div class="min-w-0">
-          <p class="text-sm font-semibold tracking-tight">SeSeGraph</p>
-          <p class="mt-0.5 text-xs text-muted">SeSe图册</p>
-        </div>
-      </div>
+      <BrandLockup layout="stack" :size="36" />
 
       <h1 class="mt-8 text-xl font-semibold tracking-tight">布置你的第一间冲印室</h1>
       <p class="mt-1.5 text-sm text-muted">首次启动，创建一个管理员账号即可开始使用。</p>
