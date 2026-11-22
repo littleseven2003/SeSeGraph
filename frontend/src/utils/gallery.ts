@@ -281,6 +281,40 @@ export function focusStep(index: number, length: number, backwards: boolean): nu
   return index === length - 1 ? 0 : index + 1
 }
 
+/** 浏览量按千进位压成紧凑写法：428、1.2k、10k、1.2M。 */
+export function formatViews(count: number): string {
+  const value = Math.max(0, Math.floor(count))
+  if (value < 1000) return String(value)
+  if (value < 1_000_000) return trimTrailingZero(value / 1000) + 'k'
+  return trimTrailingZero(value / 1_000_000) + 'M'
+}
+
+/** trimTrailingZero 保留一位小数并去掉多余的 .0，超出部分向下取整不夸大。 */
+function trimTrailingZero(value: number): string {
+  const floored = Math.floor(value * 10) / 10
+  return Number.isInteger(floored) ? String(floored) : floored.toFixed(1)
+}
+
+/** formatViewsExact 保留千分位，用于详情与悬停提示里的精确值。 */
+export function formatViewsExact(count: number): string {
+  const digits = String(Math.max(0, Math.floor(count)))
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+}
+
+/** showsViews 决定是否展示浏览量：已发布、未撤回且同步过，避免冗余的 0。 */
+export function showsViews(item: {
+  publish_state: string
+  disabled: boolean
+  views_updated_at: string | null
+}): boolean {
+  return (
+    item.publish_state === 'published' &&
+    !item.disabled &&
+    item.views_updated_at !== null &&
+    item.views_updated_at !== ''
+  )
+}
+
 /** shouldShowBlur 决定当前是否盖住模糊：开关开启且未处于临时去模糊状态。 */
 export function shouldShowBlur(blurred: boolean, revealed: boolean): boolean {
   return blurred && !revealed

@@ -2,7 +2,14 @@
 import { computed, onBeforeUnmount, ref } from 'vue'
 import type { GalleryItem } from '../../api/gallery.ts'
 import { copyText } from '../../utils/clipboard.ts'
-import { formatPublishedAt, postShareUrl, statusLabel } from '../../utils/gallery.ts'
+import {
+  formatPublishedAt,
+  formatViews,
+  formatViewsExact,
+  postShareUrl,
+  showsViews,
+  statusLabel,
+} from '../../utils/gallery.ts'
 import { useCoverReveal } from './useCoverReveal.ts'
 
 const props = defineProps<{ item: GalleryItem; blurred: boolean }>()
@@ -18,6 +25,10 @@ function onCoverOpen(event: MouseEvent): void {
 function onRowOpen(event: MouseEvent): void {
   activate(() => emit('open', props.item.id), event)
 }
+
+const showViews = computed(() => showsViews(props.item))
+const viewsText = computed(() => formatViews(props.item.views_count))
+const viewsTitle = computed(() => formatViewsExact(props.item.views_count) + ' 次浏览')
 
 const shareUrl = computed(() => postShareUrl(props.item))
 const copyState = ref<'idle' | 'copied' | 'failed'>('idle')
@@ -90,6 +101,13 @@ const copyLabel = computed(() => {
         <span class="tnum shrink-0">{{ volume }}</span>
         <span v-if="publishedDate !== ''" class="tnum shrink-0">{{ publishedDate }}</span>
         <span class="tnum shrink-0">{{ item.image_count }}P</span>
+        <span v-if="showViews" class="inline-flex shrink-0 items-center gap-1 tnum" :title="viewsTitle">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-3.5 w-3.5" aria-hidden="true">
+            <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" stroke-linecap="round" stroke-linejoin="round" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+          {{ viewsText }}
+        </span>
         <span
           class="inline-flex shrink-0 items-center rounded-full border px-1.5 py-0.5 text-[11px] font-medium leading-none sm:hidden"
           :class="chipClass"

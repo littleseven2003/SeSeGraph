@@ -4,7 +4,10 @@ import type { GalleryItem } from '../../api/gallery.ts'
 import { copyText } from '../../utils/clipboard.ts'
 import {
   formatPublishedAt,
+  formatViews,
+  formatViewsExact,
   postShareUrl,
+  showsViews,
   statusLabel,
 } from '../../utils/gallery.ts'
 import { useCoverReveal } from './useCoverReveal.ts'
@@ -56,9 +59,13 @@ const visibleTags = computed(() => props.item.tags.slice(0, 2))
 const restTags = computed(() => Math.max(0, props.item.tags.length - visibleTags.value.length))
 // volume 是卡片上的卷号，用帖子编号补两位，形成归档索引感。
 const volume = computed(() => '#' + String(props.item.id).padStart(2, '0'))
+// 没有发布日期时只显示卷号，发布状态由左上角状态签负责，避免同一条信息出现两次。
 const meta = computed(() =>
-  publishedDate.value !== '' ? volume.value + ' · ' + publishedDate.value : volume.value + ' · 待冲印',
+  publishedDate.value !== '' ? volume.value + ' · ' + publishedDate.value : volume.value,
 )
+const showViews = computed(() => showsViews(props.item))
+const viewsText = computed(() => formatViews(props.item.views_count))
+const viewsTitle = computed(() => formatViewsExact(props.item.views_count) + ' 次浏览')
 const copyLabel = computed(() => {
   if (copyState.value === 'copied') return '已复制链接'
   if (copyState.value === 'failed') return '复制失败，请手动选取链接'
@@ -142,6 +149,17 @@ const copyLabel = computed(() => {
 
       <div class="flex items-center gap-2">
         <p class="min-w-0 flex-1 truncate text-xs text-muted tnum">{{ meta }}</p>
+        <span
+          v-if="showViews"
+          class="inline-flex shrink-0 items-center gap-1 text-xs text-muted tnum"
+          :title="viewsTitle"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-3 w-3" aria-hidden="true">
+            <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" stroke-linecap="round" stroke-linejoin="round" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+          {{ viewsText }}
+        </span>
         <button
           v-if="shareUrl !== ''"
           type="button"

@@ -16,6 +16,17 @@ export interface GalleryItem {
   published_at: string
   created_at: string
   updated_at: string
+  /** 上次同步到的累计浏览量；views_updated_at 为空表示尚未同步。 */
+  views_count: number
+  views_updated_at: string | null
+}
+
+/** ViewsRefresh 是手动刷新浏览量的结果，cached 表示命中冷却、直接返回缓存。 */
+export interface ViewsRefresh {
+  post_id: number
+  views_count: number
+  views_updated_at: string | null
+  cached: boolean
 }
 
 export interface GalleryPage {
@@ -98,6 +109,12 @@ export async function fetchPostDetail(id: number): Promise<PostDetail> {
 export async function fetchTags(): Promise<TagCount[]> {
   const body = (await (await galleryRequest('/api/tags')).json()) as { items: TagCount[] }
   return body.items
+}
+
+// refreshPostViews 手动刷新单帖浏览量；冷却期内后端直接返回缓存。
+export async function refreshPostViews(id: number): Promise<ViewsRefresh> {
+  const response = await galleryRequest('/api/posts/' + String(id) + '/views/refresh', { method: 'POST' })
+  return (await response.json()) as ViewsRefresh
 }
 
 // updatePost 更新标题、说明与作者；已发布帖会先同步远端页面再落本地。

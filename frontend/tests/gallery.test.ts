@@ -7,6 +7,9 @@ import {
   buildGalleryQuery,
   formatFileSize,
   formatPublishedAt,
+  formatViews,
+  formatViewsExact,
+  showsViews,
   createLatestGuard,
   focusStep,
   imageShareUrl,
@@ -165,6 +168,54 @@ test('formatPublishedAt 容忍空值与缺字段', () => {
   assert.equal(formatPublishedAt(undefined), '')
   assert.equal(formatPublishedAt('不是时间'), '')
   assert.match(formatPublishedAt('2026-11-22T09:18:20Z'), /^2026-11-22 \d{2}:\d{2}$/)
+})
+
+test('三处界面只在已发布且同步后展示浏览量，详情提供刷新入口', () => {
+  const card = readFileSync(new URL('../src/components/gallery/PostCard.vue', import.meta.url), 'utf8')
+  assert.ok(card.includes('showsViews(props.item)'), '卡片按同一条可见性规则展示')
+  assert.ok(card.includes('formatViews(props.item.views_count)'), '卡片用紧凑写法')
+
+  const row = readFileSync(new URL('../src/components/gallery/PostRow.vue', import.meta.url), 'utf8')
+  assert.ok(row.includes('showsViews(props.item)'), '列表行共用同一条规则')
+
+  const drawer = readFileSync(new URL('../src/components/gallery/DetailDrawer.vue', import.meta.url), 'utf8')
+  assert.ok(drawer.includes('formatViewsExact(props.detail.views_count)'), '详情展示精确值')
+  assert.ok(drawer.includes('尚未统计'), '未同步的已发布帖给出说明')
+  assert.ok(drawer.includes('aria-label="刷新浏览量"'), '刷新按钮有可读名称')
+  assert.ok(drawer.includes(':disabled="viewsRefreshing"'), '刷新中禁用防连点')
+  assert.ok(drawer.includes("emit('refreshViews')"), '按钮交由外层发起刷新')
+  assert.ok(drawer.includes('aria-live="polite"'), '刷新反馈可被读屏感知')
+
+  const home = readFileSync(new URL('../src/views/HomeView.vue', import.meta.url), 'utf8')
+  assert.ok(home.includes('refreshPostViews(id)'), '刷新走单帖接口')
+  assert.ok(home.includes('detail.value?.id === id'), '切帖后旧响应不回写')
+  assert.ok(home.includes('views_count: result.views_count'), '成功后回写详情')
+})
+
+test('浏览量按千进位压缩，精确值保留千分位', () => {
+  assert.equal(formatViews(0), '0')
+  assert.equal(formatViews(428), '428')
+  assert.equal(formatViews(999), '999')
+  assert.equal(formatViews(1000), '1k')
+  assert.equal(formatViews(1234), '1.2k')
+  assert.equal(formatViews(12345), '12.3k')
+  assert.equal(formatViews(999999), '999.9k')
+  assert.equal(formatViews(1_000_000), '1M')
+  assert.equal(formatViews(1_234_567), '1.2M')
+  assert.equal(formatViews(-5), '0')
+
+  assert.equal(formatViewsExact(0), '0')
+  assert.equal(formatViewsExact(1234), '1,234')
+  assert.equal(formatViewsExact(1_234_567), '1,234,567')
+})
+
+test('只有已发布且同步过的图集展示浏览量', () => {
+  const base = { publish_state: 'published', disabled: false, views_updated_at: '2026-11-22T08:00:00Z' }
+  assert.equal(showsViews(base), true)
+  assert.equal(showsViews({ ...base, views_updated_at: null }), false)
+  assert.equal(showsViews({ ...base, publish_state: 'idle' }), false)
+  assert.equal(showsViews({ ...base, disabled: true }), false)
+  assert.equal(showsViews({ ...base, views_updated_at: '' }), false)
 })
 
 test('按激活事件区分鼠标、触屏与键盘三种回遮路径', () => {
