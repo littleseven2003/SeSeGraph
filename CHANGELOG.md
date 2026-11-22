@@ -2,7 +2,9 @@
 
 本文件记录本项目各版本的变更，格式参考 Keep a Changelog，版本号遵循 SemVer 2.0.0。
 
-## [未发布]
+## [v0.5.0] - 2026-11-22
+
+本版把图床配置从「改环境变量后重启」推进到「设置页在线维护、保存即热生效」：Telegram 与 Telegraph 凭据、网络代理与连通性自检都能在页面完成，换 Bot 前会校验已有图片归属，旧库升级也不会让历史图片失效。同时补齐直接部署、单容器 Docker 与 Docker Compose 三种形态所需的镜像、编排与反向代理示例。
 
 ### 新增
 
@@ -26,10 +28,6 @@
 - 代理配置保存后重建传输层：上传队列、图片网关、发布队列与连通性自检都使用新配置；只影响 Telegraph 的改动不重新校验 Bot，只影响 Telegram 的改动会先验证 Bot 再落库。图床切换会回收旧提供方的空闲连接。
 - 上游地址（`TELEGRAM_API_BASE`、`TELEGRAPH_API_BASE`）只由环境变量或官方默认值决定，设置接口不接受地址修改，避免把已有令牌导向任意主机；自定义地址只返回来源与配置状态，不回显，避免反代地址中的认证信息出现在界面或响应里。
 - 详情卡片页脚改为「发布时间 + 时间」顺序，移动端搜索占位文案收窄，避免 390px 下被截断。
-
-### 新增
-
-- 部署编排：多阶段 `Dockerfile`（Node 构建前端 → 静态编译 Go → Alpine 运行层，内置 `HEALTHCHECK`，以非 root 运行）、`docker-compose.yml`（应用 + Caddy 自动 HTTPS，读 `.env` 的 `DOMAIN`）、`docker-compose.standalone.yml`（只跑应用，接入已有反向代理）、`.dockerignore`，以及 `deploy/sesegraph.service`、`deploy/nginx.conf.example`、`deploy/Caddyfile.example` 三个部署示例。两套 Compose 都带一次性 `init` 服务，首次部署自动建好数据目录并交给 uid 1000；systemd 模板用 `StateDirectory` 创建数据目录；两套编排都透传 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY`。Compose 的 Caddy 关闭访问日志，避免 `X-Setup-Token` 等自定义请求头被记录。
 
 ### 说明
 
