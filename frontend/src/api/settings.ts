@@ -47,6 +47,38 @@ export interface SettingsPatch {
   }
 }
 
+/** TrafficStats 是当月出站流量统计与阈值。 */
+export interface TrafficStats {
+  month: string
+  bytes_out: number
+  request_count: number
+  alert_sent: boolean
+  alert_bytes: number
+  limit_bytes: number
+}
+
+/** BackupInfo 是最近一份备份的概况。 */
+export interface BackupInfo {
+  name: string
+  size: number
+  created_at: string
+}
+
+export interface BackupStatus {
+  schedule: string
+  enabled: boolean
+  latest: BackupInfo | null
+}
+
+export interface BackupResult {
+  name: string
+  size: number
+  created_at: string
+  sent: boolean
+  includes: string[]
+  warning?: string
+}
+
 export interface ConnectionTarget {
   status: string
   latency_ms: number
@@ -111,6 +143,31 @@ export async function saveSettings(patch: SettingsPatch): Promise<SettingsView> 
     throw new SettingsError(response.status, parsed.message || '保存失败，请稍后重试', parsed.fields)
   }
   return (await response.json()) as SettingsView
+}
+
+// fetchTraffic 读取当月出站流量与阈值。
+export async function fetchTraffic(): Promise<TrafficStats> {
+  return (await settingsRequest('/api/stats/traffic')).json() as Promise<TrafficStats>
+}
+
+// fetchBackupStatus 读取定时备份说明与最近一份备份。
+export async function fetchBackupStatus(): Promise<BackupStatus> {
+  return (await settingsRequest('/api/backup/status')).json() as Promise<BackupStatus>
+}
+
+// triggerBackup 立即生成一份备份。
+export async function triggerBackup(): Promise<BackupResult> {
+  const response = await apiRequest('/api/backup/trigger', { method: 'POST' })
+  if (!response.ok) {
+    let parsed = { message: '', fields: [] as string[] }
+    try {
+      parsed = errorResponse(await response.json())
+    } catch {
+      // 响应不是 JSON 时保留统一说明
+    }
+    throw new SettingsError(response.status, parsed.message || '备份失败，请稍后重试', parsed.fields)
+  }
+  return (await response.json()) as BackupResult
 }
 
 // testConnection 触发并行自检，成功与失败都返回两项结果。

@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import type { SettingsView } from '../src/api/settings.ts'
+import type { SettingsView, TrafficStats } from '../src/api/settings.ts'
 import {
+  backupLatestText,
+  backupScheduleText,
   changedPatch,
   channelInvalid,
   connectionLabel,
@@ -10,6 +12,7 @@ import {
   connectionTone,
   endpointText,
   ENV_MANAGED_HINT,
+  formatTrafficBytes,
   hasPatch,
   PROXY_MODES,
   proxyCustomNeedsURL,
@@ -19,6 +22,9 @@ import {
   proxyURLText,
   saveFailureText,
   tokenPlaceholder,
+  trafficState,
+  trafficStateText,
+  trafficSummary,
 } from '../src/utils/settings.ts'
 
 function view(overrides: Partial<SettingsView> = {}): SettingsView {
@@ -205,4 +211,45 @@ test('保存失败提示区分登录失效与字段错误', () => {
     '以下配置由环境变量提供，无法在界面修改（telegram.token）',
   )
   assert.equal(saveFailureText(500, '', []), '保存失败，请稍后重试')
+})
+
+test('流量统计格式化与状态', () => {
+  const base: TrafficStats = {
+    month: '2026-11',
+    bytes_out: 0,
+    request_count: 0,
+    alert_sent: false,
+    alert_bytes: 3 * 1024 ** 3,
+    limit_bytes: 5 * 1024 ** 3,
+  }
+  assert.equal(formatTrafficBytes(0), '0 B')
+  assert.equal(formatTrafficBytes(512), '512 B')
+  assert.equal(formatTrafficBytes(2048), '2.00 KB')
+  assert.equal(formatTrafficBytes(1.5 * 1024 ** 3), '1.50 GB')
+
+  assert.equal(trafficState(base), 'ok')
+  assert.equal(trafficState({ ...base, bytes_out: 3 * 1024 ** 3 }), 'alert')
+  assert.equal(trafficState({ ...base, bytes_out: 5 * 1024 ** 3 }), 'over')
+  assert.equal(trafficStateText({ ...base, bytes_out: 5 * 1024 ** 3 }), '已达上限，图片网关返回 503')
+  assert.equal(trafficSummary({ ...base, request_count: 7 }), '预警 3.00 GB · 上限 5.00 GB · 请求 7 次')
+  assert.equal(trafficSummary({ ...base, alert_bytes: 0, limit_bytes: 0 }), '未设置预警 · 未设置上限 · 请求 0 次')
+})
+
+test('备份状态文案', () => {
+  assert.equal(
+    backupScheduleText({ schedule: '每天 03:00', enabled: true, latest: null }),
+    '定时备份：每天 03:00',
+  )
+  assert.equal(
+    backupScheduleText({ schedule: '', enabled: false, latest: null }),
+    '未启用定时备份（设置 BACKUP_ENABLED=true 后按 BACKUP_CRON 执行）',
+  )
+  assert.equal(backupLatestText({ schedule: '每天 03:00', enabled: true, latest: null }), '还没有备份')
+
+  const text = backupLatestText({
+    schedule: '每天 03:00',
+    enabled: true,
+    latest: { name: 'sesegraph-20261122-030000.zip', size: 2 * 1024 * 1024, created_at: '2026-11-22T03:00:00Z' },
+  })
+  assert.match(text, /sesegraph-20261122-030000\.zip · 2\.00 MB · /)
 })

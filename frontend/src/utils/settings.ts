@@ -1,5 +1,12 @@
 // 设置页的展示与表单逻辑，保持为纯函数便于单元测试。
-import type { ConnectionResult, ConnectionTarget, SettingsPatch, SettingsView } from '../api/settings.ts'
+import type {
+  BackupStatus,
+  ConnectionResult,
+  ConnectionTarget,
+  SettingsPatch,
+  SettingsView,
+  TrafficStats,
+} from '../api/settings.ts'
 
 /** 环境变量托管字段的统一说明。 */
 export const ENV_MANAGED_HINT = '由环境变量提供，界面不可修改'
@@ -177,4 +184,62 @@ export function saveFailureText(status: number, message: string, fields: string[
   if (status === 401) return '登录已失效，请重新登录后再修改'
   if (fields.length > 0) return message + '（' + fields.join('、') + '）'
   return message !== '' ? message : '保存失败，请稍后重试'
+}
+
+/** formatTrafficBytes 把字节数格式化为带单位的可读文本。 */
+export function formatTrafficBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let value = bytes
+  let index = 0
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024
+    index += 1
+  }
+  const text = index === 0 ? String(Math.round(value)) : value.toFixed(2)
+  return text + ' ' + units[index]
+}
+
+/** trafficState 返回流量状态：正常、已达预警或已超上限。 */
+export function trafficState(stats: TrafficStats): 'ok' | 'alert' | 'over' {
+  if (stats.limit_bytes > 0 && stats.bytes_out >= stats.limit_bytes) return 'over'
+  if (stats.alert_bytes > 0 && stats.bytes_out >= stats.alert_bytes) return 'alert'
+  return 'ok'
+}
+
+/** trafficStateText 返回流量状态的中文说明。 */
+export function trafficStateText(stats: TrafficStats): string {
+  switch (trafficState(stats)) {
+    case 'over':
+      return '已达上限，图片网关返回 503'
+    case 'alert':
+      return '已达预警阈值，已发送一次提醒'
+    default:
+      return '正常'
+  }
+}
+
+/** trafficSummary 汇总阈值文案，未配置时明确说明。 */
+export function trafficSummary(stats: TrafficStats): string {
+  const alert = stats.alert_bytes > 0 ? '预警 ' + formatTrafficBytes(stats.alert_bytes) : '未设置预警'
+  const limit = stats.limit_bytes > 0 ? '上限 ' + formatTrafficBytes(stats.limit_bytes) : '未设置上限'
+  return alert + ' · ' + limit + ' · 请求 ' + String(stats.request_count) + ' 次'
+}
+
+/** backupScheduleText 描述定时备份状态。 */
+export function backupScheduleText(status: BackupStatus): string {
+  if (!status.enabled || status.schedule === '') {
+    return '未启用定时备份（设置 BACKUP_ENABLED=true 后按 BACKUP_CRON 执行）'
+  }
+  return '定时备份：' + status.schedule
+}
+
+/** backupLatestText 描述最近一份备份；没有备份时给出提示。 */
+export function backupLatestText(status: BackupStatus): string {
+  if (status.latest === null) return '还没有备份'
+  const created = new Date(status.latest.created_at)
+  const stamp = Number.isNaN(created.getTime())
+    ? status.latest.created_at
+    : created.toLocaleString('zh-CN', { hour12: false })
+  return status.latest.name + ' · ' + formatTrafficBytes(status.latest.size) + ' · ' + stamp
 }

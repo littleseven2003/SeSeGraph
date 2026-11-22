@@ -2,12 +2,17 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ApiError } from '../api/client.ts'
 import {
+  fetchBackupStatus,
   fetchSettings,
+  fetchTraffic,
   saveSettings,
   testConnection,
+  triggerBackup,
   SettingsError,
+  type BackupStatus,
   type ConnectionResult,
   type SettingsView,
+  type TrafficStats,
 } from '../api/settings.ts'
 import {
   channelInvalid,
@@ -32,8 +37,14 @@ import {
   proxyURLHint,
   proxyURLInvalid,
   proxyURLText,
+  backupLatestText,
+  backupScheduleText,
   saveFailureText,
   tokenPlaceholder,
+  formatTrafficBytes,
+  trafficState,
+  trafficStateText,
+  trafficSummary,
 } from '../utils/settings.ts'
 
 const view = ref<SettingsView | null>(null)
@@ -43,6 +54,12 @@ const saving = ref(false)
 const feedback = ref('')
 const saveError = ref('')
 const fieldErrors = ref<string[]>([])
+const traffic = ref<TrafficStats | null>(null)
+const trafficError = ref('')
+const backup = ref<BackupStatus | null>(null)
+const backupError = ref('')
+const backupNote = ref('')
+const backing = ref(false)
 const checking = ref(false)
 const checkError = ref('')
 const result = ref<ConnectionResult | null>(null)
@@ -72,11 +89,53 @@ function managed(field: string): boolean {
   return view.value !== null && view.value.env_managed.includes(field)
 }
 
+async function loadTraffic(): Promise<void> {
+  trafficError.value = ''
+  try {
+    traffic.value = await fetchTraffic()
+  } catch (cause) {
+    trafficError.value = cause instanceof ApiError && cause.status === 401
+      ? '登录已失效，请重新登录后再查看'
+      : '读取流量统计失败'
+  }
+}
+
+async function loadBackup(): Promise<void> {
+  backupError.value = ''
+  try {
+    backup.value = await fetchBackupStatus()
+  } catch (cause) {
+    backupError.value = cause instanceof ApiError && cause.status === 401
+      ? '登录已失效，请重新登录后再查看'
+      : '读取备份状态失败'
+  }
+}
+
+async function runBackup(): Promise<void> {
+  if (backing.value) return
+  backing.value = true
+  backupError.value = ''
+  backupNote.value = ''
+  try {
+    const result = await triggerBackup()
+    backupNote.value = result.warning !== undefined
+      ? result.warning
+      : '备份完成：' + result.name + '（' + formatTrafficBytes(result.size) + '）'
+    await loadBackup()
+  } catch (cause) {
+    backupError.value = cause instanceof SettingsError ? cause.message : '备份失败，请稍后重试'
+  } finally {
+    backing.value = false
+  }
+}
+
 async function load(): Promise<void> {
   loading.value = true
   loadError.value = ''
   try {
     applyView(await fetchSettings())
+    await loadTraffic()
+    await loadBackup()
   } catch (cause) {
     loadError.value = cause instanceof ApiError && cause.status === 401
       ? '登录已失效，请重新登录后再打开设置'
@@ -409,6 +468,83 @@ onMounted(() => {
             <p class="text-xs text-muted">
               直连模式忽略上面的开关；跟随系统模式读取进程环境变量 HTTP_PROXY / HTTPS_PROXY / ALL_PROXY。
             </p>
+          </div>
+        </section>
+
+        <section class="mt-5 rounded-lg border border-line bg-surface">
+          <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-4">
+            <div>
+              <h2 class="text-sm font-semibold">流量看护</h2>
+              <p class="mt-1 text-xs text-muted">按自然月统计图片出站流量，达到阈值时通过 Bot 提醒，超过上限后网关返回 503。</p>
+            </div>
+            <button
+              type="button"
+              class="h-9 shrink-0 rounded-md border border-line px-3 text-sm font-medium transition hover:bg-canvas"
+              @click="loadTraffic"
+            >
+              刷新
+            </button>
+          </div>
+          <div class="px-5 py-4">
+            <p v-if="trafficError !== ''" class="text-xs text-danger">{{ trafficError }}</p>
+            <p v-else-if="traffic === null" class="text-xs text-muted">尚未读取。</p>
+            <template v-else>
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div class="rounded-md border border-line bg-canvas px-3 py-2">
+                  <p class="text-xs text-muted">本月出站</p>
+                  <p class="mt-0.5 text-sm font-medium tnum">{{ formatTrafficBytes(traffic.bytes_out) }}</p>
+                </div>
+                <div class="rounded-md border border-line bg-canvas px-3 py-2">
+                  <p class="text-xs text-muted">统计月份</p>
+                  <p class="mt-0.5 text-sm font-medium tnum">{{ traffic.month }}</p>
+                </div>
+                <div class="rounded-md border border-line bg-canvas px-3 py-2">
+                  <p class="text-xs text-muted">状态</p>
+                  <p
+                    class="mt-0.5 text-sm font-medium"
+                    :class="trafficState(traffic) === 'ok' ? 'text-accent' : 'text-danger'"
+                  >
+                    {{ trafficStateText(traffic) }}
+                  </p>
+                </div>
+              </div>
+              <p class="mt-2 text-xs text-muted">{{ trafficSummary(traffic) }}</p>
+            </template>
+          </div>
+        </section>
+
+        <section class="mt-5 rounded-lg border border-line bg-surface">
+          <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-4">
+            <div>
+              <h2 class="text-sm font-semibold">自动备份</h2>
+              <p class="mt-1 text-xs text-muted">使用 VACUUM INTO 生成一致性快照并打包 zip，可本地下载或发到频道。</p>
+            </div>
+            <div class="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                :disabled="backing"
+                class="h-9 rounded-md border border-line px-3 text-sm font-medium transition hover:bg-canvas disabled:opacity-60"
+                @click="runBackup"
+              >
+                {{ backing ? '备份中…' : '立即备份' }}
+              </button>
+              <a
+                v-if="backup !== null && backup.latest !== null"
+                href="/api/backup/download"
+                class="inline-flex h-9 items-center rounded-md border border-line px-3 text-sm font-medium transition hover:bg-canvas"
+              >
+                下载最近备份
+              </a>
+            </div>
+          </div>
+          <div class="px-5 py-4">
+            <p v-if="backupError !== ''" class="text-xs text-danger">{{ backupError }}</p>
+            <p v-else-if="backupNote !== ''" class="text-xs text-accent">{{ backupNote }}</p>
+            <template v-if="backup !== null">
+              <p class="text-xs text-muted">{{ backupScheduleText(backup) }}</p>
+              <p class="mt-1 text-sm">{{ backupLatestText(backup) }}</p>
+            </template>
+            <p v-else class="text-xs text-muted">尚未读取备份状态。</p>
           </div>
         </section>
 
