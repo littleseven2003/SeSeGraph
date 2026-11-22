@@ -206,6 +206,16 @@ onBeforeUnmount(() => {
           </button>
 
           <button
+            type="button"
+            class="absolute right-3 top-3 inline-flex h-8 items-center rounded-full bg-white/85 px-2.5 text-xs font-medium leading-none text-ink backdrop-blur transition hover:bg-white"
+            :aria-label="manualPaused ? '继续自动切换' : '暂停自动切换'"
+            :aria-pressed="manualPaused"
+            @click="manualPaused = !manualPaused"
+          >
+            {{ manualPaused ? '继续' : '暂停' }}
+          </button>
+
+          <button
             v-if="!showBlur && props.blurred"
             type="button"
             class="absolute bottom-3 left-3 inline-flex h-9 items-center gap-1 rounded-full bg-white/90 px-2.5 text-xs font-medium leading-none text-ink transition hover:bg-white"
@@ -217,19 +227,7 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="flex min-w-0 flex-col">
-        <div class="flex items-center justify-end">
-          <button
-            type="button"
-            class="h-8 rounded-full px-2 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
-            :aria-label="manualPaused ? '继续自动切换' : '暂停自动切换'"
-            :aria-pressed="manualPaused"
-            @click="manualPaused = !manualPaused"
-          >
-            {{ manualPaused ? '继续' : '暂停' }}
-          </button>
-        </div>
-
-        <ul class="mt-1 flex flex-1 flex-col divide-y divide-line/60">
+        <ul class="flex h-full flex-1 flex-col divide-y divide-line/60">
           <li
             v-for="(entry, itemIndex) in entries"
             :key="entry.item.id"

@@ -6,6 +6,12 @@ export function useCoverReveal(blurred: Ref<boolean> | (() => boolean)) {
   const revealed = ref(false)
   let timer: ReturnType<typeof setTimeout> | undefined
   let leaveTimer: ReturnType<typeof setTimeout> | undefined
+  // 悬停在封面内的指针设备不启动短时计时，只由离开后的 2 秒计时负责回遮。
+  let pointerInside = false
+  const hoverCapable =
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia('(hover: hover)').matches
+      : false
 
   const isBlurred = typeof blurred === 'function' ? blurred : () => unref(blurred)
   const showBlur = computed(() => shouldShowBlur(isBlurred(), revealed.value))
@@ -26,6 +32,7 @@ export function useCoverReveal(blurred: Ref<boolean> | (() => boolean)) {
 
   // 鼠标离开已解锁封面满 2 秒自动回遮；2 秒内移回则取消计时保持清晰。
   function onCoverLeave(): void {
+    pointerInside = false
     if (!revealed.value || !isBlurred()) return
     clearLeaveTimer()
     leaveTimer = setTimeout(() => {
@@ -35,6 +42,7 @@ export function useCoverReveal(blurred: Ref<boolean> | (() => boolean)) {
   }
 
   function onCoverEnter(): void {
+    pointerInside = true
     clearLeaveTimer()
   }
 
@@ -43,10 +51,13 @@ export function useCoverReveal(blurred: Ref<boolean> | (() => boolean)) {
     if (shouldRevealOnTap({ blurred: isBlurred(), revealed: revealed.value })) {
       revealed.value = true
       clearTimer()
-      timer = setTimeout(() => {
-        revealed.value = false
-        timer = undefined
-      }, TOUCH_REVEAL_MS)
+      // 鼠标停在封面内时保持清晰，离开后才由 2 秒计时回遮。
+      if (!(hoverCapable && pointerInside)) {
+        timer = setTimeout(() => {
+          revealed.value = false
+          timer = undefined
+        }, TOUCH_REVEAL_MS)
+      }
       return
     }
     action()
@@ -56,6 +67,7 @@ export function useCoverReveal(blurred: Ref<boolean> | (() => boolean)) {
   function remask(): void {
     clearTimer()
     clearLeaveTimer()
+    pointerInside = false
     revealed.value = false
   }
 
