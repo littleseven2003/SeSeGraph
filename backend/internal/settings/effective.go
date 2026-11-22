@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/littleseven2003/SeSeGraph/backend/internal/netclient"
 )
 
 // 配置来源标记，用于向界面说明某项取值来自环境变量、数据库还是默认值。
@@ -84,6 +86,23 @@ type Effective struct {
 	TelegraphToken   Value
 	TelegraphAuthor  Value
 	TelegraphAPIBase Value
+	// ProxyMode 是代理模式，取值 direct / system / custom。
+	ProxyMode Value
+	// ProxyURL 是自定义代理地址，可能带账密，只在传输层内部使用，任何接口都不回显。
+	ProxyURL Value
+	// ProxyTelegram 与 ProxyTelegraph 分别控制两项上游是否启用代理。
+	ProxyTelegram  bool
+	ProxyTelegraph bool
+}
+
+// ProxyConfig 把生效配置转成传输层需要的代理配置。
+func (e Effective) ProxyConfig() netclient.Config {
+	return netclient.Config{
+		Mode:      e.ProxyMode.Value,
+		URL:       e.ProxyURL.Value,
+		Telegram:  e.ProxyTelegram,
+		Telegraph: e.ProxyTelegraph,
+	}
 }
 
 // Resolver 结合环境变量与数据库解析生效配置。
@@ -137,7 +156,19 @@ func (r *Resolver) effectiveFrom(stored map[string]string) Effective {
 		TelegraphToken:   resolve(r.env.TelegraphToken, stored, KeyTelegraphToken, ""),
 		TelegraphAuthor:  resolve(r.env.TelegraphAuthor, stored, KeyTelegraphAuthorName, ""),
 		TelegraphAPIBase: resolveEndpoint(r.env.TelegraphAPIBase, DefaultTelegraphAPIBase),
+		ProxyMode:        resolveProxyMode(stored[KeyProxyMode]),
+		ProxyURL:         resolve("", stored, KeyProxyURL, ""),
+		ProxyTelegram:    stored[KeyProxyTelegram] == "1",
+		ProxyTelegraph:   stored[KeyProxyTelegraph] == "1",
 	}
+}
+
+// resolveProxyMode 解析代理模式，未设置时回落到直连。
+func resolveProxyMode(raw string) Value {
+	if value := strings.TrimSpace(raw); value != "" {
+		return Value{Value: netclient.ModeOrDefault(value), Source: SourceStored}
+	}
+	return Value{Value: netclient.ModeDirect, Source: SourceDefault}
 }
 
 // Effective 在单次配置快照上解析当前生效配置。
@@ -155,11 +186,17 @@ type Patch struct {
 	TelegramToken   *string
 	TelegramChannel *string
 	TelegraphAuthor *string
+	// 代理配置：模式、自定义地址、两项上游各自的启用开关。
+	ProxyMode      *string
+	ProxyURL       *string
+	ProxyTelegram  *bool
+	ProxyTelegraph *bool
 }
 
 // Empty 报告补丁是否没有任何字段。
 func (p Patch) Empty() bool {
-	return p.TelegramToken == nil && p.TelegramChannel == nil && p.TelegraphAuthor == nil
+	return p.TelegramToken == nil && p.TelegramChannel == nil && p.TelegraphAuthor == nil &&
+		p.ProxyMode == nil && p.ProxyURL == nil && p.ProxyTelegram == nil && p.ProxyTelegraph == nil
 }
 
 // Prepare 校验补丁并返回应用后的生效配置，不写入数据库。
@@ -237,6 +274,7 @@ func (r *Resolver) classify(stored map[string]string, patch Patch) (Effective, m
 	apply(patch.TelegramToken, current.TelegramToken, KeyTelegramToken, "telegram.token", validateCredential)
 	apply(patch.TelegramChannel, current.TelegramChannel, KeyTelegramChannel, "telegram.channel_id", validateChannel)
 	apply(patch.TelegraphAuthor, current.TelegraphAuthor, KeyTelegraphAuthorName, "telegraph.author_name", validateAuthor)
+	applyProxy(patch, current, values, &deletes, &invalid)
 
 	if len(invalid) > 0 {
 		return Effective{}, nil, nil, &FieldProblem{Fields: invalid}
@@ -256,6 +294,60 @@ func (r *Resolver) classify(stored map[string]string, patch Patch) (Effective, m
 		merged[key] = value
 	}
 	return r.effectiveFrom(merged), values, deletes, nil
+}
+
+// applyProxy 归类代理配置。模式与地址需要一起校验：
+// 自定义模式必须有合法地址，任何模式下的地址都必须能解析。
+func applyProxy(patch Patch, current Effective, values map[string]string, deletes *[]string, invalid *[]string) {
+	if patch.ProxyMode == nil && patch.ProxyURL == nil && patch.ProxyTelegram == nil && patch.ProxyTelegraph == nil {
+		return
+	}
+
+	mode := current.ProxyMode.Value
+	if patch.ProxyMode != nil {
+		mode = strings.TrimSpace(*patch.ProxyMode)
+	}
+	url := current.ProxyURL.Value
+	if patch.ProxyURL != nil {
+		url = strings.TrimSpace(*patch.ProxyURL)
+	}
+
+	normalized := netclient.ModeOrDefault(mode)
+	if raw := strings.TrimSpace(mode); raw != "" && raw != normalized {
+		*invalid = append(*invalid, "proxy.mode")
+		return
+	}
+	if url != "" || normalized == netclient.ModeCustom {
+		if err := netclient.Validate(netclient.ModeCustom, url); err != nil {
+			*invalid = append(*invalid, "proxy.url")
+			return
+		}
+	}
+
+	if normalized != current.ProxyMode.Value {
+		values[KeyProxyMode] = normalized
+	}
+	switch {
+	case patch.ProxyURL == nil:
+	case url == "":
+		*deletes = append(*deletes, KeyProxyURL)
+	case url != current.ProxyURL.Value:
+		values[KeyProxyURL] = url
+	}
+	if patch.ProxyTelegram != nil && *patch.ProxyTelegram != current.ProxyTelegram {
+		values[KeyProxyTelegram] = proxyFlag(*patch.ProxyTelegram)
+	}
+	if patch.ProxyTelegraph != nil && *patch.ProxyTelegraph != current.ProxyTelegraph {
+		values[KeyProxyTelegraph] = proxyFlag(*patch.ProxyTelegraph)
+	}
+}
+
+// proxyFlag 把启用开关转成存储取值。
+func proxyFlag(enabled bool) string {
+	if enabled {
+		return "1"
+	}
+	return "0"
 }
 
 // validateCredential 校验令牌的形态：非空、无空白字符、长度受限。

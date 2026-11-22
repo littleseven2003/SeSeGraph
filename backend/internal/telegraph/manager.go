@@ -3,6 +3,7 @@ package telegraph
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"sync"
 
@@ -137,8 +138,17 @@ func (m *Manager) Status(ctx context.Context) (Status, error) {
 // Reset 丢弃缓存的客户端，设置更新后重新读取令牌与作者名。
 // 环境变量提供的令牌本身不变，但作者名等资料可能已更新，因此同样重建。
 func (m *Manager) Reset() {
+	m.Reload(nil)
+}
+
+// Reload 用新的 HTTP 客户端重建缓存的客户端，代理等传输层配置变化后调用。
+// client 为 nil 时沿用原有传输层，只丢弃缓存以便重新读取令牌与作者名。
+func (m *Manager) Reload(client *http.Client) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if client != nil {
+		m.base.HTTPClient = client
+	}
 	m.env = nil
 	m.stored = nil
 }

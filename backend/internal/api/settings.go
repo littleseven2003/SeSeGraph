@@ -7,14 +7,30 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/netclient"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/provider"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/settings"
 )
 
-// providerChanged 判断 Telegram 图床凭据是否有变化，作者名等改动无需重新校验。
+// providerChanged 判断 Telegram 图床的传输层是否需要重建：
+// 令牌、频道或影响 Telegram 的代理配置变化都要重新校验并切换提供方。
 func providerChanged(current, prepared settings.Effective) bool {
-	return current.TelegramToken.Value != prepared.TelegramToken.Value ||
-		current.TelegramChannel.Value != prepared.TelegramChannel.Value
+	if current.TelegramToken.Value != prepared.TelegramToken.Value ||
+		current.TelegramChannel.Value != prepared.TelegramChannel.Value {
+		return true
+	}
+	return telegramProxyChanged(current.ProxyConfig(), prepared.ProxyConfig())
+}
+
+// telegramProxyChanged 只关心对 Telegram 生效的代理项，Telegraph 的开关不影响图床。
+func telegramProxyChanged(before, after netclient.Config) bool {
+	if before.Telegram != after.Telegram {
+		return true
+	}
+	if !before.Telegram {
+		return false
+	}
+	return before.Mode != after.Mode || before.URL != after.URL
 }
 
 // maxSettingsBodyBytes 是设置更新请求体的上限，只承载几项短文本配置。
@@ -42,6 +58,15 @@ type settingsView struct {
 		APIBase       string `json:"api_base"`
 		APIBaseSource string `json:"api_base_source"`
 	} `json:"telegraph"`
+	// Proxy 汇报代理配置的来源与开关。自定义地址可能带账密，只报是否已设置。
+	Proxy struct {
+		Mode             string `json:"mode"`
+		ModeSource       string `json:"mode_source"`
+		URLSet           bool   `json:"url_set"`
+		URLSource        string `json:"url_source"`
+		TelegramEnabled  bool   `json:"telegram_enabled"`
+		TelegraphEnabled bool   `json:"telegraph_enabled"`
+	} `json:"proxy"`
 	// EnvManaged 列出由环境变量提供、界面不可覆盖的字段。
 	EnvManaged []string `json:"env_managed"`
 }
@@ -72,6 +97,13 @@ func buildSettingsView(effective settings.Effective, publicURL string) settingsV
 	view.Telegraph.APIBase = endpointValue(effective.TelegraphAPIBase)
 	view.Telegraph.APIBaseSource = effective.TelegraphAPIBase.Source
 
+	view.Proxy.Mode = effective.ProxyMode.Value
+	view.Proxy.ModeSource = effective.ProxyMode.Source
+	view.Proxy.URLSet = effective.ProxyURL.Set()
+	view.Proxy.URLSource = effective.ProxyURL.Source
+	view.Proxy.TelegramEnabled = effective.ProxyTelegram
+	view.Proxy.TelegraphEnabled = effective.ProxyTelegraph
+
 	fields := []struct {
 		name  string
 		value settings.Value
@@ -89,6 +121,15 @@ func buildSettingsView(effective settings.Effective, publicURL string) settingsV
 		}
 	}
 	return view
+}
+
+// proxyClient 按生效的代理配置为一项服务构建检测客户端，构建失败时退回默认客户端。
+func proxyClient(effective settings.Effective, service netclient.Service) *http.Client {
+	client, err := netclient.NewClient(effective.ProxyConfig(), service)
+	if err != nil {
+		return nil
+	}
+	return client
 }
 
 // settingsHandler 返回当前生效配置与各项来源。
@@ -117,6 +158,12 @@ type settingsPatchRequest struct {
 	Telegraph *struct {
 		AuthorName *string `json:"author_name"`
 	} `json:"telegraph"`
+	Proxy *struct {
+		Mode             *string `json:"mode"`
+		URL              *string `json:"url"`
+		TelegramEnabled  *bool   `json:"telegram_enabled"`
+		TelegraphEnabled *bool   `json:"telegraph_enabled"`
+	} `json:"proxy"`
 }
 
 // toPatch 把请求体转换成配置补丁。
@@ -128,6 +175,12 @@ func (r settingsPatchRequest) toPatch() settings.Patch {
 	}
 	if r.Telegraph != nil {
 		patch.TelegraphAuthor = r.Telegraph.AuthorName
+	}
+	if r.Proxy != nil {
+		patch.ProxyMode = r.Proxy.Mode
+		patch.ProxyURL = r.Proxy.URL
+		patch.ProxyTelegram = r.Proxy.TelegramEnabled
+		patch.ProxyTelegraph = r.Proxy.TelegraphEnabled
 	}
 	return patch
 }
@@ -261,12 +314,15 @@ func testConnectionHandler(deps Deps) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取配置失败"})
 			return
 		}
+		// 自检走与生产客户端相同的代理配置，保证结果反映实际链路。
 		result := settings.Probe(ctx, settings.ProbeOptions{
 			TelegramToken:    effective.TelegramToken.Value,
 			TelegramChannel:  effective.TelegramChannel.Value,
 			TelegramAPIBase:  effective.TelegramAPIBase.Value,
 			TelegraphToken:   effective.TelegraphToken.Value,
 			TelegraphAPIBase: effective.TelegraphAPIBase.Value,
+			TelegramClient:   proxyClient(effective, netclient.ServiceTelegram),
+			TelegraphClient:  proxyClient(effective, netclient.ServiceTelegraph),
 			Timeout:          settings.DefaultProbeTimeout,
 		})
 		c.JSON(http.StatusOK, result)

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -389,6 +390,121 @@ func TestSettingsMasksCustomEndpoints(t *testing.T) {
 	}
 }
 
+// TestSettingsProxyDefaultsAndMasking 验证代理配置的默认值、按服务开关，
+// 以及自定义地址（可能带账密）在读写响应里都不回显。
+func TestSettingsProxyDefaultsAndMasking(t *testing.T) {
+	env, resolver := newSettingsEnv(t, settings.Env{})
+	cookie := env.setup(t)
+
+	rec := env.do(t, http.MethodGet, "/api/settings", "", cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("读取状态码 = %d", rec.Code)
+	}
+	var view struct {
+		Proxy struct {
+			Mode             string `json:"mode"`
+			ModeSource       string `json:"mode_source"`
+			URLSet           bool   `json:"url_set"`
+			URLSource        string `json:"url_source"`
+			TelegramEnabled  bool   `json:"telegram_enabled"`
+			TelegraphEnabled bool   `json:"telegraph_enabled"`
+		} `json:"proxy"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
+		t.Fatalf("解析响应失败: %v", err)
+	}
+	if view.Proxy.Mode != "direct" || view.Proxy.ModeSource != "default" {
+		t.Errorf("默认代理 = %+v，期望 direct/default", view.Proxy)
+	}
+	if view.Proxy.URLSet || view.Proxy.URLSource != "none" || view.Proxy.TelegramEnabled {
+		t.Errorf("默认代理开关 = %+v，期望未配置", view.Proxy)
+	}
+
+	secretURL := "socks5://ops:222:test-two@10.8.0.9:1080"
+	body := `{"proxy":{"mode":"custom","url":"` + secretURL + `","telegram_enabled":true,"telegraph_enabled":false}}`
+	rec = env.do(t, http.MethodPut, "/api/settings", body, cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("保存状态码 = %d，响应: %s", rec.Code, rec.Body.String())
+	}
+	requireNoSecret(t, rec.Body.String(), secretURL)
+
+	rec = env.do(t, http.MethodGet, "/api/settings", "", cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("读取状态码 = %d", rec.Code)
+	}
+	requireNoSecret(t, rec.Body.String(), secretURL)
+	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
+		t.Fatalf("解析响应失败: %v", err)
+	}
+	if view.Proxy.Mode != "custom" || view.Proxy.ModeSource != "stored" {
+		t.Errorf("代理模式 = %+v，期望 custom/stored", view.Proxy)
+	}
+	if !view.Proxy.URLSet || view.Proxy.URLSource != "stored" {
+		t.Errorf("代理地址状态 = %+v，期望已设置且来自数据库", view.Proxy)
+	}
+	if !view.Proxy.TelegramEnabled || view.Proxy.TelegraphEnabled {
+		t.Errorf("代理开关 = %+v，期望只对 Telegram 启用", view.Proxy)
+	}
+
+	// 服务端仍持有完整地址，供传输层使用。
+	effective, err := resolver.Effective(context.Background())
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if effective.ProxyURL.Value != secretURL {
+		t.Errorf("服务端代理地址 = %q，期望保存的完整取值", effective.ProxyURL.Value)
+	}
+}
+
+// TestSettingsRejectsInvalidProxy 验证非法代理配置返回字段级错误且不写入。
+func TestSettingsRejectsInvalidProxy(t *testing.T) {
+	env, resolver := newSettingsEnv(t, settings.Env{})
+	cookie := env.setup(t)
+
+	cases := []struct {
+		body  string
+		field string
+	}{
+		{body: `{"proxy":{"mode":"custom"}}`, field: "proxy.url"},
+		{body: `{"proxy":{"mode":"custom","url":"ftp://127.0.0.1:21"}}`, field: "proxy.url"},
+		{body: `{"proxy":{"mode":"proxy"}}`, field: "proxy.mode"},
+	}
+	for _, test := range cases {
+		rec := env.do(t, http.MethodPut, "/api/settings", test.body, cookie)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("状态码 = %d，期望 400，响应: %s", rec.Code, rec.Body.String())
+		}
+		var problem struct {
+			Fields []string `json:"fields"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+			t.Fatalf("解析响应失败: %v", err)
+		}
+		if len(problem.Fields) != 1 || problem.Fields[0] != test.field {
+			t.Errorf("字段 = %v，期望 %s", problem.Fields, test.field)
+		}
+	}
+
+	effective, err := resolver.Effective(context.Background())
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if effective.ProxyMode.Value != "direct" || effective.ProxyURL.Set() {
+		t.Errorf("非法配置不应落库: %+v", effective.ProxyConfig())
+	}
+}
+
+// requireNoSecret 确认响应体里没有出现凭据或地址片段。
+func requireNoSecret(t *testing.T, body, secret string) {
+	t.Helper()
+	fragments := []string{secret, "10.8.0.9", "ops", "socks5"}
+	for _, fragment := range fragments {
+		if strings.Contains(body, fragment) {
+			t.Fatalf("响应回显了代理地址片段 %q: %s", fragment, body)
+		}
+	}
+}
+
 // TestSettingsSaveTriggersReload 确认保存成功后触发热更新，校验失败时不触发。
 func TestSettingsSaveTriggersReload(t *testing.T) {
 	env, _, calls := newSettingsEnvWithReload(t, settings.Env{}, func(context.Context) error { return nil })
@@ -507,6 +623,39 @@ func TestSettingsBotMismatchKeepsImages(t *testing.T) {
 	}
 	if rec := env.do(t, http.MethodGet, "/i/"+code, "", cookie); rec.Code != http.StatusOK {
 		t.Errorf("拒绝切换后短码状态 = %d，期望仍为 200", rec.Code)
+	}
+}
+
+// TestSettingsProxyChangeRebuildsTelegramTransport 验证影响 Telegram 的代理改动
+// 也会重新校验并重建图床传输层，而只影响 Telegraph 的改动不会。
+func TestSettingsProxyChangeRebuildsTelegramTransport(t *testing.T) {
+	prepare := func(t *testing.T, body string) (int, int) {
+		t.Helper()
+		prepares := 0
+		var resolver *settings.Resolver
+		env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
+			resolver = settings.NewResolver(settings.NewStore(handle), settings.Env{})
+			deps.Settings = resolver
+			deps.PrepareProvider = func(context.Context, settings.Effective) (*provider.Candidate, error) {
+				prepares++
+				return nil, provider.ErrVerify
+			}
+		})
+		cookie := env.setup(t)
+		rec := env.do(t, http.MethodPut, "/api/settings", body, cookie)
+		return rec.Code, prepares
+	}
+
+	// 对 Telegram 启用代理：即使令牌没变也要重建传输层。
+	code, calls := prepare(t, `{"proxy":{"mode":"custom","url":"http://127.0.0.1:7890","telegram_enabled":true}}`)
+	if code != http.StatusConflict || calls != 1 {
+		t.Errorf("Telegram 代理改动：状态码 = %d，重建次数 = %d，期望 409 与 1", code, calls)
+	}
+
+	// 只对 Telegraph 启用代理：图床不受影响，不应重复校验 Bot。
+	code, calls = prepare(t, `{"proxy":{"mode":"custom","url":"http://127.0.0.1:7890","telegraph_enabled":true}}`)
+	if code != http.StatusOK || calls != 0 {
+		t.Errorf("Telegraph 代理改动：状态码 = %d，重建次数 = %d，期望 200 与 0", code, calls)
 	}
 }
 

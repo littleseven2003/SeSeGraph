@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,6 +20,7 @@ import (
 	"github.com/littleseven2003/SeSeGraph/backend/internal/auth"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/config"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/db"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/netclient"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/provider"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/publisher"
@@ -136,12 +138,17 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		guard.Commit(ctx, candidate)
 	}
 
-	// reloadSettings 在配置落库并切换图床后收尾：丢弃 Telegraph 客户端缓存，
-	// 下次发帖使用最新的作者名与令牌。
+	// reloadSettings 在配置落库并切换图床后收尾：按最新的代理配置重建 Telegraph 客户端，
+	// 下次发帖使用新的传输层、作者名与令牌。
 	reloadSettings := func(ctx context.Context) error {
-		if telegraphManager != nil {
-			telegraphManager.Reset()
+		if telegraphManager == nil {
+			return nil
 		}
+		current, resolveErr := resolver.Effective(ctx)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		telegraphManager.Reload(telegraphClient(current))
 		return nil
 	}
 
@@ -217,10 +224,15 @@ func bootstrapAdmin(ctx context.Context, service *auth.Service, lookupEnv func(s
 
 // newProvider 按生效配置创建图床提供方；未配置时返回 nil，由调用方决定如何呈现。
 func newProvider(effective settings.Effective) (*storage.Telegram, error) {
+	client, err := netclient.NewClient(effective.ProxyConfig(), netclient.ServiceTelegram)
+	if err != nil {
+		return nil, err
+	}
 	provider, err := storage.NewTelegram(storage.TelegramConfig{
-		Token:   effective.TelegramToken.Value,
-		ChatID:  effective.TelegramChannel.Value,
-		APIBase: effective.TelegramAPIBase.Value,
+		Token:      effective.TelegramToken.Value,
+		ChatID:     effective.TelegramChannel.Value,
+		APIBase:    effective.TelegramAPIBase.Value,
+		HTTPClient: client,
 	})
 	if errors.Is(err, storage.ErrNotConfigured) {
 		return nil, nil
@@ -229,6 +241,15 @@ func newProvider(effective settings.Effective) (*storage.Telegram, error) {
 		return nil, err
 	}
 	return provider, nil
+}
+
+// telegraphClient 按代理配置构建 Telegraph 传输层，未启用代理时为直连。
+func telegraphClient(effective settings.Effective) *http.Client {
+	client, err := netclient.NewClient(effective.ProxyConfig(), netclient.ServiceTelegraph)
+	if err != nil {
+		return nil
+	}
+	return client
 }
 
 // startPublisher 在 Telegraph 已配置且对外地址为 HTTPS 时启动发布队列。
@@ -273,6 +294,7 @@ func buildTelegraphManager(store *sql.DB, effective settings.Effective, lookupEn
 	return telegraph.NewManager(telegraph.Config{
 		AccessToken: strings.TrimSpace(token),
 		AuthorName:  strings.TrimSpace(author),
+		HTTPClient:  telegraphClient(effective),
 		APIBase:     effective.TelegraphAPIBase.Value,
 	}, settings.NewStore(store))
 }

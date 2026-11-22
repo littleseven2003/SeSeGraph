@@ -101,6 +101,16 @@ func NewTelegram(cfg TelegramConfig) (*Telegram, error) {
 // Name 返回提供方标识。
 func (t *Telegram) Name() string { return "telegram" }
 
+// CloseIdleConnections 释放空闲连接。配置切换后旧提供方不再使用，及时回收。
+func (t *Telegram) CloseIdleConnections() {
+	if t == nil || t.client == nil {
+		return
+	}
+	if transport, ok := t.client.Transport.(*http.Transport); ok && transport != nil {
+		transport.CloseIdleConnections()
+	}
+}
+
 // BotID 通过 getMe 校验令牌并返回 Bot 编号。
 // 编号用于确认切换前后的 Bot 是否为同一个：Telegram 的 file_id 不能跨 Bot 使用。
 func (t *Telegram) BotID(ctx context.Context) (int64, error) {

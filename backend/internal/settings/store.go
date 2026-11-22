@@ -16,6 +16,11 @@ const (
 	KeyTelegramToken       = "telegram.bot_token"
 	KeyTelegramChannel     = "telegram.channel_id"
 	KeyTelegramBotID       = "telegram.bot_id"
+	// 代理配置键：模式、自定义地址（可能带账密，不回显）与两项上游的启用开关。
+	KeyProxyMode      = "proxy.mode"
+	KeyProxyURL       = "proxy.url"
+	KeyProxyTelegram  = "proxy.telegram"
+	KeyProxyTelegraph = "proxy.telegraph"
 )
 
 // Store 基于 settings 表读写键值配置。

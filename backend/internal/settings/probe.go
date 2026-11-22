@@ -50,9 +50,12 @@ type ProbeOptions struct {
 	TelegramAPIBase  string
 	TelegraphToken   string
 	TelegraphAPIBase string
-	HTTPClient       *http.Client
-	Now              func() time.Time
-	Timeout          time.Duration
+	// HTTPClient 是两项检测共用的客户端；按服务区分代理时用下面两项覆盖。
+	HTTPClient      *http.Client
+	TelegramClient  *http.Client
+	TelegraphClient *http.Client
+	Now             func() time.Time
+	Timeout         time.Duration
 }
 
 // Probe 并行检测 Telegram 与 Telegraph 的可用性，只做只读请求。
@@ -66,25 +69,19 @@ func Probe(ctx context.Context, opts ProbeOptions) ProbeResult {
 	if now == nil {
 		now = time.Now
 	}
-	client := opts.HTTPClient
-	if client == nil {
-		client = &http.Client{}
-	}
-	// 自检不跟随重定向：令牌随请求发出，跳转到其他主机等同于泄露凭据。
-	probeClient := *client
-	probeClient.CheckRedirect = stopRedirect
-	client = &probeClient
+	telegramClient := probeClientFor(opts.TelegramClient, opts.HTTPClient)
+	telegraphClient := probeClientFor(opts.TelegraphClient, opts.HTTPClient)
 
 	var telegram, telegraph ProbeTarget
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		telegram = probeTelegram(ctx, client, timeout, opts)
+		telegram = probeTelegram(ctx, telegramClient, timeout, opts)
 	}()
 	go func() {
 		defer wg.Done()
-		telegraph = probeTelegraph(ctx, client, timeout, opts)
+		telegraph = probeTelegraph(ctx, telegraphClient, timeout, opts)
 	}()
 	wg.Wait()
 
@@ -93,6 +90,21 @@ func Probe(ctx context.Context, opts ProbeOptions) ProbeResult {
 		Telegram:  telegram,
 		Telegraph: telegraph,
 	}
+}
+
+// probeClientFor 选择检测用的客户端，并禁止跟随重定向：
+// 令牌随请求发出，跳转到其他主机等同于泄露凭据。
+func probeClientFor(primary, fallback *http.Client) *http.Client {
+	client := primary
+	if client == nil {
+		client = fallback
+	}
+	if client == nil {
+		return &http.Client{CheckRedirect: stopRedirect}
+	}
+	cloned := *client
+	cloned.CheckRedirect = stopRedirect
+	return &cloned
 }
 
 // probeTelegram 依次校验 Bot 身份、频道可访问性与发布权限。

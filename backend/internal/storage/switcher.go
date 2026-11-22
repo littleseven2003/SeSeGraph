@@ -18,10 +18,15 @@ func NewSwitcher() *Switcher {
 }
 
 // Swap 替换当前提供方，传 nil 表示回到未配置状态。
+// 旧提供方不再被引用，顺带释放它的空闲连接。
 func (s *Switcher) Swap(provider *Telegram) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	previous := s.provider
 	s.provider = provider
+	s.mu.Unlock()
+	if previous != nil && previous != provider {
+		previous.CloseIdleConnections()
+	}
 }
 
 // Ready 报告是否已有可用提供方，队列据此决定是否领取任务。

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/littleseven2003/SeSeGraph/backend/internal/netclient"
 )
 
 // newResolver 返回带独立数据库的解析器。
@@ -152,6 +154,115 @@ func TestPatchEmpty(t *testing.T) {
 	}
 	if (Patch{TelegramToken: ptr("x")}).Empty() {
 		t.Error("含字段的补丁不应报告为空")
+	}
+}
+
+// TestProxyDefaultsAndUpdate 验证代理默认直连、保存后按存储值生效。
+func TestProxyDefaultsAndUpdate(t *testing.T) {
+	ctx := context.Background()
+	resolver := newResolver(t, Env{})
+
+	effective, err := resolver.Effective(ctx)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if effective.ProxyMode.Value != netclient.ModeDirect || effective.ProxyMode.Source != SourceDefault {
+		t.Errorf("默认代理模式 = %+v，期望 direct", effective.ProxyMode)
+	}
+	if effective.ProxyURL.Set() || effective.ProxyTelegram || effective.ProxyTelegraph {
+		t.Errorf("未配置时代理地址与开关应为空: %+v", effective.ProxyConfig())
+	}
+
+	mode, rawURL := netclient.ModeCustom, "socks5://user:pass@127.0.0.1:1080"
+	enabled, disabled := true, false
+	if err := resolver.Update(ctx, Patch{
+		ProxyMode:      &mode,
+		ProxyURL:       &rawURL,
+		ProxyTelegram:  &enabled,
+		ProxyTelegraph: &disabled,
+	}); err != nil {
+		t.Fatalf("保存失败: %v", err)
+	}
+
+	effective, err = resolver.Effective(ctx)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if effective.ProxyMode.Value != netclient.ModeCustom || effective.ProxyMode.Source != SourceStored {
+		t.Errorf("代理模式 = %+v，期望 custom/stored", effective.ProxyMode)
+	}
+	if effective.ProxyURL.Value != rawURL || effective.ProxyURL.Source != SourceStored {
+		t.Errorf("代理地址 = %+v，期望按存储值生效", effective.ProxyURL)
+	}
+	if !effective.ProxyTelegram || effective.ProxyTelegraph {
+		t.Errorf("开关 = telegram:%v telegraph:%v，期望只对 Telegram 启用", effective.ProxyTelegram, effective.ProxyTelegraph)
+	}
+	config := effective.ProxyConfig()
+	if config.Mode != netclient.ModeCustom || config.URL != rawURL || !config.Telegram || config.Telegraph {
+		t.Errorf("传输层配置 = %+v，与生效配置不一致", config)
+	}
+
+	// 自定义模式不允许清空地址：先切回直连才能清除。
+	empty := ""
+	var problem *FieldProblem
+	if err := resolver.Update(ctx, Patch{ProxyURL: &empty}); !errors.As(err, &problem) {
+		t.Fatalf("自定义模式清空地址应被拒绝，错误 = %v", err)
+	}
+	direct := netclient.ModeDirect
+	if err := resolver.Update(ctx, Patch{ProxyMode: &direct, ProxyURL: &empty}); err != nil {
+		t.Fatalf("切回直连并清空失败: %v", err)
+	}
+	effective, _ = resolver.Effective(ctx)
+	if effective.ProxyURL.Set() {
+		t.Errorf("清空后代理地址 = %+v，期望未设置", effective.ProxyURL)
+	}
+	if effective.ProxyMode.Value != netclient.ModeDirect || effective.ProxyMode.Source != SourceStored {
+		t.Errorf("模式 = %+v，期望 direct", effective.ProxyMode)
+	}
+}
+
+// TestProxyRejectsInvalidValues 验证模式与地址的校验，非法取值整体不写入。
+func TestProxyRejectsInvalidValues(t *testing.T) {
+	ctx := context.Background()
+	resolver := newResolver(t, Env{})
+
+	cases := []struct {
+		name  string
+		patch Patch
+		field string
+	}{
+		{name: "自定义缺少地址", patch: Patch{ProxyMode: ptr(netclient.ModeCustom)}, field: "proxy.url"},
+		{name: "协议不支持", patch: Patch{ProxyMode: ptr(netclient.ModeCustom), ProxyURL: ptr("ftp://127.0.0.1:21")}, field: "proxy.url"},
+		{name: "未知模式", patch: Patch{ProxyMode: ptr("proxy")}, field: "proxy.mode"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			err := resolver.Update(ctx, test.patch)
+			var problem *FieldProblem
+			if !errors.As(err, &problem) {
+				t.Fatalf("错误 = %v，期望字段错误", err)
+			}
+			if len(problem.Fields) != 1 || problem.Fields[0] != test.field {
+				t.Fatalf("字段 = %v，期望 %s", problem.Fields, test.field)
+			}
+		})
+	}
+
+	// 非法模式不应写入数据库。
+	effective, _ := resolver.Effective(ctx)
+	if effective.ProxyMode.Source != SourceDefault {
+		t.Errorf("非法模式不应落库: %+v", effective.ProxyMode)
+	}
+}
+
+// TestPatchEmptyWithProxyFields 验证代理字段也算有效补丁。
+func TestPatchEmptyWithProxyFields(t *testing.T) {
+	enabled := true
+	if (Patch{ProxyMode: ptr(netclient.ModeSystem)}).Empty() {
+		t.Error("代理模式补丁不应报告为空")
+	}
+	if (Patch{ProxyTelegram: &enabled}).Empty() {
+		t.Error("代理开关补丁不应报告为空")
 	}
 }
 
