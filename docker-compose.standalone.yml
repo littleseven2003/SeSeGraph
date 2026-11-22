@@ -2,6 +2,15 @@
 # 用法：docker compose -f docker-compose.standalone.yml up -d
 # 反向代理指向 http://127.0.0.1:8080，并保持流式响应不缓冲。
 services:
+  # 首次部署时宿主目录由 Docker 建成 root 所有，应用容器以 uid 1000 运行会写不进去。
+  # 用一个一次性容器把数据目录建好并交给 uid 1000，再启动应用。
+  init:
+    image: busybox:1.36
+    restart: "no"
+    command: ["sh", "-c", "mkdir -p /app/data && chown -R 1000:1000 /app/data"]
+    volumes:
+      - ./data:/app/data
+
   sesegraph:
     build:
       context: .
@@ -27,6 +36,11 @@ services:
       PROXY_URL: ${PROXY_URL:-}
       PROXY_FOR_TELEGRAM: ${PROXY_FOR_TELEGRAM:-}
       PROXY_FOR_TELEGRAPH: ${PROXY_FOR_TELEGRAPH:-}
+      # 系统代理模式读取以下变量；未设置时保持直连
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      ALL_PROXY: ${ALL_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-}
       UPLOAD_INTERVAL_MS: ${UPLOAD_INTERVAL_MS:-1500}
       UPLOAD_MODE: ${UPLOAD_MODE:-photo}
       PROXY_CONCURRENCY: ${PROXY_CONCURRENCY:-25}
@@ -34,7 +48,11 @@ services:
       # 只绑回环地址，外部流量统一走宿主机反向代理。
       - "127.0.0.1:8080:8080"
     volumes:
+      # 数据目录由 init 服务建好并授权给 uid 1000。
       - ./data:/app/data
+    depends_on:
+      init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/health"]
       interval: 30s

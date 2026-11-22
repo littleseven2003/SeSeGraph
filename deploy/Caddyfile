@@ -7,8 +7,7 @@
 		flush_interval -1
 	}
 
-	log {
-		output stdout
-		format console
-	}
+	# 不开启访问日志：Caddy 默认会把请求头写进访问日志，
+	# 首次初始化用的 X-Setup-Token 属于自定义请求头，不在默认脱敏范围内。
+	# 需要排障时再临时开启，并用 format 过滤掉该请求头。
 }
