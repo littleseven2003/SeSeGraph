@@ -251,9 +251,9 @@ export function shouldShowBlur(blurred: boolean, revealed: boolean): boolean {
   return blurred && !revealed
 }
 
-/** shouldRevealOnTap 判断这次点按是否只做临时去模糊。 */
-export function shouldRevealOnTap(input: { blurred: boolean; touch: boolean; revealed: boolean }): boolean {
-  return input.blurred && input.touch && !input.revealed
+/** shouldRevealOnTap 判断这次点按是否只做临时去模糊：桌面与触屏一致，先点一次揭开，再点才打开。 */
+export function shouldRevealOnTap(input: { blurred: boolean; revealed: boolean }): boolean {
+  return input.blurred && !input.revealed
 }
 
 /** MetadataDraft 是编辑表单的字段。 */

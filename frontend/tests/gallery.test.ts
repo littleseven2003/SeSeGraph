@@ -214,34 +214,30 @@ test('focusStep 在首尾循环并处理无焦点元素', () => {
   assert.equal(focusStep(0, 0, false), -1)
 })
 
-test('触屏点按去模糊到期后恢复模糊', () => {
-  // 点按一次：临时去模糊，不打开详情。
-  assert.equal(shouldRevealOnTap({ blurred: true, touch: true, revealed: false }), true)
+test('点按一次揭开、再点打开详情，桌面与触屏一致', () => {
+  // 第一次点按：临时去模糊，不打开详情。
+  assert.equal(shouldRevealOnTap({ blurred: true, revealed: false }), true)
   assert.equal(shouldShowBlur(true, true), false)
 
   // 计时到期：revealed 复位，模糊重新生效。
   assert.equal(shouldShowBlur(true, false), true)
 
-  // 已经开始去模糊后再次点按直接打开详情。
-  assert.equal(shouldRevealOnTap({ blurred: true, touch: true, revealed: true }), false)
+  // 已经揭开后再次点按直接打开详情。
+  assert.equal(shouldRevealOnTap({ blurred: true, revealed: true }), false)
 
-  // 关闭模糊或非触屏时不做临时去模糊。
-  assert.equal(shouldRevealOnTap({ blurred: false, touch: true, revealed: false }), false)
-  assert.equal(shouldRevealOnTap({ blurred: true, touch: false, revealed: false }), false)
+  // 关闭模糊时不拦截点按。
+  assert.equal(shouldRevealOnTap({ blurred: false, revealed: false }), false)
   assert.equal(shouldShowBlur(false, false), false)
 })
 
-test('封面悬停去模糊限定在支持悬停的设备且键盘绑定可见焦点', () => {
+test('悬停与键盘聚焦都不揭开模糊，只有显式点按解锁', () => {
   const source = readFileSync(new URL('../src/components/gallery/PostCard.vue', import.meta.url), 'utf8')
-  const media = source.indexOf('@media (hover: hover)')
-  const hover = source.indexOf(".is-blurred:has([data-reveal='cover']:hover) img")
-  assert.ok(media >= 0, '缺少 hover 能力查询')
-  assert.ok(hover > media, '悬停规则必须写在 @media (hover: hover) 内')
-  assert.equal(source.includes('.is-blurred:hover img'), false, '悬停去模糊只认封面入口，整卡悬停不揭开')
-  assert.ok(source.includes(".is-blurred:has([data-reveal='cover']:focus-visible) img"), '键盘去模糊只绑定封面入口的可见焦点')
-  assert.ok(source.includes('data-reveal="cover"'), '封面按钮要标注去模糊入口，复制按钮不触发揭开')
-  assert.equal(source.includes(':focus-within'), false, '不应再用 focus-within 触发去模糊')
-  assert.ok(source.includes(":class=\"showBlur ? 'is-blurred' : ''\""), '模糊类应挂在卡片按钮上')
+  assert.equal(source.includes(':hover) img'), false, '悬停不得揭开模糊')
+  assert.equal(source.includes(':focus-visible) img'), false, '键盘聚焦不得揭开模糊')
+  assert.equal(source.includes(':focus-within'), false, '不应使用 focus-within 触发去模糊')
+  assert.ok(source.includes('data-reveal="cover"'), '封面按钮标注揭开口，复制按钮不触发揭开')
+  assert.ok(source.includes(":class=\"showBlur ? 'is-blurred' : ''\""), '模糊类挂在卡片上')
+  assert.ok(source.includes('点击查看'), '模糊封面悬停给出克制的点击提示')
 })
 
 test('metadataFromDetail 填充编辑草稿', () => {

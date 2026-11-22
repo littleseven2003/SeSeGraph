@@ -19,19 +19,14 @@ const props = defineProps<{
 
 const emit = defineEmits<{ open: [id: number] }>()
 
-// 触屏没有悬停：第一次点按只临时去模糊，再点一次才打开详情。
+// 防社死：第一次点按只揭开当前这张，再点一次才打开详情；悬停与键盘聚焦都不揭开。
 const revealed = ref(false)
 let revealTimer: ReturnType<typeof setTimeout> | undefined
-
-function touchOnly(): boolean {
-  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false
-  return window.matchMedia('(hover: none)').matches
-}
 
 const showBlur = computed(() => shouldShowBlur(props.blurred, revealed.value))
 
 function onOpen(): void {
-  if (shouldRevealOnTap({ blurred: props.blurred, touch: touchOnly(), revealed: revealed.value })) {
+  if (shouldRevealOnTap({ blurred: props.blurred, revealed: revealed.value })) {
     revealed.value = true
     if (revealTimer !== undefined) clearTimeout(revealTimer)
     revealTimer = setTimeout(() => {
@@ -131,6 +126,20 @@ const copyLabel = computed(() => {
         class="absolute bottom-3 right-3 rounded-full bg-white/90 px-2 py-1 text-xs font-medium leading-none text-ink tnum"
         >{{ item.image_count }}P</span
       >
+      <span
+        v-if="showBlur"
+        class="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-center pb-3 opacity-0 transition group-hover:opacity-100"
+        aria-hidden="true"
+      >
+        <span class="inline-flex items-center gap-1.5 rounded-full bg-ink/80 px-3 py-1.5 text-xs font-medium leading-none text-white">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-3.5 w-3.5">
+            <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" stroke-linecap="round" stroke-linejoin="round" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+          点击查看
+        </span>
+      </span>
+
     </button>
 
     <div class="flex min-w-0 flex-col">
@@ -223,6 +232,20 @@ const copyLabel = computed(() => {
         class="absolute bottom-2 right-2 rounded-full bg-white/90 px-2 py-1 text-xs font-medium leading-none text-ink tnum"
         >{{ item.image_count }}P</span
       >
+      <span
+        v-if="showBlur"
+        class="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-center pb-3 opacity-0 transition group-hover:opacity-100"
+        aria-hidden="true"
+      >
+        <span class="inline-flex items-center gap-1.5 rounded-full bg-ink/80 px-3 py-1.5 text-xs font-medium leading-none text-white">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-3.5 w-3.5">
+            <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" stroke-linecap="round" stroke-linejoin="round" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+          点击查看
+        </span>
+      </span>
+
     </button>
 
     <div class="mt-2.5 flex flex-col gap-1">
@@ -283,19 +306,7 @@ const copyLabel = computed(() => {
   transform: scale(1.06);
 }
 
-/* 悬停去模糊只对支持悬停的设备生效，避免触屏保留点按后的悬停状态。 */
-@media (hover: hover) {
-  .is-blurred:has([data-reveal='cover']:hover) img {
-    filter: none;
-    transform: none;
-  }
-}
-
-/* 键盘去模糊只认焦点可见状态：鼠标点按会聚焦按钮，用 focus-within 会让模糊失效。 */
-.is-blurred:has([data-reveal='cover']:focus-visible) img {
-  filter: none;
-  transform: none;
-}
+/* 悬停与键盘聚焦都不揭开，只有显式点按一次才去模糊。 */
 
 @media (prefers-reduced-motion: reduce) {
   .is-blurred img {
