@@ -14,7 +14,7 @@ import (
 const (
 	// DefaultInterval 是后台同步的默认轮询间隔。
 	DefaultInterval = 30 * time.Minute
-	// DefaultSpacing 是单条之间的默认间隔，避免连续打满上游。
+	// DefaultSpacing 是同一条上游请求之间的默认间隔，避免连续打满上游。
 	DefaultSpacing = time.Second
 	// DefaultCooldown 是同一帖两次刷新的最短间隔。
 	DefaultCooldown = 60 * time.Second
@@ -23,7 +23,7 @@ const (
 )
 
 var (
-	// ErrNotApplicable 表示该帖不在统计范围（未发布、未公开或已撤回）。
+	// ErrNotApplicable 表示该帖不在统计范围（未发布、未公开、已撤回或已改链）。
 	ErrNotApplicable = errors.New("图集状态不适用浏览量统计")
 	// ErrFetch 表示上游读取失败，调用方只回显脱敏文案并保留旧缓存。
 	ErrFetch = errors.New("读取浏览量失败")
@@ -31,7 +31,7 @@ var (
 
 // Store 是同步需要的本地读写能力。
 type Store interface {
-	ListViewTargets(ctx context.Context, afterID int64, limit int) ([]posts.ViewTarget, error)
+	ListViewTargets(ctx context.Context, afterID int64, limit int) ([]posts.ViewTarget, int64, error)
 	ViewTargetByID(ctx context.Context, postID int64) (posts.ViewTarget, bool, error)
 	ReadViews(ctx context.Context, postID int64) (posts.ViewSnapshot, error)
 	SaveViews(ctx context.Context, target posts.ViewTarget, count int, at time.Time) (bool, error)
@@ -55,12 +55,14 @@ type Options struct {
 	Sleep     func(ctx context.Context, d time.Duration) error
 }
 
-// Result 是一次刷新的结果，Cached 表示没有联网、直接返回了本地缓存。
+// Result 是一次刷新的结果。Cached 表示没有联网、直接返回了本地缓存；
+// Failed 表示最近一次联网失败，界面应显示缓存而不是「刚刚已更新」。
 type Result struct {
 	PostID    int64
 	Count     int
 	UpdatedAt string
 	Cached    bool
+	Failed    bool
 }
 
 // call 是一次进行中的同步，等待者共享同一份结果。
@@ -84,7 +86,10 @@ type Service struct {
 
 	mu       sync.Mutex
 	last     map[int64]time.Time
+	failed   map[int64]bool
 	inflight map[int64]*call
+	gate     sync.Mutex
+	gateAt   time.Time
 }
 
 // New 创建同步服务，未填写的参数使用默认值。
@@ -103,12 +108,14 @@ func New(opts Options) (*Service, error) {
 		now:       opts.Now,
 		sleep:     opts.Sleep,
 		last:      make(map[int64]time.Time),
+		failed:    make(map[int64]bool),
 		inflight:  make(map[int64]*call),
 	}
 	if service.interval <= 0 {
 		service.interval = DefaultInterval
 	}
-	if service.spacing < 0 {
+	// 间隔为 0 或负数都回落到默认值，否则后台会连续打满上游。
+	if service.spacing <= 0 {
 		service.spacing = DefaultSpacing
 	}
 	if service.cooldown <= 0 {
@@ -151,18 +158,23 @@ func (s *Service) SyncOnce(ctx context.Context) (synced, failed int) {
 		return 0, 0
 	}
 
+	s.prune()
 	var afterID int64
 	for {
-		targets, err := s.store.ListViewTargets(ctx, afterID, s.batchSize)
+		if ctx.Err() != nil {
+			return synced, failed
+		}
+		targets, scanned, err := s.store.ListViewTargets(ctx, afterID, s.batchSize)
 		if err != nil {
 			s.logger.Print("浏览量同步读取目标失败")
 			return synced, failed
 		}
-		if len(targets) == 0 {
+		// 游标按已扫描的原始行推进：整批路径无效也不会停在同一处。
+		if scanned <= afterID {
 			return synced, failed
 		}
+		afterID = scanned
 		for _, target := range targets {
-			afterID = target.PostID
 			if ctx.Err() != nil {
 				return synced, failed
 			}
@@ -171,13 +183,13 @@ func (s *Service) SyncOnce(ctx context.Context) (synced, failed int) {
 				continue
 			}
 			if _, err := s.execute(ctx, entry, target); err != nil {
+				if errors.Is(err, ErrNotApplicable) {
+					continue
+				}
 				failed++
 				s.logger.Print("浏览量同步失败：单帖上游请求未完成")
 			} else {
 				synced++
-			}
-			if err := s.sleep(ctx, s.spacing); err != nil {
-				return synced, failed
 			}
 		}
 	}
@@ -228,6 +240,43 @@ func (s *Service) start(postID int64) *call {
 	return entry
 }
 
+// prune 回收超过冷却期的记录，每轮同步开始时清理一次。
+func (s *Service) prune() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneLocked()
+}
+
+// pruneLocked 回收超过冷却期的记录，避免长期运行后表无限增长。
+func (s *Service) pruneLocked() {
+	now := s.now()
+	for postID, at := range s.last {
+		if now.Sub(at) < s.cooldown {
+			continue
+		}
+		if _, running := s.inflight[postID]; running {
+			continue
+		}
+		delete(s.last, postID)
+		delete(s.failed, postID)
+	}
+}
+
+// acquire 是后台与手刷共用的上游入口：同一时刻只有一个请求，且请求之间至少间隔 spacing。
+func (s *Service) acquire(ctx context.Context) error {
+	s.gate.Lock()
+	defer s.gate.Unlock()
+	if !s.gateAt.IsZero() {
+		if wait := s.spacing - s.now().Sub(s.gateAt); wait > 0 {
+			if err := s.sleep(ctx, wait); err != nil {
+				return err
+			}
+		}
+	}
+	s.gateAt = s.now()
+	return nil
+}
+
 // execute 读取上游并写回缓存，结果与错误都留给等待者复用。
 func (s *Service) execute(ctx context.Context, entry *call, target posts.ViewTarget) (Result, error) {
 	defer func() {
@@ -239,18 +288,32 @@ func (s *Service) execute(ctx context.Context, entry *call, target posts.ViewTar
 
 	fetcher, err := s.client(ctx)
 	if err != nil {
+		s.markFailed(target.PostID, true)
 		entry.err = ErrFetch
 		return Result{}, ErrFetch
 	}
-	count, err := fetcher.GetViews(ctx, target.Path)
-	if err != nil {
-		entry.err = ErrFetch
-		return Result{}, ErrFetch
-	}
-	if _, err := s.store.SaveViews(ctx, target, count, s.now()); err != nil {
+	if err := s.acquire(ctx); err != nil {
 		entry.err = err
 		return Result{}, err
 	}
+	count, err := fetcher.GetViews(ctx, target.Path)
+	if err != nil {
+		s.markFailed(target.PostID, true)
+		entry.err = ErrFetch
+		return Result{}, ErrFetch
+	}
+	// 写回前复核状态与首篇路径；撤回或改链的帖不再写，按状态不适用处理。
+	applied, err := s.store.SaveViews(ctx, target, count, s.now())
+	if err != nil {
+		s.markFailed(target.PostID, true)
+		entry.err = err
+		return Result{}, err
+	}
+	if !applied {
+		entry.err = ErrNotApplicable
+		return Result{}, ErrNotApplicable
+	}
+	s.markFailed(target.PostID, false)
 	snapshot, err := s.store.ReadViews(ctx, target.PostID)
 	if err != nil {
 		entry.err = err
@@ -258,6 +321,17 @@ func (s *Service) execute(ctx context.Context, entry *call, target posts.ViewTar
 	}
 	entry.result = Result{PostID: target.PostID, Count: snapshot.Count, UpdatedAt: snapshot.UpdatedAt}
 	return entry.result, nil
+}
+
+// markFailed 记录最近一次联网结果，供冷却期内的反馈区分「已更新」与「显示缓存」。
+func (s *Service) markFailed(postID int64, failed bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if failed {
+		s.failed[postID] = true
+		return
+	}
+	delete(s.failed, postID)
 }
 
 // wait 等待同帖的进行中请求，复用它已经拿到的结果。
@@ -276,7 +350,16 @@ func (s *Service) cached(ctx context.Context, postID int64) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	return Result{PostID: postID, Count: snapshot.Count, UpdatedAt: snapshot.UpdatedAt, Cached: true}, nil
+	s.mu.Lock()
+	failed := s.failed[postID]
+	s.mu.Unlock()
+	return Result{
+		PostID:    postID,
+		Count:     snapshot.Count,
+		UpdatedAt: snapshot.UpdatedAt,
+		Cached:    true,
+		Failed:    failed,
+	}, nil
 }
 
 func sleepContext(ctx context.Context, d time.Duration) error {

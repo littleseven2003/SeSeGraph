@@ -55,7 +55,8 @@ func viewEligible(state string, public, disabled bool) bool {
 }
 
 // ListViewTargets 按 ID 升序小批读取待同步的图集，读完即关闭游标再联网。
-func (r *Repository) ListViewTargets(ctx context.Context, afterID int64, limit int) ([]ViewTarget, error) {
+// 第二个返回值是已扫描到的最大 ID：游标按原始行推进，整批路径无效也不会卡住后续帖子。
+func (r *Repository) ListViewTargets(ctx context.Context, afterID int64, limit int) ([]ViewTarget, int64, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -65,25 +66,27 @@ func (r *Repository) ListViewTargets(ctx context.Context, afterID int64, limit i
 		   AND telegraph_paths IS NOT NULL AND telegraph_paths <> '[]'
 		 ORDER BY id LIMIT ?`, afterID, PublishPublished, limit)
 	if err != nil {
-		return nil, errors.New("读取浏览量同步目标失败")
+		return nil, afterID, errors.New("读取浏览量同步目标失败")
 	}
 	defer func() { _ = rows.Close() }()
 
 	targets := make([]ViewTarget, 0, limit)
+	scanned := afterID
 	for rows.Next() {
 		var id int64
 		var raw string
 		if err := rows.Scan(&id, &raw); err != nil {
-			return nil, errors.New("读取浏览量同步目标失败")
+			return nil, afterID, errors.New("读取浏览量同步目标失败")
 		}
+		scanned = id
 		if path := firstViewPath(raw); path != "" {
 			targets = append(targets, ViewTarget{PostID: id, Path: path})
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, errors.New("读取浏览量同步目标失败")
+		return nil, afterID, errors.New("读取浏览量同步目标失败")
 	}
-	return targets, nil
+	return targets, scanned, nil
 }
 
 // ViewTargetByID 读取单帖的同步目标。eligible 为 false 表示状态不适用，仍可用于判断存在性。

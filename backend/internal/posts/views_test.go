@@ -51,18 +51,21 @@ func TestListViewTargetsOnlyEligibleAndFirstPath(t *testing.T) {
 	okID := seedViewsPost(t, repo, "已发布", PublishPublished, true, []string{"First-11-22", "Second-11-22"})
 	seedViewsPost(t, repo, "未公开", PublishPublished, false, []string{"Hidden-11-22"})
 	seedViewsPost(t, repo, "未发布", PublishIdle, true, []string{"Idle-11-22"})
-	seedViewsPost(t, repo, "首篇缺失", PublishPublished, true, []string{"", "Second-11-22"})
+	missingID := seedViewsPost(t, repo, "首篇缺失", PublishPublished, true, []string{"", "Second-11-22"})
 	disabledID := seedViewsPost(t, repo, "已撤回", PublishPublished, true, []string{"Hidden-11-23"})
 	if _, _, err := repo.SetDisabled(ctx, disabledID, true); err != nil {
 		t.Fatalf("设置撤回失败: %v", err)
 	}
 
-	targets, err := repo.ListViewTargets(ctx, 0, 10)
+	targets, scanned, err := repo.ListViewTargets(ctx, 0, 10)
 	if err != nil {
 		t.Fatalf("读取同步目标失败: %v", err)
 	}
 	if len(targets) != 1 {
 		t.Fatalf("目标条数 = %d，期望 1", len(targets))
+	}
+	if scanned != missingID {
+		t.Errorf("游标 = %d，期望推进到本批扫描到的最大 %d", scanned, missingID)
 	}
 	if targets[0].PostID != okID {
 		t.Errorf("目标帖子 = %d，期望 %d", targets[0].PostID, okID)
@@ -182,4 +185,40 @@ func TestSaveViewsDoesNotTouchUpdatedAt(t *testing.T) {
 	if before != after {
 		t.Fatalf("同步浏览量改动了编辑时间：%q -> %q", before, after)
 	}
+}
+
+func TestListViewTargetsAdvancesPastInvalidBatch(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+
+	// 前三条路径都不可用，只有最后一条可统计。
+	badOne := seedViewsPost(t, repo, "坏路径一", PublishPublished, true, []string{"", "Second-1"})
+	badTwo := seedViewsPost(t, repo, "坏路径二", PublishPublished, true, []string{"a b"})
+	badThree := seedViewsPost(t, repo, "坏路径三", PublishPublished, true, []string{"a/b"})
+	good := seedViewsPost(t, repo, "好路径", PublishPublished, true, []string{"Good-11-22"})
+
+	targets, scanned, err := repo.ListViewTargets(ctx, 0, 2)
+	if err != nil {
+		t.Fatalf("读取同步目标失败: %v", err)
+	}
+	if len(targets) != 0 {
+		t.Fatalf("前两条都不可用，目标条数 = %d", len(targets))
+	}
+	if scanned != badTwo {
+		t.Fatalf("游标 = %d，期望 %d", scanned, badTwo)
+	}
+
+	// 下一批从游标继续，最终仍能取到最后一条可用路径。
+	targets, scanned, err = repo.ListViewTargets(ctx, scanned, 10)
+	if err != nil {
+		t.Fatalf("读取同步目标失败: %v", err)
+	}
+	if len(targets) != 1 || targets[0].PostID != good || targets[0].Path != "Good-11-22" {
+		t.Fatalf("后续目标 = %+v", targets)
+	}
+	if scanned != good {
+		t.Fatalf("游标 = %d，期望 %d", scanned, good)
+	}
+	_ = badOne
+	_ = badThree
 }
