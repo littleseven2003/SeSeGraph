@@ -4,6 +4,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -34,6 +37,38 @@ type createPostRequest struct {
 	ImageCount     int      `json:"image_count"`
 	CoverThumbnail string   `json:"cover_thumbnail"`
 	Tags           []string `json:"tags"`
+}
+
+// deletePostHandler 删除帖子；上传或发布进行中时返回 409，删除后短码立即 404。
+func deletePostHandler(deps Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		postID, parseErr := strconv.ParseInt(c.Param("id"), 10, 64)
+		if parseErr != nil || postID <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "帖子编号不合法"})
+			return
+		}
+
+		post, postErr := deps.Posts.Get(c.Request.Context(), postID)
+		err := deps.Posts.Delete(c.Request.Context(), postID)
+		switch {
+		case errors.Is(err, posts.ErrNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": "帖子不存在"})
+			return
+		case errors.Is(err, posts.ErrTaskRunning):
+			c.JSON(http.StatusConflict, gin.H{"error": "任务正在进行中，完成或失败后再删除"})
+			return
+		case err != nil:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "删除帖子失败"})
+			return
+		}
+
+		// 记录删除后再清理本地文件：封面与未上传完的临时目录。
+		if postErr == nil && post.CoverThumbPath != "" {
+			_ = os.Remove(filepath.Join(deps.DataDir, post.CoverThumbPath))
+		}
+		_ = os.RemoveAll(filepath.Join(deps.DataDir, "tmp", strconv.FormatInt(postID, 10)))
+		c.Status(http.StatusNoContent)
+	}
 }
 
 // createPostHandler 保存帖子元数据与可选封面，随后由上传接口补齐图片。

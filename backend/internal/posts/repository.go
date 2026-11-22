@@ -46,6 +46,8 @@ var (
 	ErrAlreadyQueued = errors.New("帖子已入队")
 	// ErrPublishBusy 表示帖子正在发布队列中或已有可复用的远端页面，暂不可本地改写。
 	ErrPublishBusy = errors.New("帖子正在发布流程中")
+	// ErrTaskRunning 表示帖子仍在进行中的任务里，删除会与队列交错。
+	ErrTaskRunning = errors.New("任务正在进行中")
 )
 
 // Post 是帖子元数据。
@@ -200,6 +202,43 @@ func (r *Repository) SetDisabled(ctx context.Context, postID int64, disabled boo
 		return false, false, errors.New("更新熔断状态失败")
 	}
 	return gotDisabled == 1, public == 1, nil
+}
+
+// Delete 删除帖子及其图片、标签关联。上传或发布进行中时拒绝删除。
+func (r *Repository) Delete(ctx context.Context, postID int64) error {
+	tx, err := r.handle.BeginTx(ctx, nil)
+	if err != nil {
+		return errors.New("删除帖子失败")
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var status string
+	err = tx.QueryRowContext(ctx, `SELECT status FROM posts WHERE id = ?`, postID).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return errors.New("删除帖子失败")
+	}
+	switch status {
+	case StatusUploading, StatusQueued, StatusPublishing:
+		return ErrTaskRunning
+	}
+
+	// 图片与标签关联显式删除，不依赖外键级联的具体实现。
+	if _, err := tx.ExecContext(ctx, `DELETE FROM post_images WHERE post_id = ?`, postID); err != nil {
+		return errors.New("删除帖子失败")
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM post_tags WHERE post_id = ?`, postID); err != nil {
+		return errors.New("删除帖子失败")
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM posts WHERE id = ?`, postID); err != nil {
+		return errors.New("删除帖子失败")
+	}
+	if err := tx.Commit(); err != nil {
+		return errors.New("删除帖子失败")
+	}
+	return nil
 }
 
 // CountStoredImages 统计已存入图床的图片数量，用于判断换 Bot 是否会破坏已有图片。
