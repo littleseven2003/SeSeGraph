@@ -268,7 +268,7 @@ onBeforeUnmount(() => {
               >
                 <span class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-line bg-surface text-ink transition hover:border-ink/30 hover:bg-ink hover:text-white">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4" aria-hidden="true">
-                    <path d="M9 5H5v4M15 19h4v-4M5 5l6 6M19 19l-6-6" stroke-linecap="round" stroke-linejoin="round" />
+                    <path d="M7 17 17 7M9 7h8v8" stroke-linecap="round" stroke-linejoin="round" />
                   </svg>
                 </span>
               </button>
