@@ -63,6 +63,26 @@
   }
 }
 
+/* 焦点轮播切换时的淡入，减少动效时直接切。 */
+@keyframes focus-fade {
+  from {
+    opacity: 0.3;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.focus-fade {
+  animation: focus-fade 420ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .focus-fade {
+    animation: none;
+  }
+}
+
 /* 取景框直角标：四个 L 角用背景渐变画出来，不额外占用节点。 */
 .viewfinder-corners {
   position: relative;

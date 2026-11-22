@@ -142,9 +142,10 @@ onBeforeUnmount(() => {
           >
             <img
               v-if="current.cover_url !== ''"
+              :key="current.id"
               :src="current.cover_url"
               :alt="current.title + ' 的封面'"
-              class="h-full w-full object-cover"
+              class="focus-fade h-full w-full object-cover"
             />
             <span v-else class="flex h-full w-full items-center justify-center text-muted" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-10 w-10">
