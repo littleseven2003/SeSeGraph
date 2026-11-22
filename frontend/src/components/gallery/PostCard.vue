@@ -64,12 +64,14 @@ const status = computed(() => statusLabel(props.item.status, props.item.publish_
 // chipClass 按状态分层：完成走墨色胶囊，进行中走暖琥珀，异常走柔红，保证亮封面上也读得清。
 const chipClass = computed(() => {
   switch (status.value.tone) {
+    case 'idle':
+      return 'border-warn/40 bg-warn-soft text-warn'
     case 'progress':
-      return 'border-warn/30 bg-warn-soft text-warn'
+      return 'border-warn/40 bg-warn-soft text-warn'
     case 'error':
-      return 'border-danger/30 bg-white/90 text-danger'
+      return 'border-danger/30 bg-white text-danger'
     default:
-      return 'border-accent/30 bg-white/90 text-accent'
+      return 'border-accent/30 bg-white text-accent'
   }
 })
 const published = computed(() => formatPublishedAt(props.item.published_at))
