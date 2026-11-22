@@ -180,37 +180,30 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="min-h-full">
-    <header class="border-b border-line bg-surface">
-      <div class="mx-auto flex w-full max-w-[1180px] items-center justify-between gap-4 px-4 py-3">
-        <div class="flex items-center gap-3">
+    <header class="border-b border-line">
+      <div class="mx-auto flex w-full max-w-[1240px] items-center justify-between gap-4 px-5 py-3">
+        <div class="flex items-center gap-2.5">
           <span
-            class="flex h-9 w-9 items-center justify-center rounded-lg bg-brand text-sm font-semibold text-brand-ink"
+            class="flex h-8 w-8 items-center justify-center rounded border border-line bg-surface text-[13px] font-semibold tracking-tight"
             aria-hidden="true"
             >S</span
           >
-          <div>
-            <p class="text-xs font-medium tracking-wide text-muted">SeSeGraph</p>
-            <p class="text-sm font-semibold">图集画廊</p>
-          </div>
+          <p class="text-sm font-semibold tracking-tight">
+            SeSeGraph<span class="ml-2 text-xs font-normal text-muted">图集画廊</span>
+          </p>
         </div>
 
-        <div class="flex items-center gap-2">
-          <router-link
-            :to="{ name: 'workbench' }"
-            class="hidden h-9 items-center rounded-md border border-line px-3 text-sm font-medium transition hover:bg-canvas sm:inline-flex"
-          >
-            发帖工作台
-          </router-link>
+        <div class="flex items-center gap-1">
           <router-link
             :to="{ name: 'settings' }"
-            class="h-9 items-center rounded-md border border-line px-3 text-sm font-medium transition hover:bg-canvas inline-flex"
+            class="inline-flex h-11 items-center rounded-md px-3 text-sm text-muted transition hover:bg-surface hover:text-ink"
           >
             设置
           </router-link>
           <button
             type="button"
             :disabled="signingOut"
-            class="h-9 rounded-md border border-line px-3 text-sm font-medium transition hover:border-muted/40 hover:bg-canvas disabled:opacity-60"
+            class="inline-flex h-11 items-center rounded-md px-3 text-sm text-muted transition hover:bg-surface hover:text-ink disabled:opacity-60"
             @click="signOut"
           >
             {{ signingOut ? '正在退出…' : '退出登录' }}
@@ -219,26 +212,21 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
-    <main class="mx-auto w-full max-w-[1180px] px-4 py-7">
-      <div class="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 class="text-xl font-semibold tracking-tight">图集</h1>
-          <p class="mt-1 text-sm text-muted tnum">
-            共 {{ total }} 个图集<template v-if="hasFilter"> · 已筛选</template>
-          </p>
-        </div>
-        <router-link
-          :to="{ name: 'workbench' }"
-          class="inline-flex h-10 items-center rounded-md bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong"
+    <main class="mx-auto w-full max-w-[1240px] px-5 py-7">
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <h1 class="text-lg font-semibold tracking-tight">图集</h1>
+        <p class="text-sm text-muted tnum">共 {{ total }} 个<template v-if="hasFilter"> · 已筛选</template></p>
+        <button
+          v-if="hasFilter"
+          type="button"
+          class="text-xs font-medium text-danger underline-offset-4 hover:underline"
+          @click="clearFilters"
         >
-          新建图集
-        </router-link>
-      </div>
+          清除筛选
+        </button>
 
-      <section class="mt-5 rounded-lg border border-line bg-surface px-4 py-3">
-        <div class="flex flex-wrap items-center gap-3">
-          <label class="relative min-w-0 flex-1 sm:max-w-[360px]">
-            <span class="sr-only">搜索图集</span>
+        <div class="flex w-full items-center gap-2 sm:ml-auto sm:w-auto">
+          <label class="relative min-w-0 flex-1 sm:w-[260px] sm:flex-none">
             <svg
               viewBox="0 0 24 24"
               fill="none"
@@ -253,20 +241,21 @@ onBeforeUnmount(() => {
             <input
               v-model="keyword"
               type="search"
+              aria-label="搜索图集"
               placeholder="搜索标题或标签"
-              class="h-10 w-full rounded-md border border-line bg-canvas pl-9 pr-3 text-sm outline-none transition focus:border-brand focus:bg-surface"
+              class="h-11 w-full rounded-md border border-line bg-surface pl-9 pr-3 text-sm outline-none transition focus:border-ink/40"
             />
           </label>
 
           <button
             type="button"
-            class="flex h-10 shrink-0 items-center gap-2 rounded-md border border-line px-3 text-sm font-medium transition hover:bg-canvas"
+            class="inline-flex h-11 shrink-0 items-center gap-2 rounded-md border border-line bg-surface px-3 text-sm font-medium transition hover:border-ink/25"
             :aria-pressed="blurEnabled"
             @click="toggleBlur"
           >
             <span
               class="relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition"
-              :class="blurEnabled ? 'bg-brand' : 'bg-line'"
+              :class="blurEnabled ? 'bg-ink' : 'bg-line'"
               aria-hidden="true"
             >
               <span
@@ -277,52 +266,53 @@ onBeforeUnmount(() => {
             防社死模糊
           </button>
 
-          <button
-            v-if="hasFilter"
-            type="button"
-            class="h-10 shrink-0 rounded-md px-2 text-sm text-muted transition hover:text-ink"
-            @click="clearFilters"
+          <router-link
+            :to="{ name: 'workbench' }"
+            class="inline-flex h-11 shrink-0 items-center rounded-md bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong"
           >
-            清除筛选
-          </button>
+            新建图集
+          </router-link>
         </div>
+      </div>
 
-        <div v-if="tags.length > 0" class="mt-3 flex flex-wrap items-center gap-1.5 border-t border-line pt-3">
-          <span class="mr-1 text-xs text-muted">标签</span>
-          <button
-            v-for="tag in tags"
-            :key="tag.name"
-            type="button"
-            class="h-8 rounded-md px-2.5 text-xs font-medium transition"
-            :class="
-              selectedTags.includes(tag.name)
-                ? 'bg-brand text-brand-ink'
-                : 'border border-line text-muted hover:border-muted/40 hover:text-ink'
-            "
-            :aria-pressed="selectedTags.includes(tag.name)"
-            @click="toggleTag(tag.name)"
-          >
-            {{ tag.name }}<span class="ml-1 opacity-70 tnum">{{ tag.count }}</span>
-          </button>
-        </div>
-      </section>
+      <div v-if="tags.length > 0" class="mt-4 flex items-center gap-2 overflow-x-auto pb-1">
+        <span class="shrink-0 text-xs text-muted">标签</span>
+        <button
+          v-for="tag in tags"
+          :key="tag.name"
+          type="button"
+          class="inline-flex h-11 shrink-0 items-center rounded border px-3 text-xs font-medium transition"
+          :class="
+            selectedTags.includes(tag.name)
+              ? 'border-ink bg-ink text-brand-ink'
+              : 'border-line bg-surface text-muted hover:border-ink/25 hover:text-ink'
+          "
+          :aria-pressed="selectedTags.includes(tag.name)"
+          @click="toggleTag(tag.name)"
+        >
+          {{ tag.name
+          }}<span class="ml-1.5 tnum" :class="selectedTags.includes(tag.name) ? 'text-white/75' : 'text-muted'">{{
+            tag.count
+          }}</span>
+        </button>
+      </div>
 
       <section class="mt-5">
-        <div v-if="loading" class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          <div v-for="index in 8" :key="index" class="overflow-hidden rounded-lg border border-line bg-surface">
+        <div v-if="loading" class="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 xl:grid-cols-4">
+          <div v-for="index in 8" :key="index" class="overflow-hidden rounded-md border border-line bg-surface">
             <div class="aspect-[4/3] w-full animate-pulse bg-canvas"></div>
-            <div class="space-y-2 px-3 py-3">
+            <div class="space-y-2 px-3.5 py-3">
               <div class="h-4 w-3/4 animate-pulse rounded bg-canvas"></div>
               <div class="h-3 w-1/2 animate-pulse rounded bg-canvas"></div>
             </div>
           </div>
         </div>
 
-        <div v-else-if="error !== ''" class="rounded-lg border border-line bg-surface px-6 py-12 text-center">
+        <div v-else-if="error !== ''" class="rounded-md border border-line bg-surface px-6 py-12 text-center">
           <p class="text-sm text-danger">{{ error }}</p>
           <button
             type="button"
-            class="mt-3 h-9 rounded-md border border-line px-3 text-sm font-medium transition hover:bg-canvas"
+            class="mt-3 h-11 rounded-md border border-line px-4 text-sm font-medium transition hover:bg-canvas"
             @click="loadList()"
           >
             重新加载
@@ -331,9 +321,9 @@ onBeforeUnmount(() => {
 
         <div
           v-else-if="items.length === 0"
-          class="rounded-lg border border-dashed border-line bg-surface px-6 py-14 text-center"
+          class="rounded-md border border-dashed border-line bg-surface px-6 py-16 text-center"
         >
-          <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-canvas" aria-hidden="true">
+          <div class="mx-auto flex h-12 w-12 items-center justify-center rounded bg-canvas" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-6 w-6 text-muted">
               <rect x="3" y="4" width="18" height="16" rx="2" />
               <path d="M3 15l5-4 4 3 3-2 6 4" stroke-linecap="round" stroke-linejoin="round" />
@@ -351,7 +341,7 @@ onBeforeUnmount(() => {
           <button
             v-if="hasFilter"
             type="button"
-            class="mt-4 h-9 rounded-md border border-line px-3 text-sm font-medium transition hover:bg-canvas"
+            class="mt-4 h-11 rounded-md border border-line px-4 text-sm font-medium transition hover:bg-canvas"
             @click="clearFilters"
           >
             清除筛选
@@ -359,7 +349,7 @@ onBeforeUnmount(() => {
         </div>
 
         <template v-else>
-          <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <div class="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 xl:grid-cols-4">
             <PostCard
               v-for="item in items"
               :key="item.id"
@@ -369,10 +359,10 @@ onBeforeUnmount(() => {
             />
           </div>
 
-          <nav v-if="totalPages > 1" class="mt-6 flex items-center justify-center gap-1.5" aria-label="分页">
+          <nav v-if="totalPages > 1" class="mt-8 flex items-center justify-center gap-1.5" aria-label="分页">
             <button
               type="button"
-              class="h-9 rounded-md border border-line px-3 text-sm transition hover:bg-canvas disabled:opacity-50"
+              class="h-11 rounded-md border border-line px-3 text-sm transition hover:bg-surface disabled:opacity-50"
               :disabled="page <= 1"
               @click="loadList(page - 1)"
             >
@@ -382,8 +372,12 @@ onBeforeUnmount(() => {
               v-for="target in pages"
               :key="target"
               type="button"
-              class="h-9 w-9 rounded-md text-sm transition tnum"
-              :class="target === page ? 'bg-brand text-brand-ink' : 'border border-line hover:bg-canvas'"
+              class="h-11 w-11 rounded-md text-sm transition tnum"
+              :class="
+                target === page
+                  ? 'border border-ink bg-ink text-brand-ink'
+                  : 'border border-line hover:bg-surface'
+              "
               :aria-current="target === page ? 'page' : undefined"
               @click="loadList(target)"
             >
@@ -391,7 +385,7 @@ onBeforeUnmount(() => {
             </button>
             <button
               type="button"
-              class="h-9 rounded-md border border-line px-3 text-sm transition hover:bg-canvas disabled:opacity-50"
+              class="h-11 rounded-md border border-line px-3 text-sm transition hover:bg-surface disabled:opacity-50"
               :disabled="page >= totalPages"
               @click="loadList(page + 1)"
             >

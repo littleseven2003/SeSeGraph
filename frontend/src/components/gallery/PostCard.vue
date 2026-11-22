@@ -1,7 +1,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
 import type { GalleryItem } from '../../api/gallery.ts'
-import { TOUCH_REVEAL_MS, formatPublishedAt, shouldRevealOnTap, shouldShowBlur, statusLabel } from '../../utils/gallery.ts'
+import { copyText } from '../../utils/clipboard.ts'
+import {
+  TOUCH_REVEAL_MS,
+  formatPublishedAt,
+  postShareUrl,
+  shouldRevealOnTap,
+  shouldShowBlur,
+  statusLabel,
+} from '../../utils/gallery.ts'
 
 const props = defineProps<{
   item: GalleryItem
@@ -33,37 +41,49 @@ function onOpen(): void {
   emit('open', props.item.id)
 }
 
+// 分享链接只在已发布、公开且未撤回时可用；列表数据已带地址，无需额外请求。
+const shareUrl = computed(() => postShareUrl(props.item))
+const copyState = ref<'idle' | 'copied' | 'failed'>('idle')
+let copyTimer: ReturnType<typeof setTimeout> | undefined
+
+async function copyLink(): Promise<void> {
+  if (shareUrl.value === '') return
+  copyState.value = (await copyText(shareUrl.value)) ? 'copied' : 'failed'
+  if (copyTimer !== undefined) clearTimeout(copyTimer)
+  copyTimer = setTimeout(() => {
+    copyState.value = 'idle'
+  }, 1800)
+}
+
 onBeforeUnmount(() => {
   if (revealTimer !== undefined) clearTimeout(revealTimer)
+  if (copyTimer !== undefined) clearTimeout(copyTimer)
 })
 
 const status = computed(() => statusLabel(props.item.status, props.item.publish_state, props.item.disabled))
 const published = computed(() => formatPublishedAt(props.item.published_at))
-const visibleTags = computed(() => props.item.tags.slice(0, 3))
+// 卡片只显示日期，时间留在详情里，避免两列布局下折行。
+const publishedDate = computed(() => published.value.split(' ')[0] ?? '')
+const visibleTags = computed(() => props.item.tags.slice(0, 2))
 const restTags = computed(() => Math.max(0, props.item.tags.length - visibleTags.value.length))
-
-const toneClass = computed(() => {
-  switch (status.value.tone) {
-    case 'ok':
-      return 'bg-accent/10 text-accent'
-    case 'progress':
-      return 'bg-brand/10 text-brand'
-    case 'error':
-      return 'bg-danger-soft text-danger'
-    default:
-      return 'bg-canvas text-muted'
-  }
+const copyLabel = computed(() => {
+  if (copyState.value === 'copied') return '已复制'
+  if (copyState.value === 'failed') return '复制失败'
+  return '复制链接'
 })
 </script>
 
 <template>
-  <button
-    type="button"
-    class="group flex w-full flex-col overflow-hidden rounded-lg border border-line bg-surface text-left transition hover:border-brand/40 hover:shadow-[0_8px_24px_-16px_rgba(15,23,42,0.45)] focus-visible:border-brand"
+  <article
+    class="group flex flex-col overflow-hidden rounded-md border border-line bg-surface transition hover:border-ink/25"
     :class="showBlur ? 'is-blurred' : ''"
-    @click="onOpen"
   >
-    <span class="relative block aspect-[4/3] w-full overflow-hidden bg-canvas">
+    <button
+      type="button"
+      class="relative block aspect-[4/3] w-full overflow-hidden bg-canvas"
+      :aria-label="`打开《${item.title}》详情`"
+      @click="onOpen"
+    >
       <img
         v-if="item.cover_url !== ''"
         :src="item.cover_url"
@@ -79,33 +99,53 @@ const toneClass = computed(() => {
         </svg>
       </span>
       <span
-        class="absolute left-2 top-2 rounded px-1.5 py-0.5 text-xs font-medium"
-        :class="toneClass"
+        class="absolute left-2.5 top-2.5 rounded bg-ink/75 px-2 py-1 text-xs font-medium leading-none text-white backdrop-blur-sm"
         >{{ status.label }}</span
       >
       <span
-        class="absolute right-2 top-2 rounded bg-ink/70 px-1.5 py-0.5 text-xs font-medium text-white tnum"
+        class="absolute right-2.5 top-2.5 rounded bg-ink/75 px-2 py-1 text-xs font-medium leading-none text-white tnum backdrop-blur-sm"
         >{{ item.image_count }} 张</span
       >
-    </span>
+    </button>
 
-    <span class="flex flex-1 flex-col gap-2 px-3 py-3">
-      <span class="line-clamp-2 text-sm font-semibold leading-snug">{{ item.title }}</span>
-      <span v-if="visibleTags.length > 0" class="flex flex-wrap gap-1">
+    <div class="flex flex-1 flex-col gap-2 px-3.5 pb-3.5 pt-3">
+      <p class="line-clamp-2 text-sm font-semibold leading-snug">
+        {{ item.title }}
+      </p>
+
+      <div v-if="visibleTags.length > 0" class="flex flex-wrap gap-1">
         <span
           v-for="tag in visibleTags"
           :key="tag"
-          class="rounded bg-canvas px-1.5 py-0.5 text-xs text-muted"
+          class="rounded bg-canvas px-1.5 py-0.5 text-xs leading-relaxed text-muted"
           >{{ tag }}</span
         >
-        <span v-if="restTags > 0" class="px-1 py-0.5 text-xs text-muted">+{{ restTags }}</span>
-      </span>
-      <span class="mt-auto flex items-center justify-between gap-2 text-xs text-muted">
-        <span class="truncate">{{ published !== '' ? '发布时间' : '创建后待发布' }}</span>
-        <span class="tnum">{{ published !== '' ? published : '未发布' }}</span>
-      </span>
-    </span>
-  </button>
+        <span v-if="restTags > 0" class="px-1 py-0.5 text-xs leading-relaxed text-muted">+{{ restTags }}</span>
+      </div>
+
+      <p class="mt-auto truncate text-xs text-muted tnum">
+        {{ publishedDate !== '' ? '发布于 ' + publishedDate : '存图后待发布' }}
+      </p>
+
+      <div class="flex items-center gap-2">
+        <button
+          type="button"
+          class="h-11 flex-1 rounded-md border border-line text-sm font-medium transition hover:bg-canvas"
+          @click="onOpen"
+        >
+          打开
+        </button>
+        <button
+          v-if="shareUrl !== ''"
+          type="button"
+          class="h-11 flex-1 rounded-md bg-brand text-sm font-medium text-brand-ink transition hover:bg-brand-strong"
+          @click="copyLink"
+        >
+          {{ copyLabel }}
+        </button>
+      </div>
+    </div>
+  </article>
 </template>
 
 <style scoped>
@@ -122,8 +162,8 @@ const toneClass = computed(() => {
   }
 }
 
-/* 键盘去模糊绑定卡片按钮自身的可见焦点。 */
-.is-blurred:focus-visible img {
+/* 键盘去模糊只认焦点可见状态：鼠标点按会聚焦按钮，用 focus-within 会让模糊失效。 */
+.is-blurred:has(button:focus-visible) img {
   filter: none;
   transform: none;
 }

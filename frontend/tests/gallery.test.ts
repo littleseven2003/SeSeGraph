@@ -221,7 +221,7 @@ test('封面悬停去模糊限定在支持悬停的设备且键盘绑定可见�
   const hover = source.indexOf('.is-blurred:hover img')
   assert.ok(media >= 0, '缺少 hover 能力查询')
   assert.ok(hover > media, '悬停规则必须写在 @media (hover: hover) 内')
-  assert.ok(source.includes('.is-blurred:focus-visible img'), '键盘去模糊应绑定按钮的可见焦点')
+  assert.ok(source.includes('.is-blurred:has(button:focus-visible) img'), '键盘去模糊应绑定按钮的可见焦点')
   assert.equal(source.includes(':focus-within'), false, '不应再用 focus-within 触发去模糊')
   assert.ok(source.includes(":class=\"showBlur ? 'is-blurred' : ''\""), '模糊类应挂在卡片按钮上')
 })
@@ -265,4 +265,11 @@ test('撤回与恢复的按钮、提示与确认文案', () => {
   assert.match(toggleConfirmText(false), /源站短码立即 404/)
   assert.match(toggleConfirmText(false), /已缓存的副本可能仍显示/)
   assert.match(toggleConfirmText(true), /恢复/)
+})
+
+test('卡片分享入口只在可分享时出现且复用整帖资格判断', () => {
+  const source = readFileSync(new URL('../src/components/gallery/PostCard.vue', import.meta.url), 'utf8')
+  assert.ok(source.includes('postShareUrl(props.item)'), '复制入口应复用整帖分享资格判断')
+  assert.ok(source.includes('v-if="shareUrl !== \'\'"'), '仅在拿到分享链接时显示复制入口')
+  assert.equal(source.includes('navigator.clipboard'), false, '复制走共用工具，不重复实现')
 })

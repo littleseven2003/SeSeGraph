@@ -1,17 +1,18 @@
 @import "tailwindcss";
 
 @theme {
-  --color-canvas: #f5f7fb;
+  /* 画廊纸面底与墨色文字：让图片成为唯一的色彩来源。 */
+  --color-canvas: #f7f6f2;
   --color-surface: #ffffff;
-  --color-ink: #0f172a;
-  --color-muted: #55657d;
-  --color-line: #e2e8f0;
-  --color-brand: #2457f5;
-  --color-brand-strong: #1c46cf;
+  --color-ink: #141413;
+  --color-muted: #5c5c58;
+  --color-line: #e5e3dc;
+  --color-brand: #18181b;
+  --color-brand-strong: #000000;
   --color-brand-ink: #ffffff;
-  --color-accent: #0f8f8e;
-  --color-danger: #b42318;
-  --color-danger-soft: #fef3f2;
+  --color-accent: #0e7490;
+  --color-danger: #b91c1c;
+  --color-danger-soft: #fbefee;
 
   --font-sans: "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei", system-ui, sans-serif;
 

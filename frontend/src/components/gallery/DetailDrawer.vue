@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { setPostDisabled, updatePost, type PostDetail } from '../../api/gallery.ts'
 import { ApiError } from '../../api/client.ts'
+import { copyText } from '../../utils/clipboard.ts'
 import {
   DEFAULT_SHARE_TEMPLATE,
   SHARE_PLACEHOLDERS,
@@ -86,37 +87,13 @@ const toneClass = computed(() => {
   }
 })
 
-// copy 优先用剪贴板接口，被拒绝时回落到隐藏文本域。
+// copy 复制文本并把结果写进抽屉内的即时反馈。
 async function copy(text: string, label: string): Promise<void> {
   if (text === '') {
     feedback.value = '暂无可复制的链接'
     return
   }
-  let copied = false
-  try {
-    if (navigator.clipboard !== undefined) {
-      await navigator.clipboard.writeText(text)
-      copied = true
-    }
-  } catch {
-    copied = false
-  }
-  if (!copied) {
-    try {
-      const area = document.createElement('textarea')
-      area.value = text
-      area.setAttribute('readonly', '')
-      area.style.position = 'fixed'
-      area.style.opacity = '0'
-      document.body.appendChild(area)
-      area.select()
-      copied = document.execCommand('copy')
-      document.body.removeChild(area)
-    } catch {
-      copied = false
-    }
-  }
-  feedback.value = copied ? label + '已复制' : '复制失败，请手动选择'
+  feedback.value = (await copyText(text)) ? label + '已复制' : '复制失败，请手动选择'
 }
 
 function askToggle(): void {
