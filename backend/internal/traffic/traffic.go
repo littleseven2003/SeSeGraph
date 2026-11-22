@@ -14,6 +14,9 @@ import (
 const (
 	FlushInterval = 30 * time.Second
 	FlushBytes    = 5 << 20
+	// AlertRetryDelay 是预警发送失败后的重试间隔。
+	// 失败时不算送达，隔一段时间再试，避免每张图片都触发一次失败的发送。
+	AlertRetryDelay = 10 * time.Minute
 	// GB 是阈值换算单位。
 	GB = int64(1) << 30
 )
@@ -36,9 +39,14 @@ type Options struct {
 	// LimitBytes 是月度硬上限，非正表示不熔断。
 	LimitBytes int64
 	// Alert 在当月首次越过预警阈值时调用，回调在独立协程里执行，不应阻塞请求。
-	Alert func(month string, bytesOut, alertBytes int64)
+	// 返回错误表示没有送达：此时不记为已提醒，隔 AlertRetry 后重试。
+	Alert func(month string, bytesOut, alertBytes int64) error
 	// Now 便于测试替换时钟。
 	Now func() time.Time
+	// FlushEvery 覆盖后台刷盘间隔，非正时使用 FlushInterval。
+	FlushEvery time.Duration
+	// AlertRetry 覆盖告警重试间隔，非正时使用 AlertRetryDelay。
+	AlertRetry time.Duration
 }
 
 // Recorder 维护当月流量计数与刷盘节奏。单个实例服务整个进程。
@@ -53,7 +61,15 @@ type Recorder struct {
 	alertSent bool
 	updatedAt time.Time
 	pending   int64
+	dirty     bool
 	lastFlush time.Time
+
+	// alertRetryAt 是下一次允许尝试告警的时刻；上次发送失败时推后。
+	alertRetryAt time.Time
+
+	// started 与 stop 控制后台定时落盘的协程。
+	started bool
+	stop    chan struct{}
 }
 
 // ErrUnavailable 表示统计存储不可用。
@@ -65,7 +81,77 @@ func New(handle *sql.DB, opts Options) *Recorder {
 	if now == nil {
 		now = time.Now
 	}
-	return &Recorder{handle: handle, opts: opts, lastFlush: now()}
+	return &Recorder{handle: handle, opts: opts, lastFlush: now(), stop: make(chan struct{})}
+}
+
+// interval 返回后台刷盘间隔。
+func (r *Recorder) interval() time.Duration {
+	if r.opts.FlushEvery > 0 {
+		return r.opts.FlushEvery
+	}
+	return FlushInterval
+}
+
+// retryDelay 返回告警失败后的重试间隔。
+func (r *Recorder) retryDelay() time.Duration {
+	if r.opts.AlertRetry > 0 {
+		return r.opts.AlertRetry
+	}
+	return AlertRetryDelay
+}
+
+// Start 启动后台定时落盘。低流量下没有新的 Add 也能把余量写进数据库。
+// 返回的函数可停止协程并等待其退出，重复调用返回空函数。
+func (r *Recorder) Start(ctx context.Context) func() {
+	if r == nil {
+		return func() {}
+	}
+	r.mu.Lock()
+	if r.started {
+		r.mu.Unlock()
+		return func() {}
+	}
+	r.started = true
+	r.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(r.interval())
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-r.stop:
+				return
+			case <-ticker.C:
+				r.idleFlush(ctx)
+			}
+		}
+	}()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			close(r.stop)
+			<-done
+		})
+	}
+}
+
+// idleFlush 在空闲时钟点把待落盘的计数写入数据库。
+func (r *Recorder) idleFlush(ctx context.Context) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.handle == nil || !r.dirty {
+		return
+	}
+	clock := r.clock()
+	if err := r.loadLocked(ctx, clock); err != nil {
+		return
+	}
+	_ = r.flushLocked(ctx)
 }
 
 // currentMonth 返回统计使用的自然月标识。
@@ -90,6 +176,7 @@ func (r *Recorder) loadLocked(ctx context.Context, now time.Time) error {
 	r.requests = 0
 	r.alertSent = false
 	r.pending = 0
+	r.dirty = false
 	r.updatedAt = time.Time{}
 
 	if r.handle == nil {
@@ -106,9 +193,11 @@ func (r *Recorder) loadLocked(ctx context.Context, now time.Time) error {
 	if err != nil {
 		r.bytesOut = 0
 		r.requests = 0
+		r.dirty = false
 		return errors.New("读取流量统计失败")
 	}
 	r.alertSent = alertSent != 0
+	r.dirty = false
 	if parsed, parseErr := time.Parse("2006-01-02 15:04:05", updated); parseErr == nil {
 		r.updatedAt = parsed
 	}
@@ -123,26 +212,58 @@ func (r *Recorder) Add(ctx context.Context, bytes int64) bool {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.recordLocked(ctx, bytes, true)
+}
 
-	now := r.opts.Now
-	if now == nil {
-		now = time.Now
+// Begin 在开始转发前登记一次请求，并返回是否允许继续。
+// 返回 false 表示当月已达到硬上限：调用方不应再向上游取流。
+func (r *Recorder) Begin(ctx context.Context) bool {
+	if r == nil {
+		return true
 	}
-	clock := now()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return !r.recordLocked(ctx, 0, true)
+}
+
+// AddBytes 累加已经写给客户端的字节，不重复计请求。
+// 网关按固定缓冲区逐块调用，使并发传输中的用量始终是最新的。
+func (r *Recorder) AddBytes(ctx context.Context, bytes int64) {
+	if r == nil || bytes <= 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.recordLocked(ctx, bytes, false)
+}
+
+// recordLocked 在持锁状态下累加计数、按节奏刷盘并检查预警与上限。
+// request 为真时请求数加一；返回是否需要熔断。
+func (r *Recorder) recordLocked(ctx context.Context, bytes int64, request bool) bool {
+	clock := r.clock()
 	if err := r.loadLocked(ctx, clock); err != nil {
 		// 统计失败不影响图片转发，随后继续按内存计数。
-		r.bytesOut += bytes
-		r.requests++
+		if bytes > 0 {
+			r.bytesOut += bytes
+			r.pending += bytes
+		}
+		if request {
+			r.requests++
+		}
+		r.dirty = true
 		return r.overLimitLocked()
 	}
 	if bytes > 0 {
 		r.bytesOut += bytes
+		r.pending += bytes
 	}
-	r.requests++
-	r.pending += bytes
+	if request {
+		r.requests++
+	}
+	r.dirty = true
 	r.updatedAt = clock
 
-	needFlush := clock.Sub(r.lastFlush) >= FlushInterval || r.pending >= FlushBytes
+	needFlush := clock.Sub(r.lastFlush) >= r.interval() || r.pending >= FlushBytes
 	if needFlush {
 		_ = r.flushLocked(ctx)
 	}
@@ -178,18 +299,37 @@ func (r *Recorder) clock() time.Time {
 }
 
 // maybeAlertLocked 在首次越过预警阈值时回调一次，同一个月只提醒一次。
+// 发送失败不算送达：回滚标记并在重试间隔后重新尝试。
 func (r *Recorder) maybeAlertLocked(now time.Time) {
 	if r.opts.AlertBytes <= 0 || r.alertSent || r.bytesOut < r.opts.AlertBytes {
 		return
 	}
+	if !r.alertRetryAt.IsZero() && now.Before(r.alertRetryAt) {
+		return
+	}
 	r.alertSent = true
+	r.dirty = true
 	r.updatedAt = now
 	_ = r.flushLocked(context.Background())
-	if r.opts.Alert != nil {
-		month, bytes, threshold := r.month, r.bytesOut, r.opts.AlertBytes
-		alert := r.opts.Alert
-		go alert(month, bytes, threshold)
+	if r.opts.Alert == nil {
+		return
 	}
+	month, bytes, threshold := r.month, r.bytesOut, r.opts.AlertBytes
+	alert := r.opts.Alert
+	go func() {
+		if err := alert(month, bytes, threshold); err == nil {
+			return
+		}
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		// 只在仍是同一个月时回滚，避免把新月份的标记清掉。
+		if r.month == month {
+			r.alertSent = false
+			r.dirty = true
+			_ = r.flushLocked(context.Background())
+		}
+		r.alertRetryAt = r.clock().Add(r.retryDelay())
+	}()
 }
 
 // flushLocked 把内存中的当月累计写入数据库。时间为零时跳过，避免写入无意义的行。
@@ -213,6 +353,7 @@ func (r *Recorder) flushLocked(ctx context.Context) error {
 		return errors.New("保存流量统计失败")
 	}
 	r.pending = 0
+	r.dirty = false
 	r.lastFlush = r.clock()
 	return nil
 }

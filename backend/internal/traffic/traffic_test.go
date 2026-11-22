@@ -2,6 +2,7 @@ package traffic
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -162,11 +163,12 @@ func TestRecorderAlertsOncePerMonth(t *testing.T) {
 	var called int
 	recorder := newRecorder(t, clock, Options{
 		AlertBytes: 1000,
-		Alert: func(month string, bytesOut, alertBytes int64) {
+		Alert: func(month string, bytesOut, alertBytes int64) error {
 			mu.Lock()
 			called++
 			mu.Unlock()
 			alerts <- Stats{Month: month, BytesOut: bytesOut, AlertBytes: alertBytes}
+			return nil
 		},
 	})
 
@@ -197,8 +199,9 @@ func TestRecorderAlertsOncePerMonth(t *testing.T) {
 	}
 
 	// 告警标记随统计落库，重启后不再重复提醒。
-	reloaded := New(recorder.handle, Options{Now: clock.Now, AlertBytes: 1000, Alert: func(string, int64, int64) {
+	reloaded := New(recorder.handle, Options{Now: clock.Now, AlertBytes: 1000, Alert: func(string, int64, int64) error {
 		t.Error("重启后不应再次告警")
+		return nil
 	}})
 	if _, err := reloaded.Stats(ctx); err != nil {
 		t.Fatalf("读取失败: %v", err)
@@ -246,5 +249,114 @@ func TestRecorderWithoutHandle(t *testing.T) {
 	}
 	if err := recorder.Flush(ctx); err != nil {
 		t.Errorf("无存储时刷盘应静默成功: %v", err)
+	}
+}
+
+// waitFor 轮询等待条件成立，超时则判定失败。
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("等待条件超时")
+}
+
+func TestRecorderFlushesWhenIdle(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	clock := newTestClock()
+	recorder := newRecorder(t, clock, Options{FlushEvery: 10 * time.Millisecond})
+	stop := recorder.Start(ctx)
+	defer stop()
+
+	// 时钟不推进，也不再有新的 Add：只能靠后台定时协程落盘。
+	recorder.Add(ctx, 2048)
+	waitFor(t, func() bool {
+		var stored int64
+		err := recorder.handle.QueryRowContext(ctx,
+			`SELECT bytes_out FROM traffic_stats WHERE month = '2026-01'`).Scan(&stored)
+		return err == nil && stored == 2048
+	})
+}
+
+func TestRecorderBeginRejectsAtLimitDuringStream(t *testing.T) {
+	ctx := context.Background()
+	clock := newTestClock()
+	recorder := newRecorder(t, clock, Options{LimitBytes: 1000})
+
+	if !recorder.Begin(ctx) {
+		t.Fatal("未超限时应允许开始转发")
+	}
+	// 同一连接继续累加，跨过上限后新请求应被拒绝。
+	recorder.AddBytes(ctx, 1100)
+	if recorder.Begin(ctx) {
+		t.Error("并发传输中越过上限后，新请求应被拒绝")
+	}
+	if !recorder.OverLimit() {
+		t.Error("越过上限后 OverLimit 应为真")
+	}
+}
+
+func TestRecorderRetriesFailedAlert(t *testing.T) {
+	ctx := context.Background()
+	clock := newTestClock()
+
+	var mu sync.Mutex
+	var attempts int
+	var failedOnce bool
+	recorder := newRecorder(t, clock, Options{
+		AlertBytes: 1000,
+		AlertRetry: time.Minute,
+		Alert: func(string, int64, int64) error {
+			mu.Lock()
+			defer mu.Unlock()
+			attempts++
+			if attempts == 1 {
+				failedOnce = true
+				return errors.New("通知发送失败")
+			}
+			return nil
+		},
+	})
+
+	recorder.Add(ctx, 1200)
+	waitFor(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return failedOnce
+	})
+	// 发送失败不算送达，标记应回滚。
+	waitFor(t, func() bool {
+		stats, err := recorder.Stats(ctx)
+		return err == nil && !stats.AlertSent
+	})
+
+	// 重试间隔内不再重复发送。
+	recorder.Add(ctx, 10)
+	time.Sleep(20 * time.Millisecond)
+	mu.Lock()
+	got := attempts
+	mu.Unlock()
+	if got != 1 {
+		t.Fatalf("重试间隔内尝试次数 = %d，期望 1", got)
+	}
+
+	clock.Advance(2 * time.Minute)
+	recorder.Add(ctx, 10)
+	waitFor(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return attempts == 2
+	})
+	stats, err := recorder.Stats(ctx)
+	if err != nil {
+		t.Fatalf("读取统计失败: %v", err)
+	}
+	if !stats.AlertSent {
+		t.Error("送达后应记为已提醒")
 	}
 }

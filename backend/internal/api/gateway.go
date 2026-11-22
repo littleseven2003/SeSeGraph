@@ -137,6 +137,12 @@ func (g *imageGateway) handle(c *gin.Context) {
 	}
 	defer func() { <-g.slots }()
 
+	// 登记一次请求；并发传输中已越过上限时在这里再拦一次，确保不再向上游取流。
+	if !g.meter.Begin(c.Request.Context()) {
+		notFoundWithStatus(c, http.StatusServiceUnavailable, "本月流量已超限，图片暂不可用")
+		return
+	}
+
 	stream, err := g.streams.OpenStream(c.Request.Context(), image.RemoteFileID)
 	switch {
 	case errors.Is(err, storage.ErrFileUnavailable):
@@ -176,9 +182,9 @@ func (g *imageGateway) handle(c *gin.Context) {
 	}
 	c.Status(http.StatusOK)
 
-	written, copyErr := io.Copy(flushWriter{writer: c.Writer}, stream.Body)
-	// 只统计真正写给客户端的字节；超过上限后由 OverLimit 在下一个请求处熔断。
-	g.meter.Add(context.WithoutCancel(c.Request.Context()), written)
+	// 边转发边计费：并发传输期间新请求就能看到最新用量，越过上限后不再取流。
+	writer := flushWriter{writer: c.Writer, meter: g.meter, ctx: context.WithoutCancel(c.Request.Context())}
+	_, copyErr := io.Copy(writer, stream.Body)
 	if copyErr != nil {
 		// 客户端断开或上游中断：连接已不可用，这里只记录一次固定说明。
 		if c.Request.Context().Err() == nil && g.logger != nil {
@@ -191,11 +197,14 @@ func (g *imageGateway) handle(c *gin.Context) {
 // 只暴露 Write 方法，让 io.Copy 使用固定缓冲区而不是走整块快路径。
 type flushWriter struct {
 	writer gin.ResponseWriter
+	meter  *traffic.Recorder
+	ctx    context.Context
 }
 
 func (w flushWriter) Write(p []byte) (int, error) {
 	written, err := w.writer.Write(p)
 	if written > 0 {
+		w.meter.AddBytes(w.ctx, int64(written))
 		w.writer.Flush()
 	}
 	return written, err

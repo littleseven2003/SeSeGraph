@@ -176,10 +176,13 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	trafficMeter := traffic.New(store, traffic.Options{
 		AlertBytes: alertBytes,
 		LimitBytes: limitBytes,
-		Alert: func(month string, bytesOut, threshold int64) {
-			notifyTrafficAlert(ctx, switcher, month, bytesOut, threshold)
+		Alert: func(month string, bytesOut, threshold int64) error {
+			return notifyTrafficAlert(ctx, switcher, month, bytesOut, threshold)
 		},
 	})
+	// 空闲时也按间隔落盘，避免低流量下最后一笔一直留在内存里。
+	stopTrafficFlush := trafficMeter.Start(ctx)
+	defer stopTrafficFlush()
 	defer func() { _ = trafficMeter.Close(context.Background()) }()
 
 	// 自动备份：本地保留最近若干份，可按配置发送到频道。
@@ -440,8 +443,8 @@ func readGigabytes(lookupEnv func(string) (string, bool), key string) int64 {
 }
 
 // notifyTrafficAlert 用一条纯文本消息提醒当月流量越过预警阈值。
-// 通知失败只记日志，不影响图片转发；消息里不出现令牌与原始地址。
-func notifyTrafficAlert(ctx context.Context, switcher *storage.Switcher, month string, bytesOut, threshold int64) {
+// 返回错误表示没有送达，由统计器稍后重试；消息里不出现令牌与原始地址。
+func notifyTrafficAlert(ctx context.Context, switcher *storage.Switcher, month string, bytesOut, threshold int64) error {
 	notifyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -449,7 +452,9 @@ func notifyTrafficAlert(ctx context.Context, switcher *storage.Switcher, month s
 		month, float64(bytesOut)/float64(traffic.GB), float64(threshold)/float64(traffic.GB))
 	if err := switcher.SendMessage(notifyCtx, text); err != nil {
 		log.Print("流量预警通知发送失败，图床可能未配置或不可用")
+		return err
 	}
+	return nil
 }
 
 // telegraphClient 按代理配置构建 Telegraph 传输层，未启用代理时为直连。

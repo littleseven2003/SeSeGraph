@@ -607,3 +607,89 @@ func TestGatewayStopsAtMonthlyLimit(t *testing.T) {
 		t.Errorf("熔断响应不应被缓存: %s", rec.Header().Get("Cache-Control"))
 	}
 }
+
+// gatedReader 先返回第一块数据，随后阻塞到测试放行，便于在传输中途观察熔断。
+type gatedReader struct {
+	chunks [][]byte
+	gate   chan struct{}
+	index  int
+}
+
+func (r *gatedReader) Read(p []byte) (int, error) {
+	if r.index == 1 {
+		<-r.gate
+	}
+	if r.index >= len(r.chunks) {
+		return 0, io.EOF
+	}
+	written := copy(p, r.chunks[r.index])
+	r.index++
+	return written, nil
+}
+
+func (r *gatedReader) Close() error { return nil }
+
+// waitUntil 轮询等待条件成立，超时判定失败。
+func waitUntil(t *testing.T, cond func() bool, message string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("等待超时：%s", message)
+}
+
+// TestGatewayRejectsNewRequestsWhileStreamingAtLimit 验证传输中已越上限时，
+// 新请求被拒绝且不再向上游取流，正在传输的连接照常完成。
+func TestGatewayRejectsNewRequestsWhileStreamingAtLimit(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	postID := publishedPost(t, env)
+	code := shortCodeOf(t, env, postID)
+
+	gate := make(chan struct{})
+	streams := &fakeStreamProvider{}
+	streams.open = func(context.Context, string) (storage.Stream, error) {
+		body := &gatedReader{chunks: [][]byte{[]byte(strings.Repeat("a", 1200)), []byte("tail")}, gate: gate}
+		return storage.Stream{Body: body, ContentType: "image/jpeg"}, nil
+	}
+	meter := traffic.New(nil, traffic.Options{LimitBytes: 1000})
+	env.router = NewRouter(Deps{
+		Version: "test", Commit: "abc", Auth: env.auth, Sessions: env.sessions,
+		SetupToken: env.setupToken, Logger: env.logger, DataDir: env.dataDir, Posts: env.posts,
+		Streams: streams, Traffic: meter,
+	})
+
+	server := httptest.NewServer(env.router)
+	defer server.Close()
+
+	firstDone := make(chan struct{})
+	go func() {
+		defer close(firstDone)
+		response, err := http.Get(server.URL + "/i/" + code)
+		if err != nil {
+			return
+		}
+		_, _ = io.Copy(io.Discard, response.Body)
+		_ = response.Body.Close()
+	}()
+
+	waitUntil(t, meter.OverLimit, "第一块数据写出后应计入流量并越过上限")
+
+	second, err := http.Get(server.URL + "/i/" + code)
+	if err != nil {
+		t.Fatalf("第二个请求失败: %v", err)
+	}
+	defer func() { _ = second.Body.Close() }()
+	if second.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("状态码 = %d，期望 503", second.StatusCode)
+	}
+	if streams.callCount() != 1 {
+		t.Errorf("越过上限后不应再取流，上游调用 = %d", streams.callCount())
+	}
+
+	close(gate)
+	<-firstDone
+}
