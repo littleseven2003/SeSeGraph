@@ -188,7 +188,7 @@ onBeforeUnmount(() => {
           <div class="flex items-center gap-2">
             <p class="text-sm font-semibold tracking-tight">SeSeGraph</p>
             <span
-              class="hidden -rotate-2 rounded border border-dashed border-brand/40 bg-brand-soft px-2 py-0.5 text-xs font-medium leading-none text-brand-strong sm:inline-block"
+              class="hidden rounded border border-dashed border-brand/40 bg-brand-soft px-2 py-0.5 text-xs font-medium leading-none text-brand-strong sm:inline-block"
               >SeSe图册</span
             >
           </div>

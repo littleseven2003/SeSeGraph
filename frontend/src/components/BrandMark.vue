@@ -30,12 +30,5 @@ withDefaults(defineProps<{ size?: number }>(), { size: 32 })
 <style scoped>
 .paper {
   transform-origin: 16px 16px;
-  transition: transform 220ms ease;
-}
-
-@media (hover: hover) and (prefers-reduced-motion: no-preference) {
-  .brand-mark:hover .paper {
-    transform: rotate(-11deg);
-  }
 }
 </style>

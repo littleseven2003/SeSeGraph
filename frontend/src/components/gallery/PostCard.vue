@@ -115,7 +115,7 @@ const copyLabel = computed(() => {
         </svg>
       </span>
       <span
-        class="absolute left-2 top-2 inline-flex -rotate-2 items-center gap-1.5 rounded border px-2 py-1 text-xs font-medium leading-none shadow-[0_1px_0_0_rgba(27,26,23,0.12)]"
+        class="absolute left-2 top-2 inline-flex items-center gap-1.5 rounded border px-2 py-1 text-xs font-medium leading-none shadow-[0_1px_0_0_rgba(27,26,23,0.12)]"
         :class="chipClass"
       >
         <span v-if="status.tone === 'ok'" class="h-1.5 w-1.5 rounded-full bg-[#34d399]" aria-hidden="true"></span>

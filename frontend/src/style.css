@@ -75,17 +75,6 @@
   background-position: left center;
 }
 
-/* 相纸卡悬停时的交替微倾，形成手工排版的手作感。 */
-@media (hover: hover) and (prefers-reduced-motion: no-preference) {
-  .polaroid:nth-child(odd):hover {
-    rotate: 0.6deg;
-  }
-
-  .polaroid:nth-child(even):hover {
-    rotate: -0.6deg;
-  }
-}
-
 /* 取景框直角标：四个 L 角用背景渐变画出来，不额外占用节点。 */
 .viewfinder-corners {
   position: relative;
