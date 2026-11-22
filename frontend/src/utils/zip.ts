@@ -74,7 +74,8 @@ export function unpackZip(data: Uint8Array, options: ArchiveOptions = {}): Unpac
   const wantedMeta = new Set((options.metaNames ?? DEFAULT_META_FILENAMES).map((name) => name.toLowerCase()))
 
   const images: { name: string; size: number }[] = []
-  const wanted = new Set<string>()
+  // 白名单同时记录第一遍看到的原始大小，第二遍据此只展开登记过的那一份。
+  const wanted = new Map<string, number>()
   let metaEntry = ''
   let metaName = ''
   let metaError = ''
@@ -104,7 +105,7 @@ export function unpackZip(data: Uint8Array, options: ArchiveOptions = {}): Unpac
         }
         totalBytes += size
         images.push({ name: file.name, size })
-        wanted.add(file.name)
+        wanted.set(file.name, size)
         return false
       }
       if (metaEntry === '' && wantedMeta.has(baseName(file.name).toLowerCase())) {
@@ -116,7 +117,7 @@ export function unpackZip(data: Uint8Array, options: ArchiveOptions = {}): Unpac
         }
         metaEntry = file.name
         metaName = baseName(file.name)
-        wanted.add(file.name)
+        wanted.set(file.name, file.originalSize)
         return false
       }
       skipped += 1
@@ -143,9 +144,18 @@ export function unpackZip(data: Uint8Array, options: ArchiveOptions = {}): Unpac
     return { ok: false, error: '压缩包里没有找到受支持的图片' }
   }
 
-  // 第二遍：只展开白名单条目。
+  // 第二遍：只展开白名单条目。ZIP 允许同名条目重复出现，
+  // 因此除了名字还要比对第一遍登记的原始大小，同名只展开一次，
+  // 避免用同名副本绕过说明文件与单图上限。
+  const expanded = new Set<string>()
   const files = unzipSync(data, {
-    filter: (file) => wanted.has(file.name),
+    filter: (file) => {
+      const expected = wanted.get(file.name)
+      if (expected === undefined || expanded.has(file.name)) return false
+      if (file.originalSize !== expected) return false
+      expanded.add(file.name)
+      return true
+    },
   })
 
   const unpacked: ArchiveImage[] = []

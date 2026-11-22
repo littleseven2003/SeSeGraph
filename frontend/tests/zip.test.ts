@@ -135,3 +135,98 @@ test('说明文件超过独立上限时忽略并给出提示', () => {
   assert.equal(small.metaText, '标题：小')
   assert.equal(small.metaError, '')
 })
+
+// crc32 供手工构造的 ZIP 使用，测试只需要标准 CRC-32。
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff
+  for (const byte of bytes) {
+    crc ^= byte
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = crc & 1 ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0
+}
+
+// buildDuplicateZip 构造允许同名条目的 ZIP（zipSync 的入参是对象，无法表达重名）。
+function buildDuplicateZip(entries: { name: string; data: Uint8Array }[]): Uint8Array {
+  const locals: Uint8Array[] = []
+  const centrals: Uint8Array[] = []
+  let offset = 0
+  for (const entry of entries) {
+    const name = strToU8(entry.name)
+    const size = entry.data.length
+    const crc = crc32(entry.data)
+
+    const local = new Uint8Array(30 + name.length + size)
+    const lv = new DataView(local.buffer)
+    lv.setUint32(0, 0x04034b50, true)
+    lv.setUint16(4, 20, true)
+    lv.setUint32(14, crc, true)
+    lv.setUint32(18, size, true)
+    lv.setUint32(22, size, true)
+    lv.setUint16(26, name.length, true)
+    local.set(name, 30)
+    local.set(entry.data, 30 + name.length)
+
+    const central = new Uint8Array(46 + name.length)
+    const cv = new DataView(central.buffer)
+    cv.setUint32(0, 0x02014b50, true)
+    cv.setUint16(4, 20, true)
+    cv.setUint16(6, 20, true)
+    cv.setUint32(16, crc, true)
+    cv.setUint32(20, size, true)
+    cv.setUint32(24, size, true)
+    cv.setUint16(28, name.length, true)
+    cv.setUint32(42, offset, true)
+    central.set(name, 46)
+
+    locals.push(local)
+    centrals.push(central)
+    offset += local.length
+  }
+
+  const directorySize = centrals.reduce((sum, item) => sum + item.length, 0)
+  const end = new Uint8Array(22)
+  const ev = new DataView(end.buffer)
+  ev.setUint32(0, 0x06054b50, true)
+  ev.setUint16(8, entries.length, true)
+  ev.setUint16(10, entries.length, true)
+  ev.setUint32(12, directorySize, true)
+  ev.setUint32(16, offset, true)
+
+  const out = new Uint8Array(offset + directorySize + end.length)
+  let position = 0
+  for (const part of locals) {
+    out.set(part, position)
+    position += part.length
+  }
+  for (const part of centrals) {
+    out.set(part, position)
+    position += part.length
+  }
+  out.set(end, position)
+  return out
+}
+
+test('同名条目不能绕过说明文件大小上限', () => {
+  const small = strToU8('标题：小')
+  const large = strToU8('说明'.repeat(100))
+  const archive = buildDuplicateZip([
+    { name: 'a.jpg', data: new Uint8Array([1]) },
+    { name: 'info.txt', data: small },
+    { name: 'info.txt', data: large },
+  ])
+
+  const result = expectOk(unpackZip(archive))
+  assert.deepEqual(result.images.map((image) => image.name), ['a.jpg'])
+  // 只展开第一遍登记的那一份，第二份同名的大文件不会被解开。
+  assert.equal(result.metaText, '标题：小')
+  assert.equal(result.metaError, '')
+  assert.equal(result.skipped, 1)
+
+  // 上限很小时同名大文件同样被拦下。
+  const limited = expectOk(unpackZip(archive, { limits: { maxMetaBytes: 12 } }))
+  assert.deepEqual(limited.images.map((image) => image.name), ['a.jpg'])
+  assert.equal(limited.metaText, '标题：小')
+})
