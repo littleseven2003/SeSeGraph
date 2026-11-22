@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ApiError } from '../api/client.ts'
 import {
   fetchBackupStatus,
@@ -63,6 +63,9 @@ const backing = ref(false)
 const checking = ref(false)
 const checkError = ref('')
 const result = ref<ConnectionResult | null>(null)
+// activeSection 跟随滚动更新，左侧目录用它显示当前所在分组。
+const activeSection = ref('upstream')
+let sectionObserver: IntersectionObserver | undefined
 
 // 分组导航：桌面左侧目录与手机顶部横向目录共用同一份锚点。
 const SETTING_NAV = [
@@ -268,6 +271,24 @@ async function check(): Promise<void> {
 
 onMounted(() => {
   void load()
+  const targets = SETTING_NAV.map((item) => document.getElementById(item.id)).filter(
+    (node): node is HTMLElement => node !== null,
+  )
+  if (typeof IntersectionObserver === 'undefined' || targets.length === 0) return
+  sectionObserver = new IntersectionObserver(
+    (entries) => {
+      const visible = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0]
+      if (visible !== undefined) activeSection.value = visible.target.id
+    },
+    { rootMargin: '-96px 0px -55% 0px', threshold: [0.1, 0.4] },
+  )
+  targets.forEach((target) => sectionObserver?.observe(target))
+})
+
+onBeforeUnmount(() => {
+  sectionObserver?.disconnect()
 })
 </script>
 
@@ -303,7 +324,7 @@ onMounted(() => {
           v-for="item in SETTING_NAV"
           :key="item.id"
           :href="'#' + item.id"
-          class="inline-flex h-10 shrink-0 items-center rounded border border-line px-3 text-xs font-medium text-muted transition hover:border-ink/25 hover:text-ink"
+          class="inline-flex h-11 shrink-0 items-center rounded border border-line px-3 text-xs font-medium text-muted transition hover:border-ink/25 hover:text-ink"
         >
           {{ item.label }}
         </a>
@@ -317,8 +338,14 @@ onMounted(() => {
           <li v-for="item in SETTING_NAV" :key="item.id">
             <a
               :href="'#' + item.id"
-              class="block rounded-md px-3 py-2 text-sm text-muted transition hover:bg-canvas hover:text-ink"
+              class="flex items-center gap-2 rounded-md px-3 py-2 text-sm transition hover:bg-canvas hover:text-ink"
+              :class="activeSection === item.id ? 'text-ink' : 'text-muted'"
             >
+              <span
+                class="h-1.5 w-1.5 shrink-0 rounded-full transition"
+                :class="activeSection === item.id ? 'bg-brand' : 'bg-transparent'"
+                aria-hidden="true"
+              ></span>
               {{ item.label }}
             </a>
           </li>
@@ -358,7 +385,10 @@ onMounted(() => {
         <template v-else-if="view !== null">
           <div class="space-y-8">
             <section id="upstream" class="scroll-mt-36">
-              <h2 class="text-base font-semibold tracking-tight">上游与代理</h2>
+              <div class="flex items-center gap-2">
+                <span class="tnum rounded border border-line bg-surface px-1.5 py-0.5 text-xs font-medium leading-none text-muted">01</span>
+                <h2 class="text-base font-semibold tracking-tight">上游与代理</h2>
+              </div>
               <p class="mt-1 text-xs text-muted">图片与发布的上游凭据、代理走向，保存后立即重建传输层。</p>
 
               <div class="mt-3 space-y-3">
@@ -558,7 +588,10 @@ onMounted(() => {
             </section>
 
             <section id="defaults" class="scroll-mt-36">
-              <h2 class="text-base font-semibold tracking-tight">发帖默认值</h2>
+              <div class="flex items-center gap-2">
+                <span class="tnum rounded border border-line bg-surface px-1.5 py-0.5 text-xs font-medium leading-none text-muted">02</span>
+                <h2 class="text-base font-semibold tracking-tight">发帖默认值</h2>
+              </div>
               <p class="mt-1 text-xs text-muted">说明文件命中后自动预填标题与说明，工作台的解析方式默认按这里。</p>
 
               <div class="mt-3 rounded-md border border-line bg-surface">
@@ -598,7 +631,10 @@ onMounted(() => {
             </section>
 
             <section id="check" class="scroll-mt-36">
-              <h2 class="text-base font-semibold tracking-tight">连通性自检</h2>
+              <div class="flex items-center gap-2">
+                <span class="tnum rounded border border-line bg-surface px-1.5 py-0.5 text-xs font-medium leading-none text-muted">03</span>
+                <h2 class="text-base font-semibold tracking-tight">连通性自检</h2>
+              </div>
               <p class="mt-1 text-xs text-muted">并行检测 Bot 与频道权限、Telegraph 账户，只读请求，不发送任何内容。</p>
 
               <div class="mt-3 rounded-md border border-line bg-surface">
@@ -607,7 +643,7 @@ onMounted(() => {
                   <button
                     type="button"
                     :disabled="checking"
-                    class="h-10 shrink-0 rounded-md border border-line px-3 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas disabled:opacity-60"
+                    class="h-11 shrink-0 rounded-md border border-line px-3 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas disabled:opacity-60"
                     @click="check"
                   >
                     {{ checking ? '检测中…' : '开始检测' }}
@@ -645,7 +681,10 @@ onMounted(() => {
             </section>
 
             <section id="ops" class="scroll-mt-36">
-              <h2 class="text-base font-semibold tracking-tight">流量与备份</h2>
+              <div class="flex items-center gap-2">
+                <span class="tnum rounded border border-line bg-surface px-1.5 py-0.5 text-xs font-medium leading-none text-muted">04</span>
+                <h2 class="text-base font-semibold tracking-tight">流量与备份</h2>
+              </div>
               <p class="mt-1 text-xs text-muted">按自然月统计图片出站流量，生成一致性快照并可下载或发到频道。</p>
 
               <div class="mt-3 space-y-3">
@@ -654,7 +693,7 @@ onMounted(() => {
                     <h3 class="text-sm font-semibold">流量看护</h3>
                     <button
                       type="button"
-                      class="h-10 shrink-0 rounded-md border border-line px-3 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas"
+                      class="h-11 shrink-0 rounded-md border border-line px-3 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas"
                       @click="loadTraffic"
                     >
                       刷新
@@ -695,7 +734,7 @@ onMounted(() => {
                       <button
                         type="button"
                         :disabled="backing"
-                        class="h-10 rounded-md border border-line px-3 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas disabled:opacity-60"
+                        class="h-11 rounded-md border border-line px-3 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas disabled:opacity-60"
                         @click="runBackup"
                       >
                         {{ backing ? '备份中…' : '立即备份' }}
@@ -703,7 +742,7 @@ onMounted(() => {
                       <a
                         v-if="backup !== null && backup.latest !== null"
                         href="/api/backup/download"
-                        class="inline-flex h-10 items-center rounded-md border border-line px-3 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas"
+                        class="inline-flex h-11 items-center rounded-md border border-line px-3 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas"
                       >
                         下载最近备份
                       </a>
