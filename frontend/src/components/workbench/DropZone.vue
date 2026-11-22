@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 
 // 选图入口：ZIP 压缩包、本地文件夹或多张图片，支持拖拽。
-const props = defineProps<{ disabled?: boolean }>()
+const props = defineProps<{ disabled?: boolean; compact?: boolean }>()
 const emit = defineEmits<{
   (event: 'zip', file: File): void
   (event: 'images', files: File[]): void
@@ -105,7 +105,48 @@ async function onDrop(event: DragEvent): Promise<void> {
 
 <template>
   <section
-    class="rounded-lg border border-dashed bg-surface px-6 py-10 text-center transition"
+    v-if="props.compact"
+    class="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 rounded-md border border-dashed bg-surface px-4 py-3 transition"
+    :class="dragging ? 'border-brand bg-brand/5' : 'border-line'"
+    @dragover.prevent="dragging = !props.disabled"
+    @dragleave.prevent="dragging = false"
+    @drop.prevent="onDrop"
+  >
+    <p class="text-xs text-muted">拖入更多图片或压缩包，会追加到当前列表</p>
+    <div class="flex items-center gap-1.5">
+      <button
+        type="button"
+        :disabled="props.disabled"
+        class="h-8 rounded border border-line px-2.5 text-xs font-medium transition hover:border-ink/25 hover:bg-canvas disabled:opacity-60"
+        @click="open(imageInput)"
+      >
+        选择图片
+      </button>
+      <button
+        type="button"
+        :disabled="props.disabled"
+        class="h-8 rounded border border-line px-2.5 text-xs font-medium transition hover:border-ink/25 hover:bg-canvas disabled:opacity-60"
+        @click="open(folderInput)"
+      >
+        选择文件夹
+      </button>
+      <button
+        type="button"
+        :disabled="props.disabled"
+        class="h-8 rounded border border-line px-2.5 text-xs font-medium transition hover:border-ink/25 hover:bg-canvas disabled:opacity-60"
+        @click="open(zipInput)"
+      >
+        选择 ZIP
+      </button>
+    </div>
+    <input ref="zipInput" type="file" accept=".zip,application/zip" class="hidden" @change="takeZip" />
+    <input ref="folderInput" type="file" multiple class="hidden" @change="takeImages" />
+    <input ref="imageInput" type="file" accept="image/*" multiple class="hidden" @change="takeImages" />
+  </section>
+
+  <section
+    v-else
+    class="rounded-lg border border-dashed bg-surface px-6 py-9 text-center transition"
     :class="dragging ? 'border-brand bg-brand/5' : 'border-line'"
     @dragover.prevent="dragging = !props.disabled"
     @dragleave.prevent="dragging = false"
@@ -124,7 +165,7 @@ async function onDrop(event: DragEvent): Promise<void> {
       <button
         type="button"
         :disabled="props.disabled"
-        class="h-9 rounded-md bg-brand px-3 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+        class="h-10 rounded-md bg-brand px-3.5 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
         @click="open(zipInput)"
       >
         选择 ZIP
@@ -132,7 +173,7 @@ async function onDrop(event: DragEvent): Promise<void> {
       <button
         type="button"
         :disabled="props.disabled"
-        class="h-9 rounded-md border border-line px-3 text-sm font-medium transition hover:border-muted/40 hover:bg-canvas disabled:opacity-60"
+        class="h-10 rounded-md border border-line px-3.5 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas disabled:opacity-60"
         @click="open(folderInput)"
       >
         选择文件夹
@@ -140,11 +181,15 @@ async function onDrop(event: DragEvent): Promise<void> {
       <button
         type="button"
         :disabled="props.disabled"
-        class="h-9 rounded-md border border-line px-3 text-sm font-medium transition hover:border-muted/40 hover:bg-canvas disabled:opacity-60"
+        class="h-10 rounded-md border border-line px-3.5 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas disabled:opacity-60"
         @click="open(imageInput)"
       >
         选择图片
       </button>
+    </div>
+
+    <div v-if="$slots.default" class="mt-5 border-t border-line pt-4">
+      <slot />
     </div>
 
     <input ref="zipInput" type="file" accept=".zip,application/zip" class="hidden" @change="takeZip" />
