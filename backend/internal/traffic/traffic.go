@@ -64,6 +64,8 @@ type Recorder struct {
 	dirty     bool
 	lastFlush time.Time
 
+	// alerting 表示一次告警发送正在进行，避免并发重复发送。
+	alerting bool
 	// alertRetryAt 是下一次允许尝试告警的时刻；上次发送失败时推后。
 	alertRetryAt time.Time
 
@@ -140,18 +142,19 @@ func (r *Recorder) Start(ctx context.Context) func() {
 	}
 }
 
-// idleFlush 在空闲时钟点把待落盘的计数写入数据库。
+// idleFlush 在空闲时钟点把待落盘的计数写入数据库，并检查是否需要补发预警。
+// 预警重试不依赖新的图片请求：并发熔断后即使没有流量，也能在重试间隔到达后补发。
 func (r *Recorder) idleFlush(ctx context.Context) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.handle == nil || !r.dirty {
-		return
-	}
 	clock := r.clock()
 	if err := r.loadLocked(ctx, clock); err != nil {
 		return
 	}
-	_ = r.flushLocked(ctx)
+	if r.dirty {
+		_ = r.flushLocked(ctx)
+	}
+	r.maybeAlertLocked(clock)
 }
 
 // currentMonth 返回统计使用的自然月标识。
@@ -298,37 +301,42 @@ func (r *Recorder) clock() time.Time {
 	return time.Now()
 }
 
-// maybeAlertLocked 在首次越过预警阈值时回调一次，同一个月只提醒一次。
-// 发送失败不算送达：回滚标记并在重试间隔后重新尝试。
+// maybeAlertLocked 在越过预警阈值时回调一次，同一个月只提醒一次。
+// 只有发送成功才持久化已提醒标记；失败后由后台协程在重试间隔到达时再次尝试，
+// 因此熔断后没有新的图片请求也仍能补发。
 func (r *Recorder) maybeAlertLocked(now time.Time) {
-	if r.opts.AlertBytes <= 0 || r.alertSent || r.bytesOut < r.opts.AlertBytes {
+	if r.opts.AlertBytes <= 0 || r.alertSent || r.alerting || r.bytesOut < r.opts.AlertBytes {
 		return
 	}
 	if !r.alertRetryAt.IsZero() && now.Before(r.alertRetryAt) {
 		return
 	}
-	r.alertSent = true
-	r.dirty = true
-	r.updatedAt = now
-	_ = r.flushLocked(context.Background())
 	if r.opts.Alert == nil {
+		r.alertSent = true
+		r.dirty = true
+		_ = r.flushLocked(context.Background())
 		return
 	}
+
+	r.alerting = true
+	r.updatedAt = now
 	month, bytes, threshold := r.month, r.bytesOut, r.opts.AlertBytes
 	alert := r.opts.Alert
 	go func() {
-		if err := alert(month, bytes, threshold); err == nil {
-			return
-		}
+		err := alert(month, bytes, threshold)
 		r.mu.Lock()
 		defer r.mu.Unlock()
-		// 只在仍是同一个月时回滚，避免把新月份的标记清掉。
+		r.alerting = false
+		if err != nil {
+			r.alertRetryAt = r.clock().Add(r.retryDelay())
+			return
+		}
+		// 只在仍是同一个月时记录，避免把新月份的标记写错。
 		if r.month == month {
-			r.alertSent = false
+			r.alertSent = true
 			r.dirty = true
 			_ = r.flushLocked(context.Background())
 		}
-		r.alertRetryAt = r.clock().Add(r.retryDelay())
 	}()
 }
 

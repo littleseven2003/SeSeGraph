@@ -198,6 +198,12 @@ func TestRecorderAlertsOncePerMonth(t *testing.T) {
 	default:
 	}
 
+	// 送达后才登记已提醒标记，等待后台写入完成再回读。
+	waitFor(t, func() bool {
+		stats, err := recorder.Stats(ctx)
+		return err == nil && stats.AlertSent
+	})
+
 	// 告警标记随统计落库，重启后不再重复提醒。
 	reloaded := New(recorder.handle, Options{Now: clock.Now, AlertBytes: 1000, Alert: func(string, int64, int64) error {
 		t.Error("重启后不应再次告警")
@@ -283,6 +289,67 @@ func TestRecorderFlushesWhenIdle(t *testing.T) {
 	})
 }
 
+func TestRecorderRetriesAlertWithoutNewTraffic(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	clock := newTestClock()
+
+	var mu sync.Mutex
+	var attempts int
+	recorder := newRecorder(t, clock, Options{
+		AlertBytes: 1000,
+		LimitBytes: 1500,
+		FlushEvery: 10 * time.Millisecond,
+		AlertRetry: time.Minute,
+		Alert: func(string, int64, int64) error {
+			mu.Lock()
+			defer mu.Unlock()
+			attempts++
+			if attempts == 1 {
+				return errors.New("通知发送失败")
+			}
+			return nil
+		},
+	})
+	stop := recorder.Start(ctx)
+	defer stop()
+
+	// 一次越过预警与上限：此后网关不再接受新请求，也不会再计费。
+	recorder.Add(ctx, 2000)
+	if !recorder.OverLimit() {
+		t.Fatal("应已超过硬上限")
+	}
+	waitFor(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return attempts == 1
+	})
+	waitUntilStored := func(want int64) {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			var stored int64
+			err := recorder.handle.QueryRowContext(ctx,
+				`SELECT alert_sent FROM traffic_stats WHERE month = '2026-01'`).Scan(&stored)
+			if err == nil && stored == want {
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		t.Fatalf("数据库 alert_sent 未变为 %d", want)
+	}
+	waitUntilStored(0)
+
+	// 没有任何新流量，只推进时钟，后台协程应补发并登记已提醒。
+	clock.Advance(2 * time.Minute)
+	waitFor(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return attempts == 2
+	})
+	waitUntilStored(1)
+}
+
 func TestRecorderBeginRejectsAtLimitDuringStream(t *testing.T) {
 	ctx := context.Background()
 	clock := newTestClock()
@@ -352,11 +419,18 @@ func TestRecorderRetriesFailedAlert(t *testing.T) {
 		defer mu.Unlock()
 		return attempts == 2
 	})
-	stats, err := recorder.Stats(ctx)
-	if err != nil {
-		t.Fatalf("读取统计失败: %v", err)
+	waitFor(t, func() bool {
+		stats, err := recorder.Stats(ctx)
+		return err == nil && stats.AlertSent
+	})
+
+	// 失败期间不应把已提醒标记写进数据库。
+	var stored int64
+	if err := recorder.handle.QueryRowContext(ctx,
+		`SELECT alert_sent FROM traffic_stats WHERE month = '2026-01'`).Scan(&stored); err != nil {
+		t.Fatalf("查询失败: %v", err)
 	}
-	if !stats.AlertSent {
-		t.Error("送达后应记为已提醒")
+	if stored != 1 {
+		t.Errorf("送达后数据库 alert_sent = %d，期望 1", stored)
 	}
 }
