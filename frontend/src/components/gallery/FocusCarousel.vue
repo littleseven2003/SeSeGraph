@@ -22,16 +22,26 @@ const current = computed<GalleryItem | null>(() => props.items[index.value] ?? n
 const position = computed(() => String(index.value + 1).padStart(2, '0'))
 const total = computed(() => String(props.items.length).padStart(2, '0'))
 
-const { showBlur, revealed, activate, remask } = useCoverReveal(() => props.blurred)
+const { showBlur, revealed, activate, remask, onCoverEnter, onCoverLeave } = useCoverReveal(() => props.blurred)
 
-const shareUrl = computed(() => (current.value === null ? '' : postShareUrl(current.value)))
 const status = computed(() =>
   current.value === null ? null : statusLabel(current.value.status, current.value.publish_state, current.value.disabled),
 )
 const publishedDate = computed(() => formatPublishedAt(current.value?.published_at ?? '').split(' ')[0] ?? '')
 
-const copyState = ref<'idle' | 'copied' | 'failed'>('idle')
+const copiedId = ref<number | null>(null)
 let copyTimer: ReturnType<typeof setTimeout> | undefined
+
+async function copyItem(item: GalleryItem): Promise<void> {
+  const url = postShareUrl(item)
+  if (url === '') return
+  const ok = await copyText(url)
+  copiedId.value = ok ? item.id : null
+  if (copyTimer !== undefined) clearTimeout(copyTimer)
+  copyTimer = setTimeout(() => {
+    copiedId.value = null
+  }, 1800)
+}
 
 function formatDate(value: string | undefined): string {
   return value === undefined ? '' : formatPublishedAt(value).split(' ')[0] ?? ''
@@ -45,14 +55,19 @@ function statusOf(item: GalleryItem) {
 const entries = computed(() =>
   props.items.map((item) => {
     const status = statusOf(item)
-    return { item, date: formatDate(item.published_at), label: status.label, tone: status.tone }
+    return {
+      item,
+      date: formatDate(item.published_at),
+      label: status.label,
+      tone: status.tone,
+      shareUrl: postShareUrl(item),
+    }
   }),
 )
 
 function select(target: number): void {
   if (props.items.length === 0) return
   index.value = ((target % props.items.length) + props.items.length) % props.items.length
-  copyState.value = 'idle'
 }
 
 function step(delta: number): void {
@@ -63,15 +78,6 @@ function onCover(): void {
   const item = current.value
   if (item === null) return
   activate(() => emit('open', item.id))
-}
-
-async function copyLink(): Promise<void> {
-  if (shareUrl.value === '') return
-  copyState.value = (await copyText(shareUrl.value)) ? 'copied' : 'failed'
-  if (copyTimer !== undefined) clearTimeout(copyTimer)
-  copyTimer = setTimeout(() => {
-    copyState.value = 'idle'
-  }, 1800)
 }
 
 const reducedMotion = ref(false)
@@ -142,15 +148,17 @@ onBeforeUnmount(() => {
     @keydown.left.prevent="step(-1)"
     @keydown.right.prevent="step(1)"
   >
-    <div class="grid gap-4 lg:grid-cols-[minmax(0,1.32fr)_minmax(0,1fr)] lg:items-start lg:gap-6">
+    <div class="grid gap-4 lg:grid-cols-[minmax(0,1.32fr)_minmax(0,1fr)] lg:items-stretch lg:gap-6">
       <div class="min-w-0" :class="showBlur ? 'is-blurred' : ''">
         <div class="relative">
           <button
             type="button"
-            class="relative block aspect-[16/10] w-full overflow-hidden rounded-2xl bg-canvas lg:max-h-[400px]"
+            class="relative block aspect-[16/10] w-full overflow-hidden rounded-2xl bg-canvas lg:aspect-auto lg:h-[360px]"
             :aria-label="`打开《${current.title}》详情`"
             data-reveal="cover"
             @click="onCover"
+            @mouseenter="onCoverEnter"
+            @mouseleave="onCoverLeave"
           >
             <img
               v-if="current.cover_url !== ''"
@@ -206,43 +214,13 @@ onBeforeUnmount(() => {
             重新遮罩
           </button>
         </div>
-
-        <div class="mt-3 flex items-center gap-2.5">
-          <button
-            type="button"
-            class="h-11 rounded-full bg-ink px-5 text-sm font-medium text-white transition hover:bg-ink/90"
-            @click="onCover"
-          >
-            打开图集
-          </button>
-          <button
-            v-if="shareUrl !== ''"
-            type="button"
-            class="inline-flex h-11 items-center gap-2 rounded-full border px-4 text-sm font-medium transition"
-            :class="
-              copyState === 'idle'
-                ? 'border-brand/25 bg-brand-soft text-brand-strong hover:border-brand/45'
-                : copyState === 'copied'
-                  ? 'border-accent/30 bg-accent-soft text-accent'
-                  : 'border-danger/30 bg-white text-danger'
-            "
-            :aria-label="copyState === 'idle' ? '复制链接' : copyState === 'copied' ? '已复制链接' : '复制失败'"
-            @click="copyLink"
-          >
-            {{ copyState === 'idle' ? '复制链接' : copyState === 'copied' ? '已复制' : '复制失败' }}
-          </button>
-          <span role="status" aria-live="polite" class="sr-only">{{ copyState === 'idle' ? '' : '已复制链接' }}</span>
-        </div>
       </div>
 
-      <div class="min-w-0">
-        <div class="flex items-center justify-between gap-2">
-          <p class="text-xs font-medium tracking-[0.14em] text-muted tnum">
-            最新图集 · {{ position }} / {{ total }}
-          </p>
+      <div class="flex min-w-0 flex-col">
+        <div class="flex items-center justify-end">
           <button
             type="button"
-            class="h-9 rounded-full px-2.5 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
+            class="h-8 rounded-full px-2 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
             :aria-label="manualPaused ? '继续自动切换' : '暂停自动切换'"
             :aria-pressed="manualPaused"
             @click="manualPaused = !manualPaused"
@@ -251,32 +229,78 @@ onBeforeUnmount(() => {
           </button>
         </div>
 
-        <ul class="mt-2 divide-y divide-line/60">
-          <li v-for="(entry, itemIndex) in entries" :key="entry.item.id">
-            <button
-              type="button"
-              class="relative flex min-h-11 w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition"
-              :class="itemIndex === index ? 'bg-brand-soft' : 'hover:bg-canvas'"
-              :aria-current="itemIndex === index ? 'true' : undefined"
-              :aria-label="`查看第 ${itemIndex + 1} 组：${entry.item.title}`"
-              @click="select(itemIndex)"
-            >
+        <ul class="mt-1 flex flex-1 flex-col divide-y divide-line/60">
+          <li
+            v-for="(entry, itemIndex) in entries"
+            :key="entry.item.id"
+            class="flex min-h-0 flex-1 items-center"
+            @mouseenter="select(itemIndex)"
+          >
+            <div class="relative flex w-full items-center gap-1.5 rounded-xl px-2 py-1.5" :class="itemIndex === index ? 'bg-brand-soft' : ''">
               <span
                 v-if="itemIndex === index"
                 class="absolute left-0 top-1/2 h-6 w-[3px] -translate-y-1/2 rounded-full bg-brand"
                 aria-hidden="true"
               ></span>
-              <span class="tnum w-6 shrink-0 text-xs text-muted">{{ String(itemIndex + 1).padStart(2, '0') }}</span>
-              <span class="min-w-0 flex-1">
-                <span class="block truncate text-sm" :class="itemIndex === index ? 'font-semibold text-ink' : 'text-ink/80'">{{
+              <button
+                type="button"
+                class="flex min-w-0 flex-1 flex-col items-start gap-0.5 px-1 text-left"
+                :aria-label="`查看第 ${itemIndex + 1} 组：${entry.item.title}`"
+                :aria-current="itemIndex === index ? 'true' : undefined"
+                @click="select(itemIndex)"
+                @focus="select(itemIndex)"
+              >
+                <span class="block max-w-full truncate text-sm" :class="itemIndex === index ? 'font-semibold text-ink' : 'text-ink/80'">{{
                   entry.item.title
                 }}</span>
-                <span class="mt-0.5 flex items-center gap-2 text-xs text-muted">
+                <span class="flex items-center gap-2 text-xs text-muted">
                   <span v-if="entry.date !== ''" class="tnum">{{ entry.date }}</span>
                   <span class="truncate">{{ entry.label }}</span>
                 </span>
-              </span>
-            </button>
+              </button>
+
+              <button
+                type="button"
+                class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
+                :aria-label="`打开《${entry.item.title}》`"
+                :title="`打开《${entry.item.title}》`"
+                @click="emit('open', entry.item.id)"
+              >
+                <span class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-line bg-surface text-ink transition hover:border-ink/30 hover:bg-ink hover:text-white">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4" aria-hidden="true">
+                    <path d="M9 5H5v4M15 19h4v-4M5 5l6 6M19 19l-6-6" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </span>
+              </button>
+
+              <button
+                v-if="entry.shareUrl !== ''"
+                type="button"
+                class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
+                :aria-label="copiedId === entry.item.id ? `已复制《${entry.item.title}》链接` : `复制《${entry.item.title}》链接`"
+                :title="copiedId === entry.item.id ? '已复制链接' : '复制链接'"
+                @click="copyItem(entry.item)"
+              >
+                <span
+                  class="inline-flex h-8 w-8 items-center justify-center rounded-full border transition"
+                  :class="
+                    copiedId === entry.item.id
+                      ? 'border-accent/30 bg-accent-soft text-accent'
+                      : 'border-brand/25 bg-brand-soft text-brand-strong'
+                  "
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4" aria-hidden="true">
+                    <template v-if="copiedId === entry.item.id">
+                      <path d="M5 12.5l4.5 4.5L19 7" stroke-linecap="round" stroke-linejoin="round" />
+                    </template>
+                    <template v-else>
+                      <rect x="9" y="9" width="11" height="11" rx="2" />
+                      <path d="M15 5.5A2.5 2.5 0 0 0 12.5 3H6a2 2 0 0 0-2 2v7.5A2.5 2.5 0 0 0 6.5 15" stroke-linecap="round" />
+                    </template>
+                  </svg>
+                </span>
+              </button>
+            </div>
           </li>
         </ul>
       </div>
