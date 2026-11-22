@@ -20,6 +20,7 @@ import {
 import DetailDrawer from '../components/gallery/DetailDrawer.vue'
 import BrandMark from '../components/BrandMark.vue'
 import PostCard from '../components/gallery/PostCard.vue'
+import TagFilter from '../components/gallery/TagFilter.vue'
 
 const PAGE_SIZE = 12
 const router = useRouter()
@@ -104,6 +105,10 @@ async function loadTags(): Promise<void> {
 function resetAndLoad(): void {
   page.value = 1
   void loadList(1)
+}
+
+function clearTags(): void {
+  selectedTags.value = []
 }
 
 function toggleTag(name: string): void {
@@ -306,29 +311,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <div v-if="tags.length > 0" class="mt-4 flex items-center gap-2 overflow-x-auto pb-1">
-        <span class="shrink-0 text-xs text-muted">标签</span>
-        <button
-          v-for="tag in tags"
-          :key="tag.name"
-          type="button"
-          class="inline-flex h-11 shrink-0 items-center gap-1 rounded-full border px-3.5 text-xs font-medium transition motion-safe:active:scale-[0.97]"
-          :class="
-            selectedTags.includes(tag.name)
-              ? 'border-accent bg-accent text-white shadow-[0_2px_0_0_#08544e]'
-              : 'border-line bg-surface text-muted hover:border-brand/40 hover:bg-brand-soft/60 hover:text-ink'
-          "
-          :aria-pressed="selectedTags.includes(tag.name)"
-          @click="toggleTag(tag.name)"
-        >
-          <span class="tnum text-muted">#</span>{{ tag.name
-          }}<span
-            class="tnum rounded-full px-1.5 text-xs"
-            :class="selectedTags.includes(tag.name) ? 'bg-white text-accent' : 'bg-canvas text-muted'"
-            >{{ tag.count }}</span
-          >
-        </button>
-      </div>
+      <TagFilter :tags="tags" :selected="selectedTags" @toggle="toggleTag" @clear="clearTags" />
 
       <section class="mt-5">
         <div v-if="loading" class="grid grid-cols-2 gap-4 md:grid-cols-3 md:gap-6">
