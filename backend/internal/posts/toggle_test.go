@@ -56,3 +56,38 @@ func TestSetDisabledIdempotent(t *testing.T) {
 		t.Errorf("不存在帖子错误 = %v，期望 ErrNotFound", err)
 	}
 }
+
+// TestCountStoredImages 验证只统计已存入图床的图片，供换 Bot 前判断图库归属。
+func TestCountStoredImages(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+	postID, err := repo.Create(ctx, Post{Title: "计数测试", ImageCount: 2})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+	for sort := 1; sort <= 2; sort++ {
+		if _, err := repo.AttachImage(ctx, Image{
+			PostID:    postID,
+			SortOrder: sort,
+			MimeType:  "image/png",
+			FileSize:  10,
+			Status:    ImageStatusUploaded,
+		}); err != nil {
+			t.Fatalf("写入图片失败: %v", err)
+		}
+	}
+	if count, err := repo.CountStoredImages(ctx); err != nil || count != 0 {
+		t.Fatalf("未存图时计数 = %d err=%v，期望 0", count, err)
+	}
+
+	images, err := repo.ListImages(ctx, postID)
+	if err != nil || len(images) != 2 {
+		t.Fatalf("读取图片失败: %v", err)
+	}
+	if err := repo.MarkImageStored(ctx, images[0].ID, "file-1", 1, "telegram"); err != nil {
+		t.Fatalf("标记存图失败: %v", err)
+	}
+	if count, err := repo.CountStoredImages(ctx); err != nil || count != 1 {
+		t.Errorf("计数 = %d err=%v，期望 1", count, err)
+	}
+}

@@ -15,6 +15,7 @@ const (
 	KeyTelegraphAuthorURL  = "telegraph.author_url"
 	KeyTelegramToken       = "telegram.bot_token"
 	KeyTelegramChannel     = "telegram.channel_id"
+	KeyTelegramBotID       = "telegram.bot_id"
 )
 
 // Store 基于 settings 表读写键值配置。

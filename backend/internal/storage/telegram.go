@@ -101,6 +101,41 @@ func NewTelegram(cfg TelegramConfig) (*Telegram, error) {
 // Name 返回提供方标识。
 func (t *Telegram) Name() string { return "telegram" }
 
+// BotID 通过 getMe 校验令牌并返回 Bot 编号。
+// 编号用于确认切换前后的 Bot 是否为同一个：Telegram 的 file_id 不能跨 Bot 使用。
+func (t *Telegram) BotID(ctx context.Context) (int64, error) {
+	if t == nil {
+		return 0, ErrNotConfigured
+	}
+	endpoint := t.apiBase + "/bot" + t.token + "/getMe"
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
+	if err != nil {
+		return 0, ErrUpstream
+	}
+	response, err := t.client.Do(request)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return 0, ctxErr
+		}
+		return 0, errTransport
+	}
+	defer func() { _ = response.Body.Close() }()
+
+	var payload struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			ID int64 `json:"id"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&payload); err != nil {
+		return 0, ErrUpstream
+	}
+	if !payload.OK || payload.Result.ID == 0 {
+		return 0, ErrUpstream
+	}
+	return payload.Result.ID, nil
+}
+
 // Upload 以流式 multipart 方式上传单张图片，不把文件整体载入内存。
 func (t *Telegram) Upload(ctx context.Context, req UploadRequest) (UploadResult, error) {
 	mode := req.Mode

@@ -202,6 +202,18 @@ func (r *Repository) SetDisabled(ctx context.Context, postID int64, disabled boo
 	return gotDisabled == 1, public == 1, nil
 }
 
+// CountStoredImages 统计已存入图床的图片数量，用于判断换 Bot 是否会破坏已有图片。
+func (r *Repository) CountStoredImages(ctx context.Context) (int64, error) {
+	var count int64
+	err := r.handle.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM post_images WHERE status = ? AND remote_file_id <> ''`,
+		ImageStatusStored).Scan(&count)
+	if err != nil {
+		return 0, errors.New("统计已存图片失败")
+	}
+	return count, nil
+}
+
 // Get 读取帖子元数据。
 func (r *Repository) Get(ctx context.Context, id int64) (*Post, error) {
 	post := &Post{ID: id}
