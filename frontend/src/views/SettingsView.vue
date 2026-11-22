@@ -65,7 +65,6 @@ const checkError = ref('')
 const result = ref<ConnectionResult | null>(null)
 // activeSection 跟随滚动更新，左侧目录用它显示当前所在分组。
 const activeSection = ref('upstream')
-let sectionObserver: IntersectionObserver | undefined
 
 // 分组导航：桌面左侧目录与手机顶部横向目录共用同一份锚点。
 const SETTING_NAV = [
@@ -269,44 +268,83 @@ async function check(): Promise<void> {
   }
 }
 
+// hashSection 取出地址里的有效分组锚点；刷新直达时浏览器早于分组渲染尝试定位，需自己补一次。
+function hashSection(): string {
+  const id = window.location.hash.replace(/^#/, '')
+  return SETTING_NAV.some((item) => item.id === id) ? id : ''
+}
+
+// pendingJump 保护主动跳转的选中项：桌面端尾部分组滚不到顶部时，
+// 位置判定会把选中项让给上一组，这里保留到用户自己滚动为止。
+let pendingJump = ''
+let pendingTimer = 0
+
+function jumpToSection(id: string): void {
+  const node = document.getElementById(id)
+  if (node === null) return
+  activeSection.value = id
+  pendingJump = id
+  window.clearTimeout(pendingTimer)
+  node.scrollIntoView({ block: 'start' })
+  pendingTimer = window.setTimeout(() => {
+    pendingJump = ''
+    pendingTimer = 0
+  }, 600)
+}
+
+// followHash 在分组渲染后补一次定位，刷新、前进后退和直接打开都能落到同一分组。
+function followHash(): void {
+  const id = hashSection()
+  if (id === '') return
+  jumpToSection(id)
+}
+
+// syncActiveFromScroll 以顶栏下沿为准判定当前分组；滚到底部时直接取最后一组，
+// 尾部分组比视口高时观察器算不出比例，按位置判定不会再漏。
+function syncActiveFromScroll(): void {
+  if (pendingJump !== '') {
+    activeSection.value = pendingJump
+    return
+  }
+  const line = 160
+  const rest = document.documentElement.scrollHeight - window.scrollY - window.innerHeight
+  if (rest <= 8) {
+    activeSection.value = SETTING_NAV[SETTING_NAV.length - 1].id
+    return
+  }
+  let current = SETTING_NAV[0].id
+  for (const item of SETTING_NAV) {
+    const node = document.getElementById(item.id)
+    if (node === null) continue
+    if (node.getBoundingClientRect().top <= line) current = item.id
+  }
+  activeSection.value = current
+}
+
 onMounted(() => {
+  window.addEventListener('scroll', syncActiveFromScroll, { passive: true })
+  window.addEventListener('hashchange', followHash)
   void load()
 })
 
-// 设置读取完成、分组渲染出来之后才能观察锚点，否则一开始找不到节点。
-watch(view, async (next) => {
-  if (next === null) return
+// 设置读完、分组真正渲染出来之后才读地址：applyView 早于 loading 结束，此时节点还不存在。
+watch(loading, async (busy) => {
+  if (busy || view.value === null) return
   await nextTick()
-  observeSections()
+  followHash()
+  syncActiveFromScroll()
 })
 
-// observeSections 让左侧目录跟随滚动定位；设置未加载时直接跳过。
-function observeSections(): void {
-  sectionObserver?.disconnect()
-  const targets = SETTING_NAV.map((item) => document.getElementById(item.id)).filter(
-    (node): node is HTMLElement => node !== null,
-  )
-  if (typeof IntersectionObserver === 'undefined' || targets.length === 0) return
-  sectionObserver = new IntersectionObserver(
-    (entries) => {
-      const visible = entries
-        .filter((entry) => entry.isIntersecting)
-        .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0]
-      if (visible !== undefined) activeSection.value = visible.target.id
-    },
-    { rootMargin: '-96px 0px -55% 0px', threshold: [0.1, 0.4] },
-  )
-  targets.forEach((target) => sectionObserver?.observe(target))
-}
-
-// selectSection 让点按立即更新色点，不依赖滚动观察的下一帧。
+// selectSection 让点按立即更新色点，不依赖滚动的下一帧。
 function selectSection(id: string): void {
   activeSection.value = id
 }
 
 onBeforeUnmount(() => {
-  sectionObserver?.disconnect()
-  sectionObserver = undefined
+  window.clearTimeout(pendingTimer)
+  pendingJump = ''
+  window.removeEventListener('scroll', syncActiveFromScroll)
+  window.removeEventListener('hashchange', followHash)
 })
 </script>
 
