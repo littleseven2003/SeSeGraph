@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/auth"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/provider"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/publisher"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/settings"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/storage"
@@ -42,10 +43,13 @@ type Deps struct {
 	Editor *publisher.Editor
 	// Settings 解析运行期可修改的配置，未装配时设置接口不可用。
 	Settings *settings.Resolver
-	// Reload 在设置保存后重新装配生效配置，未装配时保存不触发热更新。
+	// Reload 在设置保存并切换图床后收尾，未装配时不做额外处理。
 	Reload func(context.Context) error
-	// ValidateProvider 在保存前校验候选图床配置，未装配时跳过。
-	ValidateProvider func(context.Context, settings.Effective) error
+	// PrepareProvider 在保存前校验候选图床配置，返回待提交的切换候选。
+	// 候选携带候选 Bot 编号，需要与配置在同一事务内持久化。
+	PrepareProvider func(context.Context, settings.Effective) (*provider.Candidate, error)
+	// CommitProvider 在配置落库成功后让已验证的候选生效，未装配时跳过。
+	CommitProvider func(context.Context, *provider.Candidate)
 	// SettingsLock 串行化设置保存，保证落库顺序与生效顺序一致。
 	SettingsLock *sync.Mutex
 }

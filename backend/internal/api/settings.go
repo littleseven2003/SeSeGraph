@@ -180,17 +180,21 @@ func updateSettingsHandler(deps Deps) gin.HandlerFunc {
 			return
 		}
 
-		// 图床凭据变化时先验证候选配置，避免落库后才发现无法激活。
+		// 图床凭据变化时先验证候选配置：拿到候选 Bot 编号，必要时独占上传队列。
 		current, err := deps.Settings.Effective(c.Request.Context())
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取配置失败"})
 			return
 		}
-		if deps.ValidateProvider != nil && providerChanged(current, prepared) {
-			if err := deps.ValidateProvider(c.Request.Context(), prepared); err != nil {
+		var pending *provider.Candidate
+		if deps.PrepareProvider != nil && providerChanged(current, prepared) {
+			pending, err = deps.PrepareProvider(c.Request.Context(), prepared)
+			if err != nil {
 				switch {
 				case errors.Is(err, provider.ErrBotMismatch):
 					c.JSON(http.StatusConflict, gin.H{"error": "图库已有其他 Bot 上传的图片，切换后这些图片将无法读取"})
+				case errors.Is(err, provider.ErrUploadBusy):
+					c.JSON(http.StatusConflict, gin.H{"error": "有图片正在上传，请稍后再切换图床"})
 				case errors.Is(err, provider.ErrVerify):
 					c.JSON(http.StatusConflict, gin.H{"error": "无法验证新的 Bot 凭据，请检查令牌与网络"})
 				default:
@@ -198,9 +202,11 @@ func updateSettingsHandler(deps Deps) gin.HandlerFunc {
 				}
 				return
 			}
+			defer pending.Abort()
 		}
 
-		err = deps.Settings.Update(c.Request.Context(), patch)
+		// 配置与 Bot 归属在同一个事务内落库：写失败时两者都不写入，运行时也不会切换。
+		err = deps.Settings.UpdateWithBot(c.Request.Context(), patch, pending.BotID())
 		switch {
 		case err == nil:
 		case errors.As(err, &problem):
@@ -217,8 +223,13 @@ func updateSettingsHandler(deps Deps) gin.HandlerFunc {
 			return
 		}
 
+		// 落库成功后才让已验证的候选生效，复用 Prepare 的校验结果，不再访问上游。
+		if pending != nil && deps.CommitProvider != nil {
+			deps.CommitProvider(c.Request.Context(), pending)
+		}
+
 		if deps.Reload != nil {
-			// 保存成功后热切换图床提供方；切换失败时旧配置继续生效。
+			// 收尾失败时配置与提供方已是新值，界面提示重试与检查。
 			if err := deps.Reload(c.Request.Context()); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "配置已保存，但生效失败，请检查后重试"})
 				return

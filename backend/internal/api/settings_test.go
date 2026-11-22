@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/littleseven2003/SeSeGraph/backend/internal/provider"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/settings"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/storage"
 )
 
 // newSettingsEnv 装配带配置解析器的环境，可注入环境变量优先项。
@@ -446,8 +448,8 @@ func TestSettingsRejectsUnverifiableProviderBeforeSaving(t *testing.T) {
 		Version: "test", Commit: "abc", Auth: env.auth, Sessions: env.sessions,
 		SetupToken: env.setupToken, Logger: env.logger, DataDir: env.dataDir, Posts: env.posts,
 		Settings: resolver,
-		ValidateProvider: func(context.Context, settings.Effective) error {
-			return provider.ErrVerify
+		PrepareProvider: func(context.Context, settings.Effective) (*provider.Candidate, error) {
+			return nil, provider.ErrVerify
 		},
 	})
 	cookie := env.setup(t)
@@ -477,8 +479,8 @@ func TestSettingsBotMismatchKeepsImages(t *testing.T) {
 		resolver = settings.NewResolver(settings.NewStore(handle), settings.Env{})
 		deps.Settings = resolver
 		deps.Streams = streams
-		deps.ValidateProvider = func(context.Context, settings.Effective) error {
-			return provider.ErrBotMismatch
+		deps.PrepareProvider = func(context.Context, settings.Effective) (*provider.Candidate, error) {
+			return nil, provider.ErrBotMismatch
 		}
 	})
 	cookie := env.setup(t)
@@ -576,4 +578,146 @@ func TestSettingsSavesApplyInOrder(t *testing.T) {
 	if effective.TelegramToken.Value != "111:token-b" {
 		t.Errorf("最终令牌 = %q，期望最后一次提交", effective.TelegramToken.Value)
 	}
+}
+
+// TestSettingsReportsBusyWhenUploadInFlight 验证上传任务在途时换 Bot 返回 409，
+// 既不写入配置，也不激活候选提供方。
+func TestSettingsReportsBusyWhenUploadInFlight(t *testing.T) {
+	env, resolver := newSettingsEnv(t, settings.Env{})
+	commits := 0
+	env.router = NewRouter(Deps{
+		Version: "test", Commit: "abc", Auth: env.auth, Sessions: env.sessions,
+		SetupToken: env.setupToken, Logger: env.logger, DataDir: env.dataDir, Posts: env.posts,
+		Settings: resolver,
+		PrepareProvider: func(context.Context, settings.Effective) (*provider.Candidate, error) {
+			return nil, provider.ErrUploadBusy
+		},
+		CommitProvider: func(context.Context, *provider.Candidate) { commits++ },
+	})
+	cookie := env.setup(t)
+
+	rec := env.do(t, http.MethodPut, "/api/settings", `{"telegram":{"token":"222:test-two"}}`, cookie)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("状态码 = %d，期望 409，响应: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "有图片正在上传") {
+		t.Errorf("响应 = %s，期望说明有上传任务在途", rec.Body.String())
+	}
+	if commits != 0 {
+		t.Errorf("提交次数 = %d，被拒绝时不应切换运行时", commits)
+	}
+	effective, err := resolver.Effective(context.Background())
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if effective.TelegramToken.Set() {
+		t.Errorf("令牌 = %+v，被拒绝时不应写入", effective.TelegramToken)
+	}
+}
+
+// TestSettingsPersistFailureKeepsRuntimeAndDB 验证落库失败时配置与 Bot 归属都不写入，
+// 运行时也保持原来的提供方。
+func TestSettingsPersistFailureKeepsRuntimeAndDB(t *testing.T) {
+	// 上游按令牌返回 Bot 编号：旧令牌属于 111，新令牌属于 222。
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := 222
+		if strings.Contains(r.URL.Path, "111:test-one") {
+			id = 111
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"ok":true,"result":{"id":%d}}`, id)
+	}))
+	t.Cleanup(upstream.Close)
+
+	var resolver *settings.Resolver
+	var guard *provider.Guard
+	var store *settings.Store
+	commits := 0
+	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
+		store = settings.NewStore(handle)
+		resolver = settings.NewResolver(store, settings.Env{})
+		guard = provider.NewGuard(storage.NewSwitcher(), store,
+			func(context.Context) (int64, error) { return 0, nil }, storage.NewUploadGate())
+		deps.Settings = resolver
+		deps.SettingsLock = &sync.Mutex{}
+		deps.PrepareProvider = func(ctx context.Context, expected settings.Effective) (*provider.Candidate, error) {
+			candidate, err := storage.NewTelegram(storage.TelegramConfig{
+				Token:   expected.TelegramToken.Value,
+				ChatID:  expected.TelegramChannel.Value,
+				APIBase: upstream.URL,
+			})
+			if err != nil {
+				return nil, err
+			}
+			return guard.Prepare(ctx, candidate)
+		}
+		deps.CommitProvider = func(ctx context.Context, candidate *provider.Candidate) {
+			commits++
+			guard.Commit(ctx, candidate)
+		}
+
+		// 先激活旧配置，再让后续写入令牌与归属都失败。
+		token, channel := "111:test-one", "-1001234567890"
+		ctx := context.Background()
+		if err := resolver.Update(ctx, settings.Patch{TelegramToken: &token, TelegramChannel: &channel}); err != nil {
+			t.Fatalf("准备配置失败: %v", err)
+		}
+		if err := guard.Activate(ctx, mustCandidate(t, upstream.URL, token, channel)); err != nil {
+			t.Fatalf("准备激活失败: %v", err)
+		}
+		for _, stmt := range []string{
+			`CREATE TRIGGER fail_token_insert BEFORE INSERT ON settings
+			 WHEN NEW.key = 'telegram.bot_token' BEGIN SELECT RAISE(ABORT, 'fail'); END`,
+			`CREATE TRIGGER fail_token_update BEFORE UPDATE ON settings
+			 WHEN NEW.key = 'telegram.bot_token' BEGIN SELECT RAISE(ABORT, 'fail'); END`,
+			`CREATE TRIGGER fail_bot_insert BEFORE INSERT ON settings
+			 WHEN NEW.key = 'telegram.bot_id' BEGIN SELECT RAISE(ABORT, 'fail'); END`,
+			`CREATE TRIGGER fail_bot_update BEFORE UPDATE ON settings
+			 WHEN NEW.key = 'telegram.bot_id' BEGIN SELECT RAISE(ABORT, 'fail'); END`,
+		} {
+			if _, err := handle.ExecContext(ctx, stmt); err != nil {
+				t.Fatalf("创建触发器失败: %v", err)
+			}
+		}
+	})
+	cookie := env.setup(t)
+
+	rec := env.do(t, http.MethodPut, "/api/settings", `{"telegram":{"token":"222:test-two"}}`, cookie)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("状态码 = %d，期望 500，响应: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "保存配置失败") {
+		t.Errorf("响应 = %s，期望说明保存失败", rec.Body.String())
+	}
+	if commits != 0 {
+		t.Errorf("提交次数 = %d，落库失败时不应切换运行时", commits)
+	}
+
+	effective, err := resolver.Effective(context.Background())
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if effective.TelegramToken.Value != "111:test-one" {
+		t.Errorf("令牌 = %q，期望保留旧值", effective.TelegramToken.Value)
+	}
+	stored, err := store.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("快照失败: %v", err)
+	}
+	if stored[settings.KeyTelegramBotID] != "111" {
+		t.Errorf("Bot 归属 = %q，期望保留旧值 111", stored[settings.KeyTelegramBotID])
+	}
+	if guard.BotID() != 111 {
+		t.Errorf("运行时 Bot 编号 = %d，期望保持 111", guard.BotID())
+	}
+}
+
+// mustCandidate 按配置创建提供方，供测试准备阶段使用。
+func mustCandidate(t *testing.T, apiBase, token, channel string) *storage.Telegram {
+	t.Helper()
+	candidate, err := storage.NewTelegram(storage.TelegramConfig{Token: token, ChatID: channel, APIBase: apiBase})
+	if err != nil {
+		t.Fatalf("创建提供方失败: %v", err)
+	}
+	return candidate
 }

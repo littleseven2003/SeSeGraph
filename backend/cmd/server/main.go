@@ -100,7 +100,9 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 
 	telegraphManager := buildTelegraphManager(store, effective, lookupEnv)
 	switcher := storage.NewSwitcher()
-	guard := provider.NewGuard(switcher, settingsStore, repository.CountStoredImages)
+	// gate 由上传队列与切换守卫共用：换 Bot 前先独占，确认没有在途任务。
+	gate := storage.NewUploadGate()
+	guard := provider.NewGuard(switcher, settingsStore, repository.CountStoredImages, gate)
 
 	// activate 按生效配置校验并激活图床；切换失败时保留原有提供方。
 	activate := func(ctx context.Context) error {
@@ -123,20 +125,20 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	}
 
 	settingsLock := &sync.Mutex{}
-	validateProvider := func(ctx context.Context, expected settings.Effective) error {
+	prepareProvider := func(ctx context.Context, expected settings.Effective) (*provider.Candidate, error) {
 		candidate, err := newProvider(expected)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		_, err = guard.Validate(ctx, candidate)
-		return err
+		return guard.Prepare(ctx, candidate)
+	}
+	commitProvider := func(ctx context.Context, candidate *provider.Candidate) {
+		guard.Commit(ctx, candidate)
 	}
 
-	// reloadSettings 在保存设置后重新校验并热切换；失败时旧提供方继续服务。
+	// reloadSettings 在配置落库并切换图床后收尾：丢弃 Telegraph 客户端缓存，
+	// 下次发帖使用最新的作者名与令牌。
 	reloadSettings := func(ctx context.Context) error {
-		if err := activate(ctx); err != nil {
-			return err
-		}
 		if telegraphManager != nil {
 			telegraphManager.Reset()
 		}
@@ -168,12 +170,13 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		Editor:           editor,
 		Settings:         resolver,
 		Reload:           reloadSettings,
-		ValidateProvider: validateProvider,
+		PrepareProvider:  prepareProvider,
+		CommitProvider:   commitProvider,
 		SettingsLock:     settingsLock,
 		ImageConcurrency: readImageConcurrency(lookupEnv),
 	})
 
-	stopWorker := startUploadQueue(ctx, repository, cfg.DataDir, switcher, lookupEnv)
+	stopWorker := startUploadQueue(ctx, repository, cfg.DataDir, switcher, gate, lookupEnv)
 	defer stopWorker()
 
 	stopPublisher := startPublisher(ctx, repository, telegraphManager, cfg.PublicURL)
@@ -292,7 +295,7 @@ func readImageConcurrency(lookupEnv func(string) (string, bool)) int {
 
 // startUploadQueue 启动上传队列，返回停止函数。
 // 队列始终运行：图床未配置时按提供方的就绪状态等待，配置保存后自动接手。
-func startUploadQueue(ctx context.Context, repository *posts.Repository, dataDir string, provider storage.Provider, lookupEnv func(string) (string, bool)) func() {
+func startUploadQueue(ctx context.Context, repository *posts.Repository, dataDir string, provider storage.Provider, gate *storage.UploadGate, lookupEnv func(string) (string, bool)) func() {
 	interval := readUploadInterval(lookupEnv)
 
 	queue, err := worker.New(worker.Options{
@@ -300,6 +303,7 @@ func startUploadQueue(ctx context.Context, repository *posts.Repository, dataDir
 		Provider:   provider,
 		DataDir:    dataDir,
 		Interval:   interval,
+		Gate:       gate,
 	})
 	if err != nil {
 		log.Print("上传队列初始化失败")

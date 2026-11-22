@@ -34,6 +34,8 @@ type Options struct {
 	Logger      *log.Logger
 	Sleep       func(ctx context.Context, d time.Duration) error
 	Now         func() time.Time
+	// Gate 与图床切换共用：领取任务后持有名额，跨 Bot 切换需要独占同一个协调点。
+	Gate *storage.UploadGate
 }
 
 // Worker 串行处理待上传的帖子。
@@ -46,6 +48,7 @@ type Worker struct {
 	logger      *log.Logger
 	sleep       func(ctx context.Context, d time.Duration) error
 	now         func() time.Time
+	gate        *storage.UploadGate
 
 	mu          sync.Mutex
 	nextAllowed time.Time
@@ -90,6 +93,7 @@ func New(opts Options) (*Worker, error) {
 		logger:      logger,
 		sleep:       sleep,
 		now:         now,
+		gate:        opts.Gate,
 	}, nil
 }
 
@@ -144,10 +148,18 @@ type readiness interface {
 
 // ProcessOnce 领取并处理一个任务，返回是否领取到任务。
 // 图床尚未配置时直接返回，避免把排队中的图片判为失败。
+// 领取任务与处理全程持有协调点名额，跨 Bot 切换必须等这一帖结束才能确认图片归属。
 func (w *Worker) ProcessOnce(ctx context.Context) (bool, error) {
 	if probe, ok := w.provider.(readiness); ok && !probe.Ready() {
 		return false, nil
 	}
+	release, ok := w.gate.EnterUpload()
+	if !ok {
+		// 切换正在独占，下一轮再领取，避免把排队中的任务错判为失败。
+		return false, nil
+	}
+	defer release()
+
 	postID, ok, err := w.repo.ClaimNext(ctx)
 	if err != nil || !ok {
 		return false, err

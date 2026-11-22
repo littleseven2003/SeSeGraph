@@ -111,6 +111,7 @@ type env struct {
 	dataDir  string
 	provider *fakeProvider
 	sleeps   *testClock
+	gate     *storage.UploadGate
 	worker   *Worker
 }
 
@@ -130,6 +131,7 @@ func newEnv(t *testing.T) *env {
 		dataDir:  t.TempDir(),
 		provider: &fakeProvider{},
 		sleeps:   newTestClock(),
+		gate:     storage.NewUploadGate(),
 	}
 	worker, err := New(Options{
 		Repository: e.repo,
@@ -139,6 +141,7 @@ func newEnv(t *testing.T) *env {
 		Logger:     log.New(io.Discard, "", 0),
 		Sleep:      e.sleeps.sleep,
 		Now:        e.sleeps.Now,
+		Gate:       e.gate,
 	})
 	if err != nil {
 		t.Fatalf("创建队列失败: %v", err)
@@ -519,4 +522,95 @@ func TestProcessUsesSingleProviderForWholePost(t *testing.T) {
 	if other.callCount() != 0 {
 		t.Errorf("切换后的提供方上传次数 = %d，期望 0", other.callCount())
 	}
+}
+
+// blockingFake 在上传时阻塞到放行，用于观察任务全程占用协调点。
+type blockingFake struct {
+	inner   *fakeProvider
+	once    sync.Once
+	started chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingFake) Name() string { return b.inner.Name() }
+
+func (b *blockingFake) Upload(ctx context.Context, req storage.UploadRequest) (storage.UploadResult, error) {
+	b.once.Do(func() { close(b.started) })
+	<-b.release
+	return b.inner.Upload(ctx, req)
+}
+
+// TestProcessOnceWaitsWhileSwitchExclusive 验证切换独占期间队列不领取任务：
+// 任务保持排队、上游零请求，独占释放后正常完成。
+func TestProcessOnceWaitsWhileSwitchExclusive(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	id := e.queuedPost(t, 1, "photo")
+
+	releaseSwitch, ok := e.gate.EnterSwitch(ctx, 0)
+	if !ok {
+		t.Fatal("独占协调点应成功")
+	}
+	processed, err := e.worker.ProcessOnce(ctx)
+	if err != nil {
+		t.Fatalf("处理失败: %v", err)
+	}
+	if processed {
+		t.Error("切换独占期间不应领取任务")
+	}
+	stored, err := e.repo.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("读取帖子失败: %v", err)
+	}
+	if stored.Status != posts.StatusQueued {
+		t.Errorf("状态 = %q，期望保持 queued", stored.Status)
+	}
+	if e.provider.callCount() != 0 {
+		t.Errorf("上传次数 = %d，期望 0", e.provider.callCount())
+	}
+
+	releaseSwitch()
+	processed, err = e.worker.ProcessOnce(ctx)
+	if err != nil || !processed {
+		t.Fatalf("释放后处理失败: processed=%v err=%v", processed, err)
+	}
+	if e.provider.callCount() != 1 {
+		t.Errorf("上传次数 = %d，期望 1", e.provider.callCount())
+	}
+}
+
+// TestProcessHoldsGateForWholePost 验证上传全程占用协调点：
+// 首图落库前切换无法独占，任务结束后才放行。
+func TestProcessHoldsGateForWholePost(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.queuedPost(t, 1, "photo")
+
+	blocking := &blockingFake{
+		inner:   e.provider,
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	e.worker.provider = blocking
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := e.worker.ProcessOnce(ctx)
+		done <- err
+	}()
+	<-blocking.started
+
+	if _, ok := e.gate.EnterSwitch(ctx, 0); ok {
+		t.Error("上传在途时不应允许独占切换")
+	}
+	close(blocking.release)
+	if err := <-done; err != nil {
+		t.Fatalf("处理失败: %v", err)
+	}
+
+	releaseSwitch, ok := e.gate.EnterSwitch(ctx, 0)
+	if !ok {
+		t.Fatal("任务结束后应允许独占切换")
+	}
+	releaseSwitch()
 }
