@@ -17,7 +17,7 @@ const searchInput = ref<HTMLInputElement | null>(null)
 
 // 展示上限随视口变化：桌面 8 个、窄屏 4 个，超出部分一律走「全部标签」入口。
 const WIDE_LIMIT = 8
-const NARROW_LIMIT = 4
+const NARROW_LIMIT = 2
 const wide = ref(true)
 let mediaQuery: MediaQueryList | undefined
 
@@ -96,15 +96,15 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-if="props.tags.length > 0" class="relative mt-4">
-    <div class="flex min-w-0 flex-wrap items-center gap-2 pb-1 sm:flex-nowrap sm:overflow-x-auto">
-      <span class="shrink-0 text-xs text-muted">标签</span>
+  <div v-if="props.tags.length > 0" class="relative min-w-0">
+    <div class="flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto pb-1">
+      <span class="hidden shrink-0 text-xs text-muted sm:inline">标签</span>
 
       <button
         v-for="name in selectedTags"
         :key="'on-' + name"
         type="button"
-        class="inline-flex h-11 min-w-0 max-w-full shrink-0 items-center gap-1.5 rounded-full border border-accent bg-accent px-3.5 text-xs font-medium text-white shadow-[0_2px_0_0_#08544e] transition motion-safe:active:scale-[0.97] [overflow-wrap:anywhere]"
+        class="inline-flex h-11 min-w-0 max-w-full shrink-0 items-center gap-1.5 rounded-full border border-accent bg-accent px-3.5 text-xs font-medium text-white transition motion-safe:active:scale-[0.97] [overflow-wrap:anywhere]"
         :aria-label="'移除标签 ' + name"
         @click="toggle(name)"
       >

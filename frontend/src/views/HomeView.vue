@@ -236,14 +236,14 @@ onBeforeUnmount(() => {
         <div class="flex items-center gap-1">
           <router-link
             :to="{ name: 'settings' }"
-            class="inline-flex h-11 items-center rounded-md px-3 text-sm text-muted transition hover:bg-surface hover:text-ink"
+            class="inline-flex h-11 items-center rounded-full px-3.5 text-sm text-muted transition hover:bg-canvas hover:text-ink"
           >
             设置
           </router-link>
           <button
             type="button"
             :disabled="signingOut"
-            class="inline-flex h-11 items-center rounded-md px-3 text-sm text-muted transition hover:bg-surface hover:text-ink disabled:opacity-60"
+            class="inline-flex h-11 items-center rounded-full px-3.5 text-sm text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
             @click="signOut"
           >
             {{ signingOut ? '正在退出…' : '退出登录' }}
@@ -292,7 +292,7 @@ onBeforeUnmount(() => {
           <div class="flex w-full items-center gap-2 sm:w-auto">
             <button
               type="button"
-              class="inline-flex h-11 flex-1 shrink-0 items-center justify-center gap-2 rounded-md border border-line bg-surface px-3 text-sm font-medium transition hover:border-ink/25 sm:flex-none"
+              class="inline-flex h-11 flex-1 shrink-0 items-center justify-center gap-2 rounded-full px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink sm:flex-none"
               :aria-pressed="blurEnabled"
               @click="toggleBlur"
             >
@@ -324,10 +324,43 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <TagFilter :tags="tags" :selected="selectedTags" @toggle="toggleTag" @clear="clearTags" />
+      <div class="mt-4 flex min-w-0 items-center gap-2">
+        <TagFilter class="min-w-0 flex-1" :tags="tags" :selected="selectedTags" @toggle="toggleTag" @clear="clearTags" />
+        <div class="flex shrink-0 items-center rounded-full bg-canvas p-1" role="group" aria-label="视图切换">
+          <button
+            type="button"
+            class="inline-flex h-11 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium transition sm:px-3.5"
+            :class="viewMode === 'gallery' ? 'bg-surface text-ink shadow-[0_1px_0_0_rgba(27,26,23,0.08)]' : 'text-muted hover:text-ink'"
+            :aria-pressed="viewMode === 'gallery'"
+            aria-label="画廊视图"
+            @click="setViewMode('gallery')"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4" aria-hidden="true">
+              <rect x="3.5" y="3.5" width="7" height="7" rx="1.5" />
+              <rect x="13.5" y="3.5" width="7" height="7" rx="1.5" />
+              <rect x="3.5" y="13.5" width="7" height="7" rx="1.5" />
+              <rect x="13.5" y="13.5" width="7" height="7" rx="1.5" />
+            </svg>
+            <span class="hidden sm:inline">画廊</span>
+          </button>
+          <button
+            type="button"
+            class="inline-flex h-11 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium transition sm:px-3.5"
+            :class="viewMode === 'list' ? 'bg-surface text-ink shadow-[0_1px_0_0_rgba(27,26,23,0.08)]' : 'text-muted hover:text-ink'"
+            :aria-pressed="viewMode === 'list'"
+            aria-label="列表视图"
+            @click="setViewMode('list')"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4" aria-hidden="true">
+              <path d="M4 6h16M4 12h16M4 18h16" stroke-linecap="round" />
+            </svg>
+            <span class="hidden sm:inline">列表</span>
+          </button>
+        </div>
+      </div>
 
       <section class="mt-5">
-        <div v-if="loading" class="grid grid-cols-2 gap-4 md:grid-cols-3 md:gap-6">
+        <div v-if="loading" class="grid grid-cols-2 gap-3.5 md:grid-cols-3 md:gap-4 lg:grid-cols-4 xl:grid-cols-5">
           <div v-for="index in 7" :key="index" class="flex flex-col gap-2.5">
             <div class="aspect-[4/3] w-full animate-pulse rounded-2xl bg-canvas"></div>
             <div class="h-4 w-3/4 animate-pulse rounded bg-canvas"></div>
@@ -335,11 +368,11 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div v-else-if="error !== ''" class="rounded-md border border-line bg-surface px-6 py-12 text-center">
+        <div v-else-if="error !== ''" class="rounded-2xl bg-surface px-6 py-12 text-center shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
           <p class="text-sm text-danger">{{ error }}</p>
           <button
             type="button"
-            class="mt-3 h-11 rounded-md border border-line px-4 text-sm font-medium transition hover:bg-canvas"
+            class="mt-3 h-11 rounded-full px-4 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
             @click="loadList()"
           >
             重新加载
@@ -348,7 +381,7 @@ onBeforeUnmount(() => {
 
         <div
           v-else-if="items.length === 0"
-          class="viewfinder-corners rounded-md border border-dashed border-line bg-surface px-6 py-16 text-center"
+          class="rounded-2xl bg-surface px-6 py-16 text-center shadow-[0_1px_0_0_rgba(27,26,23,0.05)]"
         >
           <div class="mx-auto flex h-12 w-12 items-center justify-center rounded bg-canvas" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-6 w-6 text-muted">
@@ -368,7 +401,7 @@ onBeforeUnmount(() => {
           <button
             v-if="hasFilter"
             type="button"
-            class="mt-4 h-11 rounded-md border border-line px-4 text-sm font-medium transition hover:bg-canvas"
+            class="mt-4 h-11 rounded-full px-4 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
             @click="clearFilters"
           >
             清除筛选
@@ -376,38 +409,6 @@ onBeforeUnmount(() => {
         </div>
 
         <template v-else>
-          <div class="flex items-center justify-end gap-3 pb-1">
-            <div class="flex rounded-full bg-canvas p-1" role="group" aria-label="视图切换">
-              <button
-                type="button"
-                class="inline-flex h-11 items-center gap-1.5 rounded-full px-3.5 text-xs font-medium transition"
-                :class="viewMode === 'gallery' ? 'bg-surface text-ink shadow-[0_1px_0_0_rgba(27,26,23,0.08)]' : 'text-muted hover:text-ink'"
-                :aria-pressed="viewMode === 'gallery'"
-                @click="setViewMode('gallery')"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4" aria-hidden="true">
-                  <rect x="3.5" y="3.5" width="7" height="7" rx="1.5" />
-                  <rect x="13.5" y="3.5" width="7" height="7" rx="1.5" />
-                  <rect x="3.5" y="13.5" width="7" height="7" rx="1.5" />
-                  <rect x="13.5" y="13.5" width="7" height="7" rx="1.5" />
-                </svg>
-                画廊
-              </button>
-              <button
-                type="button"
-                class="inline-flex h-11 items-center gap-1.5 rounded-full px-3.5 text-xs font-medium transition"
-                :class="viewMode === 'list' ? 'bg-surface text-ink shadow-[0_1px_0_0_rgba(27,26,23,0.08)]' : 'text-muted hover:text-ink'"
-                :aria-pressed="viewMode === 'list'"
-                @click="setViewMode('list')"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4" aria-hidden="true">
-                  <path d="M4 6h16M4 12h16M4 18h16" stroke-linecap="round" />
-                </svg>
-                列表
-              </button>
-            </div>
-          </div>
-
           <FocusCarousel
             v-if="showFocus"
             :items="focusItems"
@@ -416,7 +417,7 @@ onBeforeUnmount(() => {
             @open="openDetail"
           />
 
-          <div v-if="viewMode === 'gallery'" class="mt-6 grid grid-cols-2 gap-4 md:grid-cols-3 md:gap-6">
+          <div v-if="viewMode === 'gallery'" class="mt-6 grid grid-cols-2 gap-3.5 md:grid-cols-3 md:gap-4 lg:grid-cols-4 xl:grid-cols-5">
             <PostCard
               v-for="item in items"
               :key="item.id"

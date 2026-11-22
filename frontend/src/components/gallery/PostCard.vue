@@ -12,7 +12,7 @@ import { useCoverReveal } from './useCoverReveal.ts'
 const props = defineProps<{ item: GalleryItem; blurred: boolean }>()
 const emit = defineEmits<{ open: [id: number] }>()
 
-const { showBlur, activate, remask } = useCoverReveal(() => props.blurred)
+const { showBlur, activate, remask, onCoverEnter, onCoverLeave } = useCoverReveal(() => props.blurred)
 
 function onOpen(): void {
   activate(() => emit('open', props.item.id))
@@ -71,10 +71,12 @@ const copyLabel = computed(() => {
     <div class="relative">
     <button
       type="button"
-      class="relative block aspect-[4/3] w-full overflow-hidden rounded-2xl bg-canvas"
+      class="relative block aspect-[4/3] w-full overflow-hidden rounded-xl bg-canvas"
       :aria-label="`打开《${item.title}》详情`"
       data-reveal="cover"
       @click="onOpen"
+      @mouseenter="onCoverEnter"
+      @mouseleave="onCoverLeave"
     >
       <img
         v-if="item.cover_url !== ''"
@@ -135,8 +137,8 @@ const copyLabel = computed(() => {
     </button>
     </div>
 
-    <div class="mt-2.5 flex flex-col gap-1">
-      <p class="line-clamp-2 break-words text-sm font-semibold leading-snug [overflow-wrap:anywhere]">{{ item.title }}</p>
+    <div class="mt-2 flex flex-col gap-0.5">
+      <p class="line-clamp-2 break-words text-[13px] font-semibold leading-snug [overflow-wrap:anywhere]">{{ item.title }}</p>
 
       <div class="flex items-center gap-2">
         <p class="min-w-0 flex-1 truncate text-xs text-muted tnum">{{ meta }}</p>
