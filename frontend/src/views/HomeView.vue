@@ -12,6 +12,7 @@ import {
 } from '../api/gallery'
 import { createLatestGuard, pageWindow, readBlurPreference, saveBlurPreference } from '../utils/gallery'
 import DetailDrawer from '../components/gallery/DetailDrawer.vue'
+import BrandMark from '../components/BrandMark.vue'
 import PostCard from '../components/gallery/PostCard.vue'
 
 const PAGE_SIZE = 12
@@ -183,14 +184,14 @@ onBeforeUnmount(() => {
     <header class="border-b border-line">
       <div class="mx-auto flex w-full max-w-[1240px] items-center justify-between gap-4 px-5 py-3">
         <div class="flex items-center gap-2.5">
-          <span
-            class="flex h-8 w-8 items-center justify-center rounded border border-line bg-surface text-[13px] font-semibold tracking-tight"
-            aria-hidden="true"
-            >S</span
-          >
-          <p class="text-sm font-semibold tracking-tight">
-            SeSeGraph<span class="ml-2 text-xs font-normal text-muted">图集画廊</span>
-          </p>
+          <BrandMark />
+          <div class="flex items-center gap-2">
+            <p class="text-sm font-semibold tracking-tight">SeSeGraph</p>
+            <span class="rounded-full bg-brand-soft px-2 py-0.5 text-xs font-medium leading-none text-brand-strong"
+              >图集画廊</span
+            >
+            <span class="hidden h-0.5 w-6 rounded-full bg-gradient-to-r from-brand to-accent sm:block"></span>
+          </div>
         </div>
 
         <div class="flex items-center gap-1">
@@ -283,11 +284,11 @@ onBeforeUnmount(() => {
           v-for="tag in tags"
           :key="tag.name"
           type="button"
-          class="inline-flex h-11 shrink-0 items-center rounded border px-3 text-xs font-medium transition"
+          class="inline-flex h-11 shrink-0 items-center rounded border px-3 text-xs font-medium transition active:scale-[0.97]"
           :class="
             selectedTags.includes(tag.name)
-              ? 'border-ink bg-ink text-brand-ink'
-              : 'border-line bg-surface text-muted hover:border-ink/25 hover:text-ink'
+              ? 'border-accent bg-accent text-white'
+              : 'border-line bg-surface text-muted hover:border-brand/40 hover:bg-brand-soft/60 hover:text-ink'
           "
           :aria-pressed="selectedTags.includes(tag.name)"
           @click="toggleTag(tag.name)"
@@ -323,7 +324,7 @@ onBeforeUnmount(() => {
 
         <div
           v-else-if="items.length === 0"
-          class="rounded-md border border-dashed border-line bg-surface px-6 py-16 text-center"
+          class="viewfinder-corners rounded-md border border-dashed border-line bg-surface px-6 py-16 text-center"
         >
           <div class="mx-auto flex h-12 w-12 items-center justify-center rounded bg-canvas" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-6 w-6 text-muted">

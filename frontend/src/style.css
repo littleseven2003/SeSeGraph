@@ -65,6 +65,36 @@
   }
 }
 
+/* 取景框直角标：四个 L 角用背景渐变画出来，不额外占用节点。 */
+.viewfinder-corners {
+  position: relative;
+}
+
+.viewfinder-corners::before {
+  content: "";
+  position: absolute;
+  inset: 10px;
+  pointer-events: none;
+  border-radius: 2px;
+  --corner: color-mix(in srgb, var(--color-brand) 55%, transparent);
+  background-image:
+    linear-gradient(var(--corner), var(--corner)), linear-gradient(var(--corner), var(--corner)),
+    linear-gradient(var(--corner), var(--corner)), linear-gradient(var(--corner), var(--corner)),
+    linear-gradient(var(--corner), var(--corner)), linear-gradient(var(--corner), var(--corner)),
+    linear-gradient(var(--corner), var(--corner)), linear-gradient(var(--corner), var(--corner));
+  background-repeat: no-repeat;
+  background-size:
+    14px 2px, 2px 14px,
+    14px 2px, 2px 14px,
+    14px 2px, 2px 14px,
+    14px 2px, 2px 14px;
+  background-position:
+    left top, left top,
+    right top, right top,
+    left bottom, left bottom,
+    right bottom, right bottom;
+}
+
 /* 有吸底操作条时，页脚多留一条栏的高度，避免版本信息被固定栏压住。 */
 @media (max-width: 1023px) {
   body.has-bottom-actions .site-footer {

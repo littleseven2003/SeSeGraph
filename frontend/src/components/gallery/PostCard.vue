@@ -61,6 +61,17 @@ onBeforeUnmount(() => {
 })
 
 const status = computed(() => statusLabel(props.item.status, props.item.publish_state, props.item.disabled))
+// chipClass 按状态分层：完成走墨色胶囊，进行中走暖琥珀，异常走柔红，保证亮封面上也读得清。
+const chipClass = computed(() => {
+  switch (status.value.tone) {
+    case 'progress':
+      return 'bg-warn-soft text-warn'
+    case 'error':
+      return 'bg-danger-soft text-danger'
+    default:
+      return 'bg-ink/75 text-white'
+  }
+})
 const published = computed(() => formatPublishedAt(props.item.published_at))
 // 卡片只显示日期，时间留在详情里，避免两列布局下折行。
 const publishedDate = computed(() => published.value.split(' ')[0] ?? '')
@@ -75,7 +86,7 @@ const copyLabel = computed(() => {
 
 <template>
   <article
-    class="group flex flex-col overflow-hidden rounded-md border border-line bg-surface transition hover:border-ink/25"
+    class="lift-on-hover group flex flex-col overflow-hidden rounded-md border border-line bg-surface transition duration-200 hover:-translate-y-0.5 hover:border-brand/30 hover:shadow-[0_10px_24px_-12px_rgba(208,66,35,0.18)]"
     :class="showBlur ? 'is-blurred' : ''"
   >
     <button
@@ -100,9 +111,12 @@ const copyLabel = computed(() => {
         </svg>
       </span>
       <span
-        class="absolute left-2.5 top-2.5 rounded bg-ink/75 px-2 py-1 text-xs font-medium leading-none text-white backdrop-blur-sm"
-        >{{ status.label }}</span
+        class="absolute left-2.5 top-2.5 inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium leading-none backdrop-blur-sm"
+        :class="chipClass"
       >
+        <span v-if="status.tone === 'ok'" class="h-1.5 w-1.5 rounded-full bg-[#34d399]" aria-hidden="true"></span>
+        {{ status.label }}
+      </span>
       <span
         class="absolute right-2.5 top-2.5 rounded bg-ink/75 px-2 py-1 text-xs font-medium leading-none text-white tnum backdrop-blur-sm"
         >{{ item.image_count }} 张</span
@@ -139,7 +153,7 @@ const copyLabel = computed(() => {
         <button
           v-if="shareUrl !== ''"
           type="button"
-          class="h-11 flex-1 rounded-md bg-brand text-sm font-medium text-brand-ink transition hover:bg-brand-strong"
+          class="h-11 flex-1 rounded-md border border-brand/25 bg-brand-soft text-sm font-medium text-brand-strong transition hover:border-brand/45 hover:bg-brand-soft/70 active:scale-[0.98]"
           @click="copyLink"
         >
           {{ copyLabel }}
