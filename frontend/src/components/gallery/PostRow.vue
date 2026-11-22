@@ -97,10 +97,11 @@ const copyLabel = computed(() => {
 
     <div class="min-w-0 flex-1">
       <p class="truncate text-sm font-semibold">{{ item.title }}</p>
-      <div class="mt-1 flex min-w-0 items-center gap-2 text-xs text-muted">
-        <span class="tnum shrink-0">{{ volume }}</span>
-        <span v-if="publishedDate !== ''" class="tnum shrink-0">{{ publishedDate }}</span>
-        <span class="tnum shrink-0">{{ item.image_count }}P</span>
+      <!-- 窄屏只保留浏览量、状态与右侧操作热区，卷号、日期与张数让位，避免压到按钮上。 -->
+      <div class="mt-1 flex min-w-0 items-center gap-2 overflow-hidden text-xs text-muted">
+        <span class="tnum hidden shrink-0 sm:inline">{{ volume }}</span>
+        <span v-if="publishedDate !== ''" class="tnum hidden shrink-0 sm:inline">{{ publishedDate }}</span>
+        <span class="tnum hidden shrink-0 sm:inline">{{ item.image_count }}P</span>
         <span v-if="showViews" class="inline-flex shrink-0 items-center gap-1 tnum" :title="viewsTitle">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-3.5 w-3.5" aria-hidden="true">
             <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" stroke-linecap="round" stroke-linejoin="round" />

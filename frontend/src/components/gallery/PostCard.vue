@@ -60,9 +60,7 @@ const restTags = computed(() => Math.max(0, props.item.tags.length - visibleTags
 // volume 是卡片上的卷号，用帖子编号补两位，形成归档索引感。
 const volume = computed(() => '#' + String(props.item.id).padStart(2, '0'))
 // 没有发布日期时只显示卷号，发布状态由左上角状态签负责，避免同一条信息出现两次。
-const meta = computed(() =>
-  publishedDate.value !== '' ? volume.value + ' · ' + publishedDate.value : volume.value,
-)
+// 有日期时窄屏隐藏卷号前缀，把宽度留给日期与浏览量，避免日期被截成「2…」。
 const showViews = computed(() => showsViews(props.item))
 const viewsText = computed(() => formatViews(props.item.views_count))
 const viewsTitle = computed(() => formatViewsExact(props.item.views_count) + ' 次浏览')
@@ -147,8 +145,13 @@ const copyLabel = computed(() => {
     <div class="mt-2 flex flex-col gap-0.5">
       <p class="line-clamp-2 break-words text-[13px] font-semibold leading-snug [overflow-wrap:anywhere]">{{ item.title }}</p>
 
-      <div class="flex items-center gap-2">
-        <p class="min-w-0 flex-1 truncate text-xs text-muted tnum">{{ meta }}</p>
+      <div class="flex items-center gap-1">
+        <p class="min-w-0 flex-1 truncate text-xs text-muted tnum">
+          <template v-if="publishedDate !== ''">
+            <span class="hidden sm:inline">{{ volume }} · </span>{{ publishedDate }}
+          </template>
+          <template v-else>{{ volume }}</template>
+        </p>
         <span
           v-if="showViews"
           class="inline-flex shrink-0 items-center gap-1 text-xs text-muted tnum"
