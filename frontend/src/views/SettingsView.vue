@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ApiError } from '../api/client.ts'
 import {
   fetchBackupStatus,
@@ -267,7 +267,13 @@ async function check(): Promise<void> {
 }
 
 onMounted(() => {
+  // 手机端有吸底保存条，页脚需要额外留白。
+  document.body.classList.add('has-bottom-actions')
   void load()
+})
+
+onBeforeUnmount(() => {
+  document.body.classList.remove('has-bottom-actions')
 })
 </script>
 
@@ -310,7 +316,7 @@ onMounted(() => {
       </nav>
     </header>
 
-    <main class="mx-auto flex w-full max-w-[1240px] items-start gap-8 px-5 py-7">
+    <main class="mx-auto flex w-full max-w-[1240px] items-start gap-8 px-5 py-7 pb-16 lg:pb-7">
       <nav class="sticky top-24 hidden w-[168px] shrink-0 lg:block" aria-label="设置分组">
         <ul class="space-y-0.5">
           <li v-for="item in SETTING_NAV" :key="item.id">
@@ -322,6 +328,22 @@ onMounted(() => {
             </a>
           </li>
         </ul>
+
+        <div class="mt-4 border-t border-line pt-4">
+          <p class="text-xs leading-relaxed" aria-live="polite">
+            <span v-if="saveError !== ''" class="text-danger">{{ saveError }}</span>
+            <span v-else-if="feedback !== ''" class="text-accent">{{ feedback }}</span>
+            <span v-else class="text-muted">已发布帖会保留原页面路径，修改作者名只影响后续发布。</span>
+          </p>
+          <button
+            type="button"
+            :disabled="saving"
+            class="mt-3 h-11 w-full rounded-md bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+            @click="save"
+          >
+            {{ saving ? '保存中…' : '保存设置' }}
+          </button>
+        </div>
       </nav>
 
       <div class="min-w-0 max-w-[880px] flex-1">
@@ -706,8 +728,8 @@ onMounted(() => {
             </section>
           </div>
 
-          <div class="sticky bottom-0 z-10 mt-8 rounded-md border border-line bg-surface px-4 py-3 shadow-[0_-10px_20px_-16px_rgba(20,20,19,0.35)] sm:px-5">
-            <div class="flex flex-wrap items-center justify-between gap-3">
+          <div class="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-surface px-5 py-3 lg:hidden">
+            <div class="flex items-center justify-between gap-3">
               <div class="min-w-0 flex-1 text-xs" aria-live="polite">
                 <p v-if="saveError !== ''" class="text-danger">{{ saveError }}</p>
                 <p v-else-if="feedback !== ''" class="text-accent">{{ feedback }}</p>
