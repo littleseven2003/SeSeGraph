@@ -20,10 +20,11 @@ import (
 
 // 测试用合成令牌，按令牌返回不同的 Bot 编号，用于验证换 Bot 判断。
 const (
-	tokenBotOne  = "111:test-one"
-	tokenBotOne2 = "333:test-one-rotated"
-	tokenBotTwo  = "222:test-two"
-	tokenInvalid = "999:test-invalid"
+	tokenBotOne   = "111:test-one"
+	tokenBotOne2  = "333:test-one-rotated"
+	tokenBotTwo   = "222:test-two"
+	tokenBotThree = "333:test-three"
+	tokenInvalid  = "999:test-invalid"
 )
 
 // fakeBotAPI 模拟 getMe，并记录被调用的次数与令牌。
@@ -31,13 +32,19 @@ type fakeBotAPI struct {
 	server *httptest.Server
 	mu     sync.Mutex
 	tokens []string
+	files  int
 }
 
 // newFakeBotAPI 启动模拟上游，未知令牌返回 401。
 func newFakeBotAPI(t *testing.T) *fakeBotAPI {
 	t.Helper()
 	api := &fakeBotAPI{}
-	ids := map[string]int64{tokenBotOne: 111, tokenBotOne2: 111, tokenBotTwo: 222}
+	ids := map[string]int64{
+		tokenBotOne:   111,
+		tokenBotOne2:  111,
+		tokenBotTwo:   222,
+		tokenBotThree: 333,
+	}
 	api.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := strings.TrimPrefix(r.URL.Path, "/bot")
 		token = strings.SplitN(token, "/", 2)[0]
@@ -52,6 +59,30 @@ func newFakeBotAPI(t *testing.T) *fakeBotAPI {
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error_code": 401})
 			return
 		}
+
+		// getFile 模拟旧图归属：111 拥有旧图，222 报文件不存在，333 模拟上游故障。
+		if strings.HasSuffix(r.URL.Path, "/getFile") {
+			api.mu.Lock()
+			api.files++
+			api.mu.Unlock()
+			switch id {
+			case 111:
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"ok":     true,
+					"result": map[string]any{"file_path": "photos/legacy.png", "file_size": 128},
+				})
+			case 222:
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"ok": false, "error_code": 400, "description": "Bad Request: invalid file_id",
+				})
+			default:
+				w.WriteHeader(http.StatusInternalServerError)
+				_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error_code": 500})
+			}
+			return
+		}
+
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": map[string]any{"id": id}})
 	}))
 	t.Cleanup(api.server.Close)
@@ -60,6 +91,13 @@ func newFakeBotAPI(t *testing.T) *fakeBotAPI {
 
 // URL 返回模拟上游地址。
 func (a *fakeBotAPI) URL() string { return a.server.URL }
+
+// FileCalls 返回已收到的 getFile 次数。
+func (a *fakeBotAPI) FileCalls() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.files
+}
 
 // Calls 返回已收到的 getMe 次数。
 func (a *fakeBotAPI) Calls() int {
@@ -367,5 +405,126 @@ func TestPrepareBlocksNewUploadsUntilCommit(t *testing.T) {
 	release()
 	if guard.BotID() != 222 {
 		t.Errorf("提交后 Bot 编号 = %d，期望 222", guard.BotID())
+	}
+}
+
+// legacySamplesFunc 返回固定旧图标识，并记录被调用的次数。
+func legacySamplesFunc(fileIDs []string, calls *int) func(context.Context, int) ([]string, error) {
+	return func(context.Context, int) ([]string, error) {
+		if calls != nil {
+			*calls++
+		}
+		return fileIDs, nil
+	}
+}
+
+// TestGuardVerifiesLegacyImagesBeforeBinding 旧库有图但没有归属记录时，
+// 候选 Bot 能读到旧图才允许绑定并写入归属。
+func TestGuardVerifiesLegacyImagesBeforeBinding(t *testing.T) {
+	api := newFakeBotAPI(t)
+	guard, switcher, store, images, _ := newGuardEnv(t, api.URL(), 2)
+	ctx := context.Background()
+	*images = 2
+	guard.SetLegacySamples(legacySamplesFunc([]string{"legacy-file"}, nil))
+
+	if err := guard.Activate(ctx, newCandidate(t, api.URL(), tokenBotOne)); err != nil {
+		t.Fatalf("旧库同 Bot 绑定失败: %v", err)
+	}
+	if api.FileCalls() != 1 {
+		t.Errorf("旧图校验次数 = %d，期望 1", api.FileCalls())
+	}
+	if !switcher.Ready() || guard.BotID() != 111 {
+		t.Error("绑定成功后应激活并提供服方")
+	}
+	if persisted, ok, _ := store.Get(ctx, settings.KeyTelegramBotID); !ok || persisted != "111" {
+		t.Errorf("归属 = %q ok=%v，期望写入 111", persisted, ok)
+	}
+}
+
+// TestGuardRejectsLegacyBindingWhenImagesUnreadable 候选 Bot 读不到旧图时拒绝绑定，
+// 配置与归属都保持原值，运行时也不切换。
+func TestGuardRejectsLegacyBindingWhenImagesUnreadable(t *testing.T) {
+	api := newFakeBotAPI(t)
+	guard, switcher, store, images, _ := newGuardEnv(t, api.URL(), 2)
+	ctx := context.Background()
+	*images = 2
+	guard.SetLegacySamples(legacySamplesFunc([]string{"legacy-file"}, nil))
+
+	_, err := guard.Prepare(ctx, newCandidate(t, api.URL(), tokenBotTwo))
+	if !errors.Is(err, ErrBotMismatch) {
+		t.Fatalf("错误 = %v，期望 ErrBotMismatch", err)
+	}
+	if api.FileCalls() != 1 {
+		t.Errorf("旧图校验次数 = %d，期望 1", api.FileCalls())
+	}
+	if switcher.Ready() {
+		t.Error("拒绝后不应激活")
+	}
+	if _, ok, _ := store.Get(ctx, settings.KeyTelegramBotID); ok {
+		t.Error("拒绝后不应写入归属")
+	}
+}
+
+// TestGuardRejectsLegacyBindingOnVerifyFailure 旧图校验遇到上游故障时按无法验证处理。
+func TestGuardRejectsLegacyBindingOnVerifyFailure(t *testing.T) {
+	api := newFakeBotAPI(t)
+	guard, switcher, _, images, _ := newGuardEnv(t, api.URL(), 1)
+	ctx := context.Background()
+	*images = 1
+	guard.SetLegacySamples(legacySamplesFunc([]string{"legacy-file"}, nil))
+
+	if _, err := guard.Prepare(ctx, newCandidate(t, api.URL(), tokenBotThree)); !errors.Is(err, ErrVerify) {
+		t.Fatalf("错误 = %v，期望 ErrVerify", err)
+	}
+	if switcher.Ready() {
+		t.Error("校验失败时不应激活")
+	}
+}
+
+// TestGuardSkipsLegacyCheckWithoutImages 空图库不需要旧图校验。
+func TestGuardSkipsLegacyCheckWithoutImages(t *testing.T) {
+	api := newFakeBotAPI(t)
+	guard, switcher, store, images, _ := newGuardEnv(t, api.URL(), 0)
+	ctx := context.Background()
+	*images = 0
+	calls := 0
+	guard.SetLegacySamples(legacySamplesFunc(nil, &calls))
+
+	if err := guard.Activate(ctx, newCandidate(t, api.URL(), tokenBotTwo)); err != nil {
+		t.Fatalf("空图库绑定失败: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("取样调用 = %d，期望 1（取到空列表即通过）", calls)
+	}
+	if api.FileCalls() != 0 {
+		t.Errorf("空图库不应校验旧图，getFile 调用 = %d", api.FileCalls())
+	}
+	if !switcher.Ready() || guard.BotID() != 222 {
+		t.Error("空图库应直接绑定")
+	}
+	if persisted, _, _ := store.Get(ctx, settings.KeyTelegramBotID); persisted != "222" {
+		t.Errorf("归属 = %q，期望 222", persisted)
+	}
+}
+
+// TestGuardFallsBackToNextLegacySample 个别旧图被删除时，其余可读即视为同一 Bot。
+func TestGuardFallsBackToNextLegacySample(t *testing.T) {
+	api := newFakeBotAPI(t)
+	guard, switcher, _, images, _ := newGuardEnv(t, api.URL(), 2)
+	ctx := context.Background()
+	*images = 2
+	// 第一条使用另一个 Bot 的失效标识，第二条属于当前 Bot。
+	guard.SetLegacySamples(legacySamplesFunc([]string{"stale-file", "legacy-file"}, nil))
+	guard.gate = storage.NewUploadGate()
+
+	// 222 读 stale-file 报 400、再读 legacy-file 仍报 400：两条都不可读才算冲突。
+	if _, err := guard.Prepare(ctx, newCandidate(t, api.URL(), tokenBotTwo)); !errors.Is(err, ErrBotMismatch) {
+		t.Fatalf("错误 = %v，期望 ErrBotMismatch", err)
+	}
+	if api.FileCalls() != 2 {
+		t.Errorf("旧图校验次数 = %d，期望逐条尝试 2 次", api.FileCalls())
+	}
+	if switcher.Ready() {
+		t.Error("全部不可读时不应激活")
 	}
 }

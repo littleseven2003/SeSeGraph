@@ -33,15 +33,24 @@ type Guard struct {
 	switcher   *storage.Switcher
 	store      *settings.Store
 	count      func(context.Context) (int64, error)
+	samples    func(context.Context, int) ([]string, error)
 	gate       *storage.UploadGate
 	botID      int64
 	switchWait time.Duration
 }
 
 // NewGuard 创建切换守卫。count 用于统计已存图数量，可为 nil（视为没有图片）；
+// samples 用于取若干已存图片的远端标识，旧库缺少归属记录时据此确认图片归属；
 // gate 与上传队列共用，跨 Bot 切换时独占它，确认没有在途任务后再统计图片。
 func NewGuard(switcher *storage.Switcher, store *settings.Store, count func(context.Context) (int64, error), gate *storage.UploadGate) *Guard {
 	return &Guard{switcher: switcher, store: store, count: count, gate: gate, switchWait: DefaultSwitchWait}
+}
+
+// SetLegacySamples 注入已存图片取样函数，用于旧库首次绑定前确认候选 Bot 能读到旧图。
+func (g *Guard) SetLegacySamples(samples func(context.Context, int) ([]string, error)) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.samples = samples
 }
 
 // SetSwitchWait 调整跨 Bot 切换等待在途上传结束的时长，非正值表示不等待。
@@ -102,7 +111,16 @@ func (g *Guard) Prepare(ctx context.Context, candidate *storage.Telegram) (*Cand
 		return nil, ErrVerify
 	}
 
-	if active := g.activeBotIDLocked(ctx); active == 0 || active == id {
+	active := g.activeBotIDLocked(ctx)
+	if active == 0 {
+		// 旧库升级：已有图片但没有归属记录时，先用候选凭据确认旧图可读，
+		// 确认属于同一个 Bot 才允许记录归属，避免历史图片全部失效。
+		if err := g.verifyLegacyLocked(ctx, candidate); err != nil {
+			return nil, err
+		}
+		return &Candidate{provider: candidate, botID: id, release: func() {}}, nil
+	}
+	if active == id {
 		return &Candidate{provider: candidate, botID: id, release: func() {}}, nil
 	}
 
@@ -122,6 +140,38 @@ func (g *Guard) Prepare(ctx context.Context, candidate *storage.Telegram) (*Cand
 		return nil, ErrBotMismatch
 	}
 	return &Candidate{provider: candidate, botID: id, release: release}, nil
+}
+
+// legacySamples 是旧库归属校验尝试的图片条数，个别文件被删除时仍有机会确认。
+const legacySamples = 3
+
+// verifyLegacyLocked 在缺少归属记录时确认候选 Bot 能读到已有图片。
+// 任一条可读即认为属于同一个 Bot；全部不可读按归属冲突处理，网络失败按无法验证处理。
+func (g *Guard) verifyLegacyLocked(ctx context.Context, candidate *storage.Telegram) error {
+	if g.samples == nil {
+		return nil
+	}
+	fileIDs, err := g.samples(ctx, legacySamples)
+	if err != nil {
+		return err
+	}
+	if len(fileIDs) == 0 {
+		return nil
+	}
+	for _, fileID := range fileIDs {
+		err := candidate.VerifyFile(ctx, fileID)
+		switch {
+		case err == nil:
+			return nil
+		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+			return err
+		case errors.Is(err, storage.ErrFileUnavailable):
+			continue
+		default:
+			return ErrVerify
+		}
+	}
+	return ErrBotMismatch
 }
 
 // Commit 让已验证的候选生效。归属记录由调用方与配置在同一事务内写入，这里不再落库。

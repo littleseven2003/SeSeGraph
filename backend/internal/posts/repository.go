@@ -214,6 +214,36 @@ func (r *Repository) CountStoredImages(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
+// SampleStoredFileIDs 返回若干已存图片的远端文件标识，用于确认旧库图片是否属于同一个 Bot。
+// 远端文件被删除时这些标识可能失效，因此取多条并允许调用方逐条尝试。
+func (r *Repository) SampleStoredFileIDs(ctx context.Context, limit int) ([]string, error) {
+	if limit <= 0 {
+		limit = 1
+	}
+	rows, err := r.handle.QueryContext(ctx,
+		`SELECT remote_file_id FROM post_images
+		 WHERE status = ? AND remote_file_id <> ''
+		 ORDER BY id DESC LIMIT ?`,
+		ImageStatusStored, limit)
+	if err != nil {
+		return nil, errors.New("读取已存图片失败")
+	}
+	defer func() { _ = rows.Close() }()
+
+	fileIDs := make([]string, 0, limit)
+	for rows.Next() {
+		var fileID string
+		if err := rows.Scan(&fileID); err != nil {
+			return nil, errors.New("读取已存图片失败")
+		}
+		fileIDs = append(fileIDs, fileID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.New("读取已存图片失败")
+	}
+	return fileIDs, nil
+}
+
 // Get 读取帖子元数据。
 func (r *Repository) Get(ctx context.Context, id int64) (*Post, error) {
 	post := &Post{ID: id}

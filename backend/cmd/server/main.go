@@ -105,6 +105,8 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	// gate 由上传队列与切换守卫共用：换 Bot 前先独占，确认没有在途任务。
 	gate := storage.NewUploadGate()
 	guard := provider.NewGuard(switcher, settingsStore, repository.CountStoredImages, gate)
+	// 旧库可能已有图片但缺少归属记录：首次绑定时用候选凭据确认旧图可读再记录归属。
+	guard.SetLegacySamples(repository.SampleStoredFileIDs)
 
 	// activate 按生效配置校验并激活图床；切换失败时保留原有提供方。
 	activate := func(ctx context.Context) error {

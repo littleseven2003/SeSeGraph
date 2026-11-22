@@ -539,3 +539,44 @@ func TestTelegramWaitsForPipeCompletion(t *testing.T) {
 		t.Fatalf("错误 = %v，期望 ErrUpstream（管道未完整写出）", err)
 	}
 }
+
+// TestVerifyFileReportsOwnership 验证旧图归属校验：同一个 Bot 可读，
+// 其他 Bot 的标识按文件不可用处理，且不下载文件内容。
+func TestVerifyFileReportsOwnership(t *testing.T) {
+	downloads := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fileID := r.URL.Query().Get("file_id")
+		if fileID == "other-bot-file" {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error_code": 400, "description": "invalid file_id"})
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/file/") {
+			downloads++
+			_, _ = w.Write([]byte("payload"))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":     true,
+			"result": map[string]any{"file_path": "photos/legacy.png", "file_size": 7},
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	provider, err := NewTelegram(TelegramConfig{Token: testToken, ChatID: testChatID, APIBase: server.URL})
+	if err != nil {
+		t.Fatalf("创建提供方失败: %v", err)
+	}
+	if err := provider.VerifyFile(context.Background(), "own-file"); err != nil {
+		t.Fatalf("自己的文件应可读: %v", err)
+	}
+	if err := provider.VerifyFile(context.Background(), "other-bot-file"); !errors.Is(err, ErrFileUnavailable) {
+		t.Fatalf("错误 = %v，期望 ErrFileUnavailable", err)
+	}
+	if err := provider.VerifyFile(context.Background(), ""); !errors.Is(err, ErrFileUnavailable) {
+		t.Fatalf("空标识错误 = %v，期望 ErrFileUnavailable", err)
+	}
+	if downloads != 0 {
+		t.Errorf("校验不应下载文件内容，下载次数 = %d", downloads)
+	}
+}

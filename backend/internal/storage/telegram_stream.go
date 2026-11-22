@@ -96,6 +96,13 @@ func (t *Telegram) resolvePath(ctx context.Context, fileID string) (string, int6
 
 // OpenStream 查询文件路径并打开下载流，不把文件整体载入内存。
 // 缓存里的路径可能已失效：遇到 404 时刷新路径并只重试一次。
+// VerifyFile 用当前凭据确认一个远端文件可读，只查询文件信息，不下载内容。
+// Telegram 的 file_id 只对上传它的 Bot 有效，因此可用于判断旧图片是否属于当前 Bot。
+func (t *Telegram) VerifyFile(ctx context.Context, fileID string) error {
+	_, _, err := t.getFilePath(ctx, fileID)
+	return err
+}
+
 func (t *Telegram) OpenStream(ctx context.Context, fileID string) (Stream, error) {
 	if err := ctx.Err(); err != nil {
 		return Stream{}, err

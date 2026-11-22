@@ -3,6 +3,7 @@ package posts
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 )
 
@@ -89,5 +90,51 @@ func TestCountStoredImages(t *testing.T) {
 	}
 	if count, err := repo.CountStoredImages(ctx); err != nil || count != 1 {
 		t.Errorf("计数 = %d err=%v，期望 1", count, err)
+	}
+}
+
+// TestSampleStoredFileIDs 取样只返回已存图片的远端标识，按最新优先并受条数限制。
+func TestSampleStoredFileIDs(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+	postID, err := repo.Create(ctx, Post{Title: "取样测试", ImageCount: 3})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+	for sort := 1; sort <= 3; sort++ {
+		if _, err := repo.AttachImage(ctx, Image{
+			PostID:    postID,
+			SortOrder: sort,
+			MimeType:  "image/png",
+			FileSize:  10,
+			Status:    ImageStatusUploaded,
+		}); err != nil {
+			t.Fatalf("写入图片失败: %v", err)
+		}
+	}
+	if ids, err := repo.SampleStoredFileIDs(ctx, 3); err != nil || len(ids) != 0 {
+		t.Fatalf("未存图时取样 = %v err=%v，期望空", ids, err)
+	}
+
+	images, err := repo.ListImages(ctx, postID)
+	if err != nil || len(images) != 3 {
+		t.Fatalf("读取图片失败: %v", err)
+	}
+	for index, image := range images {
+		if err := repo.MarkImageStored(ctx, image.ID, "file-"+strconv.Itoa(index+1), int64(index+1), "telegram"); err != nil {
+			t.Fatalf("标记存图失败: %v", err)
+		}
+	}
+
+	ids, err := repo.SampleStoredFileIDs(ctx, 2)
+	if err != nil {
+		t.Fatalf("取样失败: %v", err)
+	}
+	if len(ids) != 2 {
+		t.Fatalf("取样条数 = %d，期望 2", len(ids))
+	}
+	// 最新优先：sort_order 3 的图片先被取到。
+	if ids[0] != "file-3" || ids[1] != "file-2" {
+		t.Errorf("取样顺序 = %v，期望最新优先", ids)
 	}
 }
