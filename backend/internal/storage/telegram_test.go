@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -121,6 +122,71 @@ func newTestProvider(t *testing.T, api *fakeAPI, cfg TelegramConfig) *Telegram {
 		t.Fatalf("创建提供方失败: %v", err)
 	}
 	return provider
+}
+
+// TestTelegramKeepsTimeoutForInjectedClient 验证注入传输层时不会丢掉请求超时：
+// 未指定超时沿用默认值，显式指定时尊重调用方取值。
+func TestTelegramKeepsTimeoutForInjectedClient(t *testing.T) {
+	provider, err := NewTelegram(TelegramConfig{
+		Token:      testToken,
+		ChatID:     testChatID,
+		HTTPClient: &http.Client{Transport: &http.Transport{}},
+	})
+	if err != nil {
+		t.Fatalf("创建提供方失败: %v", err)
+	}
+	if provider.client.Timeout != defaultTimeout {
+		t.Errorf("超时 = %v，期望沿用默认值 %v", provider.client.Timeout, defaultTimeout)
+	}
+
+	custom := 5 * time.Second
+	provider, err = NewTelegram(TelegramConfig{
+		Token:      testToken,
+		ChatID:     testChatID,
+		HTTPClient: &http.Client{Timeout: custom},
+	})
+	if err != nil {
+		t.Fatalf("创建提供方失败: %v", err)
+	}
+	if provider.client.Timeout != custom {
+		t.Errorf("超时 = %v，期望保留调用方取值 %v", provider.client.Timeout, custom)
+	}
+}
+
+// TestTelegramUploadTimesOutOnHangingUpstream 验证上游不响应时请求会超时返回，
+// 不会让上传队列或保存流程无限等待。
+func TestTelegramUploadTimesOutOnHangingUpstream(t *testing.T) {
+	// 模拟上游读完请求后长时间不返回响应。
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		time.Sleep(2 * time.Second)
+	}))
+	t.Cleanup(server.Close)
+
+	provider, err := NewTelegram(TelegramConfig{
+		Token:      testToken,
+		ChatID:     testChatID,
+		APIBase:    server.URL,
+		HTTPClient: &http.Client{Timeout: 150 * time.Millisecond},
+	})
+	if err != nil {
+		t.Fatalf("创建提供方失败: %v", err)
+	}
+
+	started := time.Now()
+	_, err = provider.Upload(context.Background(), UploadRequest{
+		FileName: "photo.jpg",
+		MIMEType: "image/jpeg",
+		Size:     7,
+		Mode:     ModePhoto,
+		Reader:   bytes.NewReader([]byte("payload")),
+	})
+	if err == nil {
+		t.Fatal("上游不响应时应返回错误")
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Errorf("耗时 = %v，期望在超时后尽快返回", elapsed)
+	}
 }
 
 func TestTelegramSendPhoto(t *testing.T) {

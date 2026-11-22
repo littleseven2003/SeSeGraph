@@ -70,6 +70,10 @@ func NewTelegram(cfg TelegramConfig) (*Telegram, error) {
 	if cfg.HTTPClient != nil {
 		cloned := *cfg.HTTPClient
 		cloned.CheckRedirect = blockRedirects
+		// 注入的客户端通常只带传输层；未指定超时时沿用默认值，避免上游无响应时永久等待。
+		if cloned.Timeout <= 0 {
+			cloned.Timeout = defaultTimeout
+		}
 		client = &cloned
 	}
 	photoMax := cfg.PhotoMaxBytes

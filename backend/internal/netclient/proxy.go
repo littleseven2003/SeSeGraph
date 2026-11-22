@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -133,8 +134,8 @@ func NewTransport(cfg Config, service Service) (*http.Transport, error) {
 		return transport, nil
 	}
 	if mode == ModeSystem {
-		// ProxyFromEnvironment 读取进程环境变量，容器里的 HTTP_PROXY 由此生效。
-		transport.Proxy = http.ProxyFromEnvironment
+		// 系统模式读取进程环境变量，容器里挂载的代理变量由此生效。
+		transport.Proxy = systemProxy
 		return transport, nil
 	}
 	proxyURL, err := parseProxyURL(cfg.URL)
@@ -143,6 +144,120 @@ func NewTransport(cfg Config, service Service) (*http.Transport, error) {
 	}
 	transport.Proxy = http.ProxyURL(proxyURL)
 	return transport, nil
+}
+
+// systemProxy 按环境变量为一次请求选择代理。
+// 协议专属变量优先，两者都没设置时回退到 ALL_PROXY；NO_PROXY 与本地地址始终直连。
+// 与标准库不同，这里每次请求都读取环境变量，容器内变更后无需重启进程。
+func systemProxy(req *http.Request) (*url.URL, error) {
+	if req == nil || req.URL == nil {
+		return nil, nil
+	}
+	raw := envProxyURL(req.URL)
+	if raw == "" {
+		return nil, nil
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" {
+		// 出错时不回显取值，避免把代理地址写进日志或响应。
+		return nil, ErrInvalidURL
+	}
+	return parsed, nil
+}
+
+// envProxyURL 返回目标地址应使用的代理取值，空串表示直连。
+func envProxyURL(target *url.URL) string {
+	if isLoopbackHost(target.Hostname()) {
+		return ""
+	}
+	if noProxyExcludes(envValue("NO_PROXY", "no_proxy"), target) {
+		return ""
+	}
+	switch strings.ToLower(target.Scheme) {
+	case "https":
+		if value := envValue("HTTPS_PROXY", "https_proxy"); value != "" {
+			return value
+		}
+	case "http":
+		if value := envValue("HTTP_PROXY", "http_proxy"); value != "" {
+			return value
+		}
+	}
+	return envValue("ALL_PROXY", "all_proxy")
+}
+
+// envValue 依次读取环境变量，返回第一个非空取值。
+func envValue(keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+// isLoopbackHost 判断是否为本机地址，这类请求不经过代理，避免自指环路。
+func isLoopbackHost(host string) bool {
+	if host == "" || strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
+// noProxyExcludes 判断目标地址是否命中 NO_PROXY。
+// 支持 *、主机名后缀、主机:端口与 CIDR 网段，与常见发行版的语义一致。
+func noProxyExcludes(list string, target *url.URL) bool {
+	if strings.TrimSpace(list) == "" {
+		return false
+	}
+	host := strings.ToLower(target.Hostname())
+	port := target.Port()
+	if port == "" {
+		if strings.EqualFold(target.Scheme, "https") {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	for _, raw := range strings.Split(list, ",") {
+		entry := strings.ToLower(strings.TrimSpace(raw))
+		if entry == "" {
+			continue
+		}
+		if entry == "*" {
+			return true
+		}
+		if _, network, err := net.ParseCIDR(entry); err == nil {
+			if ip := net.ParseIP(host); ip != nil && network.Contains(ip) {
+				return true
+			}
+			continue
+		}
+		if ip := net.ParseIP(entry); ip != nil {
+			if ip.String() == host {
+				return true
+			}
+			continue
+		}
+		entryHost, entryPort := entry, ""
+		if hostPart, portPart, err := net.SplitHostPort(entry); err == nil {
+			entryHost, entryPort = hostPart, portPart
+		}
+		entryHost = strings.TrimPrefix(strings.TrimPrefix(entryHost, "*"), ".")
+		if entryHost == "" {
+			continue
+		}
+		if entryPort != "" && entryPort != port {
+			continue
+		}
+		if host == entryHost || strings.HasSuffix(host, "."+entryHost) {
+			return true
+		}
+	}
+	return false
 }
 
 // NewClient 为一项服务构建带代理传输层的客户端。

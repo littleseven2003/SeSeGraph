@@ -3,7 +3,6 @@ package netclient
 import (
 	"errors"
 	"net/http"
-	"reflect"
 	"testing"
 )
 
@@ -60,17 +59,122 @@ func TestNewTransportDirectAndDisabled(t *testing.T) {
 	}
 }
 
-// TestNewTransportSystemFollowsEnvironment 确认系统模式交给环境变量决定。
-func TestNewTransportSystemFollowsEnvironment(t *testing.T) {
+// clearProxyEnv 清空代理相关环境变量，避免宿主机配置干扰断言。
+func clearProxyEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{
+		"HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy",
+		"ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy",
+	} {
+		t.Setenv(key, "")
+	}
+}
+
+// systemTransport 返回系统模式下的传输层。
+func systemTransport(t *testing.T) *http.Transport {
+	t.Helper()
 	transport, err := NewTransport(Config{Mode: ModeSystem, Telegram: true}, ServiceTelegram)
 	if err != nil {
 		t.Fatalf("构建传输层失败: %v", err)
 	}
 	if transport.Proxy == nil {
-		t.Fatal("系统模式应使用环境变量代理")
+		t.Fatal("系统模式应设置代理选择函数")
 	}
-	if reflect.ValueOf(transport.Proxy).Pointer() != reflect.ValueOf(http.ProxyFromEnvironment).Pointer() {
-		t.Error("系统模式应直接复用 ProxyFromEnvironment")
+	return transport
+}
+
+// proxyFor 返回目标地址实际使用的代理。
+func proxyFor(t *testing.T, transport *http.Transport, target string) string {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodGet, target, nil)
+	if err != nil {
+		t.Fatalf("构造请求失败: %v", err)
+	}
+	proxyURL, err := transport.Proxy(request)
+	if err != nil {
+		t.Fatalf("解析代理失败: %v", err)
+	}
+	if proxyURL == nil {
+		return ""
+	}
+	return proxyURL.String()
+}
+
+// TestSystemModeProtocolVariablesFirst 验证协议专属变量优先于 ALL_PROXY。
+func TestSystemModeProtocolVariablesFirst(t *testing.T) {
+	clearProxyEnv(t)
+	t.Setenv("HTTPS_PROXY", "http://secure-proxy.test:8443")
+	t.Setenv("HTTP_PROXY", "http://plain-proxy.test:8080")
+	t.Setenv("ALL_PROXY", "socks5://fallback.test:1080")
+	transport := systemTransport(t)
+
+	if got := proxyFor(t, transport, "https://api.telegram.org/bot1/getMe"); got != "http://secure-proxy.test:8443" {
+		t.Errorf("HTTPS 代理 = %q，期望使用 HTTPS_PROXY", got)
+	}
+	if got := proxyFor(t, transport, "http://telegra.ph/api/createPage"); got != "http://plain-proxy.test:8080" {
+		t.Errorf("HTTP 代理 = %q，期望使用 HTTP_PROXY", got)
+	}
+}
+
+// TestSystemModeFallsBackToAllProxy 验证只设置 ALL_PROXY 时请求也经过代理。
+func TestSystemModeFallsBackToAllProxy(t *testing.T) {
+	clearProxyEnv(t)
+	t.Setenv("ALL_PROXY", "socks5://127.0.0.1:1080")
+	transport := systemTransport(t)
+
+	for _, target := range []string{"https://api.telegram.org/bot1/getMe", "http://api.telegra.ph/api/createPage"} {
+		if got := proxyFor(t, transport, target); got != "socks5://127.0.0.1:1080" {
+			t.Errorf("%s 代理 = %q，期望回退到 ALL_PROXY", target, got)
+		}
+	}
+}
+
+// TestSystemModeHonorsNoProxyAndLoopback 验证 NO_PROXY 与本地地址直连。
+func TestSystemModeHonorsNoProxyAndLoopback(t *testing.T) {
+	clearProxyEnv(t)
+	t.Setenv("ALL_PROXY", "http://proxy.test:3128")
+	transport := systemTransport(t)
+
+	cases := []struct {
+		name    string
+		noProxy string
+		target  string
+	}{
+		{name: "通配", noProxy: "*", target: "https://api.telegram.org/bot1/getMe"},
+		{name: "主机名", noProxy: "api.telegram.org", target: "https://api.telegram.org/bot1/getMe"},
+		{name: "域名后缀", noProxy: ".telegra.ph", target: "https://api.telegra.ph/api/createPage"},
+		{name: "主机带端口", noProxy: "api.telegram.org:443", target: "https://api.telegram.org/bot1/getMe"},
+		{name: "本地地址", noProxy: "", target: "http://localhost:8080/api/health"},
+		{name: "回环地址", noProxy: "", target: "http://127.0.0.1:8080/api/health"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("NO_PROXY", test.noProxy)
+			if got := proxyFor(t, transport, test.target); got != "" {
+				t.Errorf("代理 = %q，期望直连", got)
+			}
+		})
+	}
+
+	// 端口不匹配时仍走代理。
+	t.Setenv("NO_PROXY", "api.telegram.org:8443")
+	if got := proxyFor(t, transport, "https://api.telegram.org/bot1/getMe"); got == "" {
+		t.Error("端口不匹配时应继续使用代理")
+	}
+}
+
+// TestSystemModeRejectsInvalidValue 验证无法解析的代理取值不回显原文。
+func TestSystemModeRejectsInvalidValue(t *testing.T) {
+	clearProxyEnv(t)
+	t.Setenv("ALL_PROXY", "://bad-value")
+	transport := systemTransport(t)
+
+	request, err := http.NewRequest(http.MethodGet, "https://api.telegram.org/bot1/getMe", nil)
+	if err != nil {
+		t.Fatalf("构造请求失败: %v", err)
+	}
+	if _, err := transport.Proxy(request); !errors.Is(err, ErrInvalidURL) {
+		t.Fatalf("错误 = %v，期望 ErrInvalidURL", err)
 	}
 }
 
