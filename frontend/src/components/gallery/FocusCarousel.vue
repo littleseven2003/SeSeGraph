@@ -74,10 +74,10 @@ function step(delta: number): void {
   select(stepIndex(index.value, props.items.length, delta))
 }
 
-function onCover(): void {
+function onCover(event: MouseEvent): void {
   const item = current.value
   if (item === null) return
-  activate(() => emit('open', item.id))
+  activate(() => emit('open', item.id), event)
 }
 
 const reducedMotion = ref(false)

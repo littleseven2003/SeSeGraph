@@ -16,6 +16,7 @@ import {
   postShareUrl,
   shouldFeatureFirst,
   readShareTemplate,
+  resolveRevealTrigger,
   saveShareTemplate,
   shouldRevealOnTap,
   shouldShowBlur,
@@ -164,6 +165,34 @@ test('formatPublishedAt 容忍空值与缺字段', () => {
   assert.equal(formatPublishedAt(undefined), '')
   assert.equal(formatPublishedAt('不是时间'), '')
   assert.match(formatPublishedAt('2026-11-22T09:18:20Z'), /^2026-11-22 \d{2}:\d{2}$/)
+})
+
+test('按激活事件区分鼠标、触屏与键盘三种回遮路径', () => {
+  // 鼠标点击：离开封面后才由 2 秒计时回遮。
+  assert.equal(resolveRevealTrigger({ pointerType: 'mouse', detail: 1 }), 'pointer')
+  assert.equal(resolveRevealTrigger({ detail: 1 }), 'pointer')
+  // 触屏点按：沿用固定短时回遮。
+  assert.equal(resolveRevealTrigger({ pointerType: 'touch', detail: 1 }), 'touch')
+  // 键盘触发的点击 detail 为 0，即使指针停在封面内也走短时回遮。
+  assert.equal(resolveRevealTrigger({ pointerType: '', detail: 0 }), 'key')
+  assert.equal(resolveRevealTrigger({ detail: 0 }), 'key')
+  // 无事件时按鼠标处理，避免误用短时计时。
+  assert.equal(resolveRevealTrigger(), 'pointer')
+
+  const source = readFileSync(
+    new URL('../src/components/gallery/useCoverReveal.ts', import.meta.url),
+    'utf8',
+  )
+  assert.ok(source.includes('resolveRevealTrigger(event)'), '回遮路径按实际激活事件选择')
+  assert.ok(source.includes('scheduleShortRemask'), '键盘与触屏走短时回遮')
+  assert.ok(source.includes('scheduleLeaveRemask'), '鼠标走离开后的 2 秒回遮')
+})
+
+test('少量标签时「全部标签」入口常驻，Esc 有焦点可归还', () => {
+  const source = readFileSync(new URL('../src/components/gallery/TagFilter.vue', import.meta.url), 'utf8')
+  assert.equal(source.includes('v-if="hiddenCount > 0"'), false, '入口不得随隐藏数量卸载')
+  assert.ok(source.includes('ref="trigger"'), '面板触发器始终挂载')
+  assert.ok(source.includes('trigger.value?.focus()'), '关闭面板归还焦点')
 })
 
 test('解锁封面离开 2 秒后自动回遮', () => {

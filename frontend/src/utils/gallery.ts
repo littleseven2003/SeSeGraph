@@ -286,6 +286,21 @@ export function shouldShowBlur(blurred: boolean, revealed: boolean): boolean {
   return blurred && !revealed
 }
 
+/** RevealTrigger 记录这次揭开来自哪种输入，决定用哪条回遮路径。 */
+export type RevealTrigger = 'pointer' | 'touch' | 'key'
+
+/**
+ * resolveRevealTrigger 按实际激活事件判定输入来源：鼠标走「离开封面满 2 秒」，
+ * 触屏与键盘走固定短时回遮。键盘触发的点击 detail 为 0，据此与鼠标点击区分。
+ */
+export function resolveRevealTrigger(event?: { pointerType?: string; detail?: number }): RevealTrigger {
+  if (event === undefined) return 'pointer'
+  if (event.pointerType === 'touch') return 'touch'
+  if (event.pointerType === 'mouse' || event.pointerType === 'pen') return 'pointer'
+  if ((event.detail ?? 1) === 0) return 'key'
+  return 'pointer'
+}
+
 /** shouldRevealOnTap 判断这次点按是否只做临时去模糊：桌面与触屏一致，先点一次揭开，再点才打开。 */
 export function shouldRevealOnTap(input: { blurred: boolean; revealed: boolean }): boolean {
   return input.blurred && !input.revealed

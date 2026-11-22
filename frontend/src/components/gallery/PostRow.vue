@@ -10,8 +10,8 @@ const emit = defineEmits<{ open: [id: number] }>()
 
 const { showBlur, activate, onCoverEnter, onCoverLeave } = useCoverReveal(() => props.blurred)
 
-function onOpen(): void {
-  activate(() => emit('open', props.item.id))
+function onOpen(event: MouseEvent): void {
+  activate(() => emit('open', props.item.id), event)
 }
 
 const shareUrl = computed(() => postShareUrl(props.item))
