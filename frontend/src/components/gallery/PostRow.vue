@@ -10,7 +10,12 @@ const emit = defineEmits<{ open: [id: number] }>()
 
 const { showBlur, activate, onCoverEnter, onCoverLeave } = useCoverReveal(() => props.blurred)
 
-function onOpen(event: MouseEvent): void {
+// 缩略图上的点击按鼠标离开计时回遮；行内「打开」只做短时揭开，不改变已有计时。
+function onCoverOpen(event: MouseEvent): void {
+  activate(() => emit('open', props.item.id), event, { fromCover: true })
+}
+
+function onRowOpen(event: MouseEvent): void {
   activate(() => emit('open', props.item.id), event)
 }
 
@@ -60,7 +65,7 @@ const copyLabel = computed(() => {
       class="relative block h-12 w-16 shrink-0 overflow-hidden rounded-lg bg-canvas"
       :aria-label="`打开《${item.title}》详情`"
       data-reveal="cover"
-      @click="onOpen"
+      @click="onCoverOpen"
       @mouseenter="onCoverEnter"
       @mouseleave="onCoverLeave"
     >
@@ -129,7 +134,7 @@ const copyLabel = computed(() => {
       <button
         type="button"
         class="inline-flex h-11 items-center rounded-full bg-ink px-3.5 text-xs font-medium text-white transition hover:bg-ink/90"
-        @click="onOpen"
+        @click="onRowOpen"
       >
         打开
       </button>

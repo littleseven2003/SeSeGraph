@@ -62,18 +62,23 @@ export function useCoverReveal(blurred: Ref<boolean> | (() => boolean)) {
   }
 
   // activate 收到点按时先揭开遮罩，已揭开或未开启模糊则直接执行动作。
-  // event 用于区分鼠标、触屏与键盘：鼠标停在封面内不启动短时计时，交由离开后的 2 秒计时。
-  function activate(action: () => void, event?: { pointerType?: string; detail?: number }): void {
-    const trigger = resolveRevealTrigger(event)
-    // 鼠标操作取消键盘或触屏遗留的短时计时，避免指针还在封面内就被提前回遮。
-    if (trigger === 'pointer') clearTimer()
+  // event 区分鼠标、触屏与键盘；options.fromCover 标记这次点按直接落在封面上：
+  // 只有鼠标直接点封面才走「离开后 2 秒」回遮，行内按钮一律走短时回遮。
+  function activate(
+    action: () => void,
+    event?: { pointerType?: string; detail?: number },
+    options: { fromCover?: boolean } = {},
+  ): void {
+    const onCover = options.fromCover === true && resolveRevealTrigger(event) === 'pointer'
+    // 直接点封面时取消遗留的短时计时，避免指针还在封面内就被提前回遮。
+    if (onCover) clearTimer()
     if (!shouldRevealOnTap({ blurred: isBlurred(), revealed: revealed.value })) {
+      // 再次点按打开详情，已有的回遮计时保持不变。
       action()
       return
     }
     revealed.value = true
-    if (trigger === 'pointer') {
-      // 真实指针点击必然发生在封面内：不启动短时计时，交给离开后的 2 秒计时。
+    if (onCover) {
       pointerInside = true
       clearLeaveTimer()
       return

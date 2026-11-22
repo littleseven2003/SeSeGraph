@@ -188,6 +188,19 @@ test('按激活事件区分鼠标、触屏与键盘三种回遮路径', () => {
   assert.ok(source.includes('scheduleLeaveRemask'), '鼠标走离开后的 2 秒回遮')
 })
 
+test('只有指针直接点封面才走离开计时，行内「打开」保留短时回遮', () => {
+  const row = readFileSync(new URL('../src/components/gallery/PostRow.vue', import.meta.url), 'utf8')
+  assert.ok(row.includes('@click="onCoverOpen"'), '缩略图点击单独处理')
+  assert.ok(row.includes('@click="onRowOpen"'), '行内打开按钮单独处理')
+  const start = row.indexOf('function onRowOpen')
+  const rowHandler = row.slice(start, row.indexOf('}', start))
+  assert.equal(rowHandler.includes('fromCover'), false, '行内按钮不交给离开计时')
+
+  const hook = readFileSync(new URL('../src/components/gallery/useCoverReveal.ts', import.meta.url), 'utf8')
+  assert.ok(hook.includes('options.fromCover === true'), '离开计时只由封面点按触发')
+  assert.ok(hook.includes('scheduleShortRemask()'), '行内按钮走短时回遮')
+})
+
 test('少量标签时「全部标签」入口常驻，Esc 有焦点可归还', () => {
   const source = readFileSync(new URL('../src/components/gallery/TagFilter.vue', import.meta.url), 'utf8')
   assert.equal(source.includes('v-if="hiddenCount > 0"'), false, '入口不得随隐藏数量卸载')

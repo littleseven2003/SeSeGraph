@@ -77,7 +77,7 @@ function step(delta: number): void {
 function onCover(event: MouseEvent): void {
   const item = current.value
   if (item === null) return
-  activate(() => emit('open', item.id), event)
+  activate(() => emit('open', item.id), event, { fromCover: true })
 }
 
 const reducedMotion = ref(false)

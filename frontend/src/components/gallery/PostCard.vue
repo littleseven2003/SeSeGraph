@@ -15,7 +15,7 @@ const emit = defineEmits<{ open: [id: number] }>()
 const { showBlur, activate, remask, onCoverEnter, onCoverLeave } = useCoverReveal(() => props.blurred)
 
 function onOpen(event: MouseEvent): void {
-  activate(() => emit('open', props.item.id), event)
+  activate(() => emit('open', props.item.id), event, { fromCover: true })
 }
 
 // 分享链接只在已发布、公开且未撤回时可用；列表数据已带地址，无需额外请求。
