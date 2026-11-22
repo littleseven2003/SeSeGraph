@@ -55,12 +55,16 @@
 
 三种形态共用同一套命令行参数与环境变量配置（`--addr` / `LISTEN_ADDR`、`--data` / `DATA_DIR`、`--public-url` / `PUBLIC_URL`）。
 
-1. **直接部署（原生单二进制）**：`make build` 生成 `bin/sesegraph`，`make cross` 交叉编译 `linux/amd64`、`linux/arm64`、`darwin/arm64`、`windows/amd64`。把二进制放到 `/opt/sesegraph`，按 `deploy/sesegraph.service` 装成 systemd 服务，再用 `deploy/nginx.conf.example` 或 `deploy/Caddyfile.example` 接入已有反向代理。
-2. **单容器 Docker**：`docker build -t sesegraph:local .`，然后
-   `docker run -d --name sesegraph -p 8080:8080 -v ./data:/app/data sesegraph:local`。
-   镜像基于 Alpine，内置 `HEALTHCHECK`（`/api/health`），默认监听 `8080`、数据目录 `/app/data`；容器内以 uid 1000 运行，宿主数据目录需先 `chown 1000:1000 ./data`。
-3. **Docker Compose**：`cp .env.example .env` 填好 `DOMAIN` 与 `ADMIN_PASSWORD`，然后 `docker compose up -d`。`docker-compose.yml` 编排应用与 Caddy：应用只在内部网络暴露 `8080`，Caddy 映射 `80/443` 并按 `DOMAIN` 自动签发与续期证书。只想用 Compose 启动应用、接入已有反向代理时改用
-   `docker compose -f docker-compose.standalone.yml up -d`（只监听 `127.0.0.1:8080`）。
+1. **直接部署（原生单二进制）**：`make build` 生成 `bin/sesegraph`，`make cross` 交叉编译 `linux/amd64`、`linux/arm64`、`darwin/arm64`、`windows/amd64`。把二进制放到 `/opt/sesegraph`，按 `deploy/sesegraph.service` 装成 systemd 服务：数据目录由 `StateDirectory=sesegraph` 自动创建为 `/var/lib/sesegraph`，无需手工建目录或授权；再用 `deploy/nginx.conf.example` 或 `deploy/Caddyfile.example` 接入已有反向代理。
+2. **单容器 Docker**：先建好数据目录并交给容器内的 uid 1000，再启动：
+   ```bash
+   mkdir -p data && sudo chown -R 1000:1000 data
+   docker build -t sesegraph:local .
+   docker run -d --name sesegraph -p 8080:8080 -v "$PWD/data:/app/data" sesegraph:local
+   ```
+   镜像基于 Alpine，内置 `HEALTHCHECK`（`/api/health`），默认监听 `8080`、数据目录 `/app/data`，容器内以 uid 1000 运行。
+3. **Docker Compose**：`cp .env.example .env` 填好 `DOMAIN` 与 `ADMIN_PASSWORD`，然后 `docker compose up -d`。`docker-compose.yml` 编排应用与 Caddy：`init` 服务先建好 `./data` 并授权给 uid 1000，应用只在内部网络暴露 `8080`，Caddy 映射 `80/443` 并按 `DOMAIN` 自动签发与续期证书。只想用 Compose 启动应用、接入已有反向代理时改用
+   `docker compose -f docker-compose.standalone.yml up -d`（只监听 `127.0.0.1:8080`）。Compose 里的 Caddy 未开启访问日志，避免 `X-Setup-Token` 这类自定义请求头被写入日志。
 
 ## Telegram 与 Telegraph 配置
 

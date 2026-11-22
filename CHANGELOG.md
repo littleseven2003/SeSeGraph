@@ -20,6 +20,8 @@
 - 配置与 Bot 归属在同一事务内落库，成功后直接启用已验证的客户端；落库失败时数据库与运行时都保留旧值。
 - 旧库升级：已有图片但缺少 Bot 归属记录时，首次绑定先用候选凭据确认旧图可读，确认属于同一个 Bot 才写入归属；读图失败时配置与归属都保持原值，避免历史图片全部失效。
 - 环境变量只提供 Telegraph 令牌时，作者名仍取自设置并在保存后热生效。
+- 代理配置改为逐字段判断托管状态：只托管地址时模式仍可修改，只托管模式时地址仍可写入，托管项改动返回字段级 409。
+- 压缩包第二遍解压按「名字 + 第一遍登记的大小」放行，同名条目只展开一次，避免用同名副本绕过说明文件与单图上限。
 - 数据目录含 `?`、`#`、`%` 时按 URI 规则转义数据库路径，避免连接串被截断后连到别的文件；页面回退与静态资源不再记为未匹配路由；压缩包内说明文件使用独立大小上限（64 KB），超限时忽略并提示，不影响图片解压。
 - 代理配置保存后重建传输层：上传队列、图片网关、发布队列与连通性自检都使用新配置；只影响 Telegraph 的改动不重新校验 Bot，只影响 Telegram 的改动会先验证 Bot 再落库。图床切换会回收旧提供方的空闲连接。
 - 上游地址（`TELEGRAM_API_BASE`、`TELEGRAPH_API_BASE`）只由环境变量或官方默认值决定，设置接口不接受地址修改，避免把已有令牌导向任意主机；自定义地址只返回来源与配置状态，不回显，避免反代地址中的认证信息出现在界面或响应里。
@@ -27,7 +29,7 @@
 
 ### 新增
 
-- 部署编排：多阶段 `Dockerfile`（Node 构建前端 → 静态编译 Go → Alpine 运行层，内置 `HEALTHCHECK`，以非 root 运行）、`docker-compose.yml`（应用 + Caddy 自动 HTTPS，读 `.env` 的 `DOMAIN`）、`docker-compose.standalone.yml`（只跑应用，接入已有反向代理）、`.dockerignore`，以及 `deploy/sesegraph.service`、`deploy/nginx.conf.example`、`deploy/Caddyfile.example` 三个部署示例。
+- 部署编排：多阶段 `Dockerfile`（Node 构建前端 → 静态编译 Go → Alpine 运行层，内置 `HEALTHCHECK`，以非 root 运行）、`docker-compose.yml`（应用 + Caddy 自动 HTTPS，读 `.env` 的 `DOMAIN`）、`docker-compose.standalone.yml`（只跑应用，接入已有反向代理）、`.dockerignore`，以及 `deploy/sesegraph.service`、`deploy/nginx.conf.example`、`deploy/Caddyfile.example` 三个部署示例。两套 Compose 都带一次性 `init` 服务，首次部署自动建好数据目录并交给 uid 1000；systemd 模板用 `StateDirectory` 创建数据目录；两套编排都透传 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY`。Compose 的 Caddy 关闭访问日志，避免 `X-Setup-Token` 等自定义请求头被记录。
 
 ### 说明
 
