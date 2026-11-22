@@ -625,3 +625,88 @@ func TestTelegramSendMessage(t *testing.T) {
 		t.Error("空内容应报错")
 	}
 }
+
+// TestTelegramChatInfoPrivacy 验证 getChat 结果能区分公开与私有会话。
+func TestTelegramChatInfoPrivacy(t *testing.T) {
+	samples := []struct {
+		name    string
+		result  map[string]any
+		want    string
+		private bool
+	}{
+		{"私有频道", map[string]any{"id": -1001, "type": "channel", "title": "备份"}, "channel", true},
+		{"公开频道", map[string]any{"id": -1002, "type": "channel", "username": "sese_backup"}, "channel", false},
+		{"私有群", map[string]any{"id": -1003, "type": "supergroup", "title": "运维"}, "supergroup", true},
+		{"公开群", map[string]any{"id": -1004, "type": "supergroup", "username": "sese_ops"}, "supergroup", false},
+		{"私聊", map[string]any{"id": 77, "type": "private"}, "private", true},
+	}
+	for _, sample := range samples {
+		t.Run(sample.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !strings.HasSuffix(r.URL.Path, "/getChat") {
+					http.NotFound(w, r)
+					return
+				}
+				if err := r.ParseForm(); err != nil {
+					t.Errorf("解析表单失败: %v", err)
+				}
+				if got := r.PostForm.Get("chat_id"); got != testChatID {
+					t.Errorf("chat_id = %q，期望 %q", got, testChatID)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": sample.result})
+			}))
+			t.Cleanup(server.Close)
+
+			provider, err := NewTelegram(TelegramConfig{Token: testToken, ChatID: testChatID, APIBase: server.URL})
+			if err != nil {
+				t.Fatalf("创建提供方失败: %v", err)
+			}
+			info, err := provider.ChatInfo(context.Background())
+			if err != nil {
+				t.Fatalf("读取会话属性失败: %v", err)
+			}
+			if info.Type != sample.want {
+				t.Errorf("类型 = %q，期望 %q", info.Type, sample.want)
+			}
+			if info.Private() != sample.private {
+				t.Errorf("Private() = %v，期望 %v", info.Private(), sample.private)
+			}
+		})
+	}
+}
+
+// TestTelegramChatInfoFailures 验证上游失败与空类型都按错误处理，不会误判为私有。
+func TestTelegramChatInfoFailures(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/getChat") && r.URL.Query().Get("empty") == "" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": map[string]any{}})
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error_code": 403})
+	}))
+	t.Cleanup(server.Close)
+
+	provider, err := NewTelegram(TelegramConfig{Token: testToken, ChatID: testChatID, APIBase: server.URL})
+	if err != nil {
+		t.Fatalf("创建提供方失败: %v", err)
+	}
+	if _, err := provider.ChatInfo(context.Background()); !errors.Is(err, ErrUpstream) {
+		t.Errorf("空类型错误 = %v，期望 ErrUpstream", err)
+	}
+
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error_code": 403})
+	}))
+	t.Cleanup(failing.Close)
+	denied, err := NewTelegram(TelegramConfig{Token: testToken, ChatID: testChatID, APIBase: failing.URL})
+	if err != nil {
+		t.Fatalf("创建提供方失败: %v", err)
+	}
+	if _, err := denied.ChatInfo(context.Background()); !errors.Is(err, ErrUpstream) {
+		t.Errorf("上游拒绝错误 = %v，期望 ErrUpstream", err)
+	}
+}

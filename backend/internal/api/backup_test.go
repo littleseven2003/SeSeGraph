@@ -151,3 +151,50 @@ func TestBackupTriggerRejectsConcurrent(t *testing.T) {
 		t.Errorf("再次触发状态码 = %d，期望 200", rec.Code)
 	}
 }
+
+// failingSender 模拟发送阶段失败，用于验证接口只给警告、本地备份仍可下载。
+type failingSender struct {
+	err error
+}
+
+func (f *failingSender) SendDocument(context.Context, string, string) error { return f.err }
+
+// TestBackupTriggerWarnsWhenTargetNotPrivate 验证目标不是私有会话时只提示警告并保留本地备份。
+func TestBackupTriggerWarnsWhenTargetNotPrivate(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"公开频道", backup.ErrTargetPublic, "公开频道"},
+		{"无法确认", backup.ErrTargetUnverified, "无法确认"},
+	}
+	for _, sample := range cases {
+		t.Run(sample.name, func(t *testing.T) {
+			dataDir := t.TempDir()
+			manager := backup.New(backup.Options{
+				DataDir: dataDir,
+				Handle:  backupHandle(t, dataDir),
+				Sender:  &failingSender{err: sample.err},
+			})
+			env := newTestEnvWith(t, testSetupToken, func(deps *Deps, _ *sql.DB) {
+				deps.Backup = manager
+			})
+			cookie := env.setup(t)
+
+			rec := env.do(t, http.MethodPost, "/api/backup/trigger", "", cookie)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("触发状态码 = %d，期望 200，响应: %s", rec.Code, rec.Body.String())
+			}
+			body := rec.Body.String()
+			if !strings.Contains(body, `"sent":false`) || !strings.Contains(body, sample.want) {
+				t.Errorf("响应 = %s，期望未发送并说明原因", body)
+			}
+
+			download := env.do(t, http.MethodGet, "/api/backup/download", "", cookie)
+			if download.Code != http.StatusOK {
+				t.Fatalf("下载状态码 = %d，期望本地备份仍可下载", download.Code)
+			}
+		})
+	}
+}

@@ -108,6 +108,15 @@ func (s *Switcher) SendMessage(ctx context.Context, text string) error {
 	return provider.SendMessage(ctx, text)
 }
 
+// ChatInfo 按当前提供方读取目标会话属性，用于备份发送前确认目标是否私有。
+func (s *Switcher) ChatInfo(ctx context.Context) (ChatInfo, error) {
+	provider, err := s.current()
+	if err != nil {
+		return ChatInfo{}, err
+	}
+	return provider.ChatInfo(ctx)
+}
+
 // SendDocument 按当前提供方把本地文件作为文档发送，用于自动备份推送。
 func (s *Switcher) SendDocument(ctx context.Context, path, caption string) error {
 	provider, err := s.current()

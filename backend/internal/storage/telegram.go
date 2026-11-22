@@ -151,6 +151,71 @@ func (t *Telegram) BotID(ctx context.Context) (int64, error) {
 	return payload.Result.ID, nil
 }
 
+// ChatInfo 是 getChat 返回的会话属性，用于确认备份目标是否为公开会话。
+type ChatInfo struct {
+	ID       int64  `json:"id"`
+	Type     string `json:"type"`
+	Username string `json:"username"`
+	Title    string `json:"title"`
+}
+
+// Private 报告会话是否只对成员可见。
+// 带公开用户名的频道或群任何人都能访问，私聊与无公开用户名的会话视为私有。
+func (c ChatInfo) Private() bool {
+	if c.Username != "" {
+		return false
+	}
+	switch c.Type {
+	case "private", "group", "supergroup", "channel":
+		return true
+	default:
+		return false
+	}
+}
+
+// ChatInfo 通过 getChat 读取目标会话属性，供备份发送前确认目标是否私有用。
+func (t *Telegram) ChatInfo(ctx context.Context) (ChatInfo, error) {
+	if t == nil {
+		return ChatInfo{}, ErrNotConfigured
+	}
+	form := url.Values{"chat_id": {t.chatID}}
+	endpoint := t.apiBase + "/bot" + t.token + "/getChat"
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint,
+		strings.NewReader(form.Encode()))
+	if err != nil {
+		return ChatInfo{}, ErrUpstream
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	response, err := t.client.Do(request)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ChatInfo{}, ctxErr
+		}
+		return ChatInfo{}, errTransport
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10))
+		_ = response.Body.Close()
+	}()
+
+	var payload apiResponse
+	if err := json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&payload); err != nil {
+		return ChatInfo{}, ErrUpstream
+	}
+	if !payload.OK {
+		return ChatInfo{}, t.errorFor(payload)
+	}
+	var info ChatInfo
+	if err := json.Unmarshal(payload.Result, &info); err != nil {
+		return ChatInfo{}, ErrUpstream
+	}
+	if info.Type == "" {
+		return ChatInfo{}, ErrUpstream
+	}
+	return info, nil
+}
+
 // Upload 以流式 multipart 方式上传单张图片，不把文件整体载入内存。
 func (t *Telegram) Upload(ctx context.Context, req UploadRequest) (UploadResult, error) {
 	mode := req.Mode

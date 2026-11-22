@@ -40,9 +40,21 @@ func backupTriggerHandler(deps Deps) gin.HandlerFunc {
 			"includes":   result.Includes,
 		}
 		if err != nil {
-			payload["warning"] = "备份已生成，但发送到频道失败"
+			payload["warning"] = backupWarning(err)
 		}
 		c.JSON(http.StatusOK, payload)
+	}
+}
+
+// backupWarning 把发送失败的原因转成固定文案，不把上游细节带到响应里。
+func backupWarning(err error) string {
+	switch {
+	case errors.Is(err, backup.ErrTargetPublic):
+		return "备份目标是公开频道，已只保留本地备份"
+	case errors.Is(err, backup.ErrTargetUnverified):
+		return "无法确认备份目标是否私有，已只保留本地备份"
+	default:
+		return "备份已生成，但发送到频道失败"
 	}
 }
 

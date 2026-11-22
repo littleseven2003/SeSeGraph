@@ -320,6 +320,9 @@ func backupSender(resolver *settings.Resolver, lookupEnv func(string) (string, b
 		}
 		if channel == "" {
 			// 未指定独立频道时复用当前图床频道。
+			if err := ensurePrivateTarget(ctx, switcher); err != nil {
+				return err
+			}
 			return switcher.SendDocument(ctx, path, caption)
 		}
 		client, err := netclient.NewClient(effective.ProxyConfig(), netclient.ServiceTelegram)
@@ -335,8 +338,29 @@ func backupSender(resolver *settings.Resolver, lookupEnv func(string) (string, b
 		if err != nil {
 			return err
 		}
+		if err := ensurePrivateTarget(ctx, provider); err != nil {
+			return err
+		}
 		return uploadDocument(ctx, provider, path, caption)
 	})
+}
+
+// chatInspector 读取目标会话属性，Telegram 提供方与切换器都实现它。
+type chatInspector interface {
+	ChatInfo(ctx context.Context) (storage.ChatInfo, error)
+}
+
+// ensurePrivateTarget 确认备份目标不是公开会话。
+// 备份包含数据库里的凭据，公开频道或无法确认时只保留本地文件。
+func ensurePrivateTarget(ctx context.Context, target chatInspector) error {
+	info, err := target.ChatInfo(ctx)
+	if err != nil {
+		return backup.ErrTargetUnverified
+	}
+	if !info.Private() {
+		return backup.ErrTargetPublic
+	}
+	return nil
 }
 
 // backupSenderFunc 让普通函数满足备份发送接口。
