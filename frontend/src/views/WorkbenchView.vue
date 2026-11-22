@@ -793,7 +793,7 @@ onBeforeUnmount(() => {
                     :disabled="busy || phase === 'queued' || finished"
                     @click="publish"
                   >
-                    {{ busy ? '正在上传…' : finished ? '存图完成' : serverProgress?.status === 'uploading' ? '继续上传' : '发布' }}
+                    {{ busy ? '正在上传…' : finished ? '存图完成' : serverProgress?.status === 'uploading' ? '继续上传' : '提交存图' }}
                   </button>
                   <button
                     v-if="finished"
@@ -848,7 +848,7 @@ onBeforeUnmount(() => {
               :disabled="busy || phase === 'queued' || finished"
               @click="publish"
             >
-              {{ busy ? '正在上传…' : finished ? '存图完成' : serverProgress?.status === 'uploading' ? '继续上传' : '发布' }}
+              {{ busy ? '正在上传…' : finished ? '存图完成' : serverProgress?.status === 'uploading' ? '继续上传' : '提交存图' }}
             </button>
           </div>
         </div>

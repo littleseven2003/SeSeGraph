@@ -56,7 +56,7 @@ const tone = computed(() => {
         <button
           v-if="canRetry"
           type="button"
-          class="h-9 rounded-md bg-brand px-3 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+          class="h-11 rounded-md bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
           :disabled="props.retrying"
           @click="emit('retry')"
         >
@@ -84,7 +84,7 @@ const tone = computed(() => {
         <button
           v-if="canPublish"
           type="button"
-          class="h-9 rounded-md bg-brand px-3 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+          class="h-11 rounded-md bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
           :disabled="publishActive(props.progress) || props.publishing"
           @click="emit('publish')"
         >
