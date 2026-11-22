@@ -25,6 +25,7 @@ import {
   updateFailureText,
   validateMetadata,
   readBlurPreference,
+  COVER_REMASK_MS,
   readViewPreference,
   saveViewPreference,
   stepIndex,
@@ -163,6 +164,14 @@ test('formatPublishedAt 容忍空值与缺字段', () => {
   assert.equal(formatPublishedAt(undefined), '')
   assert.equal(formatPublishedAt('不是时间'), '')
   assert.match(formatPublishedAt('2026-11-22T09:18:20Z'), /^2026-11-22 \d{2}:\d{2}$/)
+})
+
+test('解锁封面离开 2 秒后自动回遮', () => {
+  assert.equal(COVER_REMASK_MS, 2000)
+  const source = readFileSync(new URL('../src/components/gallery/useCoverReveal.ts', import.meta.url), 'utf8')
+  assert.ok(source.includes('onCoverLeave'), '封面离开要启动回遮计时')
+  assert.ok(source.includes('onCoverEnter'), '移回封面要取消回遮计时')
+  assert.ok(source.includes('clearLeaveTimer'), '卸载与手动复位要清理计时器')
 })
 
 test('主页布局偏好默认画廊并持久化', () => {
