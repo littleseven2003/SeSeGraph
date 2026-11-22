@@ -31,7 +31,8 @@ async function messageOf(response: Response): Promise<string> {
   return '请求失败，请稍后重试'
 }
 
-async function request(path: string, init?: RequestInit): Promise<Response> {
+// apiRequest 发起同源请求，失败时抛出带状态码与后端说明的错误。
+export async function apiRequest(path: string, init?: RequestInit): Promise<Response> {
   const response = await fetch(path, { credentials: 'same-origin', ...init })
   if (!response.ok) {
     throw new ApiError(response.status, await messageOf(response))
@@ -40,15 +41,15 @@ async function request(path: string, init?: RequestInit): Promise<Response> {
 }
 
 export async function fetchHealth(): Promise<HealthInfo> {
-  return (await request('/api/health')).json() as Promise<HealthInfo>
+  return (await apiRequest('/api/health')).json() as Promise<HealthInfo>
 }
 
 export async function fetchStatus(): Promise<AuthStatus> {
-  return (await request('/api/auth/status')).json() as Promise<AuthStatus>
+  return (await apiRequest('/api/auth/status')).json() as Promise<AuthStatus>
 }
 
 export async function login(username: string, password: string): Promise<void> {
-  await request('/api/auth/login', {
+  await apiRequest('/api/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password }),
@@ -56,7 +57,7 @@ export async function login(username: string, password: string): Promise<void> {
 }
 
 export async function setupAccount(username: string, password: string, setupToken: string): Promise<void> {
-  await request('/api/auth/setup', {
+  await apiRequest('/api/auth/setup', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -67,5 +68,5 @@ export async function setupAccount(username: string, password: string, setupToke
 }
 
 export async function logout(): Promise<void> {
-  await request('/api/auth/logout', { method: 'POST' })
+  await apiRequest('/api/auth/logout', { method: 'POST' })
 }
