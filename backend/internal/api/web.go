@@ -36,6 +36,7 @@ func spaHandler(webFS fs.FS) gin.HandlerFunc {
 
 		if requested != "" && fileExists(webFS, requested) {
 			setAssetCache(c, requested)
+			c.Set(routeLabelKey, routeLabelAsset)
 			fileServer.ServeHTTP(c.Writer, c.Request)
 			return
 		}
@@ -51,6 +52,7 @@ func spaHandler(webFS fs.FS) gin.HandlerFunc {
 			return
 		}
 		c.Header("Cache-Control", "no-cache")
+		c.Set(routeLabelKey, routeLabelSPA)
 		c.Data(http.StatusOK, "text/html; charset=utf-8", index)
 	}
 }

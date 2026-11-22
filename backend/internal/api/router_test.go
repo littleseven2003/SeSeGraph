@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -328,5 +329,55 @@ func TestAccessLogOnUnmatchedRoute(t *testing.T) {
 	}
 	if !strings.Contains(logged, "unmatched") {
 		t.Errorf("访问日志应标记未匹配路由: %s", logged)
+	}
+}
+
+// TestAccessLogLabelsSPAFallback 验证页面回退与静态资源不再记为未匹配路由，
+// 同时仍然不把请求路径写进日志。
+func TestAccessLogLabelsSPAFallback(t *testing.T) {
+	// 用测试目录作为嵌入资源根，写入入口页与静态资源。
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("<!doctype html><title>图集</title>"), 0o600); err != nil {
+		t.Fatalf("写入入口页失败: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "static"), 0o750); err != nil {
+		t.Fatalf("创建静态目录失败: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "static", "app.js"), []byte("console.log(1)"), 0o600); err != nil {
+		t.Fatalf("写入静态资源失败: %v", err)
+	}
+	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, _ *sql.DB) {
+		deps.WebFS = os.DirFS(root)
+	})
+
+	rec := env.do(t, http.MethodGet, "/gallery/secret-code", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("页面回退状态码 = %d，期望 200", rec.Code)
+	}
+	logged := env.logs.String()
+	if !strings.Contains(logged, "spa") {
+		t.Errorf("页面回退应记为 spa: %s", logged)
+	}
+	if strings.Contains(logged, "secret-code") || strings.Contains(logged, "unmatched") {
+		t.Errorf("页面回退日志不应包含原始路径或未匹配标记: %s", logged)
+	}
+
+	env.logs.Reset()
+	rec = env.do(t, http.MethodGet, "/static/app.js", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("静态资源状态码 = %d，期望 200", rec.Code)
+	}
+	logged = env.logs.String()
+	if !strings.Contains(logged, "asset") || strings.Contains(logged, "unmatched") {
+		t.Errorf("静态资源应记为 asset: %s", logged)
+	}
+
+	env.logs.Reset()
+	rec = env.do(t, http.MethodGet, "/api/not-exist", "", nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("未知接口状态码 = %d，期望 404", rec.Code)
+	}
+	if !strings.Contains(env.logs.String(), "unmatched") {
+		t.Errorf("未知接口仍应记为未匹配: %s", env.logs.String())
 	}
 }
