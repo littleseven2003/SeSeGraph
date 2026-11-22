@@ -163,6 +163,53 @@ func TestSystemModeHonorsNoProxyAndLoopback(t *testing.T) {
 	}
 }
 
+// TestSystemModeAcceptsSchemeLessProxy 验证沿用旧部署的 host[:port] 写法，
+// 缺少协议时按 http:// 处理。
+func TestSystemModeAcceptsSchemeLessProxy(t *testing.T) {
+	clearProxyEnv(t)
+	t.Setenv("HTTP_PROXY", "proxy.example:3128")
+	t.Setenv("HTTPS_PROXY", "secure.example:8443")
+	transport := systemTransport(t)
+
+	if got := proxyFor(t, transport, "http://api.telegra.ph/api/createPage"); got != "http://proxy.example:3128" {
+		t.Errorf("HTTP 代理 = %q，期望补全为 http:// 前缀", got)
+	}
+	if got := proxyFor(t, transport, "https://api.telegram.org/bot1/getMe"); got != "http://secure.example:8443" {
+		t.Errorf("HTTPS 代理 = %q，期望补全为 http:// 前缀", got)
+	}
+
+	// 只设 ALL_PROXY 时同样接受无协议写法。
+	clearProxyEnv(t)
+	t.Setenv("ALL_PROXY", "fallback.example:1080")
+	if got := proxyFor(t, systemTransport(t), "https://api.telegram.org/bot1/getMe"); got != "http://fallback.example:1080" {
+		t.Errorf("ALL_PROXY 代理 = %q，期望补全为 http:// 前缀", got)
+	}
+}
+
+// TestSystemModeNoProxyDomainSemantics 验证 NO_PROXY 的域名匹配语义：
+// 带前导点的条目只排除子域名，域名本身仍走代理。
+func TestSystemModeNoProxyDomainSemantics(t *testing.T) {
+	clearProxyEnv(t)
+	t.Setenv("ALL_PROXY", "http://proxy.test:3128")
+	transport := systemTransport(t)
+
+	t.Setenv("NO_PROXY", ".api.telegram.org")
+	if got := proxyFor(t, transport, "https://api.telegram.org/bot1/getMe"); got != "http://proxy.test:3128" {
+		t.Errorf("域名本身代理 = %q，期望仍走代理", got)
+	}
+	if got := proxyFor(t, transport, "https://sub.api.telegram.org/bot1/getMe"); got != "" {
+		t.Errorf("子域名代理 = %q，期望直连", got)
+	}
+
+	// 不带前导点时，域名与其子域名都直连。
+	t.Setenv("NO_PROXY", "api.telegram.org")
+	for _, target := range []string{"https://api.telegram.org/bot1/getMe", "https://sub.api.telegram.org/bot1/getMe"} {
+		if got := proxyFor(t, transport, target); got != "" {
+			t.Errorf("%s 代理 = %q，期望直连", target, got)
+		}
+	}
+}
+
 // TestSystemModeRejectsInvalidValue 验证无法解析的代理取值不回显原文。
 func TestSystemModeRejectsInvalidValue(t *testing.T) {
 	clearProxyEnv(t)
