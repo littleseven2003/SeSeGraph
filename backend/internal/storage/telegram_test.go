@@ -580,3 +580,48 @@ func TestVerifyFileReportsOwnership(t *testing.T) {
 		t.Errorf("校验不应下载文件内容，下载次数 = %d", downloads)
 	}
 }
+
+// TestTelegramSendMessage 验证纯文本通知的请求形态与错误映射。
+func TestTelegramSendMessage(t *testing.T) {
+	type received struct {
+		chat string
+		text string
+	}
+	calls := make([]received, 0, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/sendMessage") {
+			http.NotFound(w, r)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("解析表单失败: %v", err)
+		}
+		calls = append(calls, received{chat: r.PostForm.Get("chat_id"), text: r.PostForm.Get("text")})
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.PostForm.Get("text"), "失败样本") {
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error_code": 403})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": map[string]any{"message_id": 9}})
+	}))
+	t.Cleanup(server.Close)
+
+	provider, err := NewTelegram(TelegramConfig{Token: testToken, ChatID: testChatID, APIBase: server.URL})
+	if err != nil {
+		t.Fatalf("创建提供方失败: %v", err)
+	}
+	if err := provider.SendMessage(context.Background(), "流量提醒"); err != nil {
+		t.Fatalf("发送失败: %v", err)
+	}
+	if len(calls) != 1 || calls[0].chat != testChatID || calls[0].text != "流量提醒" {
+		t.Fatalf("请求内容 = %+v，期望带上频道与文本", calls)
+	}
+
+	if err := provider.SendMessage(context.Background(), "失败样本"); !errors.Is(err, ErrUpstream) {
+		t.Fatalf("错误 = %v，期望 ErrUpstream", err)
+	}
+	if err := provider.SendMessage(context.Background(), "  "); err == nil {
+		t.Error("空内容应报错")
+	}
+}

@@ -16,6 +16,7 @@ import (
 	"github.com/littleseven2003/SeSeGraph/backend/internal/provider"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/settings"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/storage"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/traffic"
 )
 
 // newSettingsEnv 装配带配置解析器的环境，可注入环境变量优先项。
@@ -917,4 +918,39 @@ func mustCandidate(t *testing.T, apiBase, token, channel string) *storage.Telegr
 		t.Fatalf("创建提供方失败: %v", err)
 	}
 	return candidate
+}
+
+// TestTrafficStatsHandler 验证流量统计接口返回当月数据与阈值。
+func TestTrafficStatsHandler(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	cookie := env.setup(t)
+
+	meter := traffic.New(nil, traffic.Options{AlertBytes: 3 * traffic.GB, LimitBytes: 5 * traffic.GB})
+	meter.Add(context.Background(), 2*traffic.GB)
+	env.router = NewRouter(Deps{
+		Version: "test", Commit: "abc", Auth: env.auth, Sessions: env.sessions,
+		SetupToken: env.setupToken, Logger: env.logger, DataDir: env.dataDir, Posts: env.posts,
+		Traffic: meter,
+	})
+
+	rec := env.do(t, http.MethodGet, "/api/stats/traffic", "", cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("状态码 = %d，期望 200", rec.Code)
+	}
+	var body struct {
+		Month     string `json:"month"`
+		BytesOut  int64  `json:"bytes_out"`
+		Requests  int64  `json:"request_count"`
+		AlertByte int64  `json:"alert_bytes"`
+		LimitByte int64  `json:"limit_bytes"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("解析响应失败: %v", err)
+	}
+	if body.Month == "" || body.BytesOut != 2*traffic.GB || body.Requests != 1 {
+		t.Errorf("统计 = %+v，期望当月 2GB / 1 次", body)
+	}
+	if body.AlertByte != 3*traffic.GB || body.LimitByte != 5*traffic.GB {
+		t.Errorf("阈值 = %d / %d，期望 3GB / 5GB", body.AlertByte, body.LimitByte)
+	}
 }

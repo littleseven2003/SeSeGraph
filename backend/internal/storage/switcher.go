@@ -2,6 +2,9 @@ package storage
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"sync"
 )
 
@@ -94,4 +97,39 @@ func (s *Switcher) OpenStream(ctx context.Context, fileID string) (Stream, error
 		return Stream{}, err
 	}
 	return provider.OpenStream(ctx, fileID)
+}
+
+// SendMessage 按当前提供方发送一条纯文本消息，未配置时返回 ErrNotConfigured。
+func (s *Switcher) SendMessage(ctx context.Context, text string) error {
+	provider, err := s.current()
+	if err != nil {
+		return err
+	}
+	return provider.SendMessage(ctx, text)
+}
+
+// SendDocument 按当前提供方把本地文件作为文档发送，用于自动备份推送。
+func (s *Switcher) SendDocument(ctx context.Context, path, caption string) error {
+	provider, err := s.current()
+	if err != nil {
+		return err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil || info.IsDir() {
+		return errors.New("读取备份文件失败")
+	}
+	_, err = provider.Upload(ctx, UploadRequest{
+		FileName: filepath.Base(path),
+		MIMEType: "application/zip",
+		Size:     info.Size(),
+		Mode:     ModeDocument,
+		Caption:  caption,
+		Reader:   file,
+	})
+	return err
 }

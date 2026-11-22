@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -359,4 +360,50 @@ func (t *Telegram) resultFrom(raw json.RawMessage, mode string) (UploadResult, e
 	result.FileID = largest.FileID
 	result.FileSize = largest.FileSize
 	return result, nil
+}
+
+// SendMessage 发送一条纯文本消息，用于流量预警等运维通知。
+// 只发文本，不带图片或文件；失败时返回统一的上游错误，不携带地址与令牌。
+func (t *Telegram) SendMessage(ctx context.Context, text string) error {
+	if t == nil {
+		return ErrNotConfigured
+	}
+	body := strings.TrimSpace(text)
+	if body == "" {
+		return errors.New("消息内容为空")
+	}
+
+	form := url.Values{
+		"chat_id":                  {t.chatID},
+		"text":                     {body},
+		"disable_web_page_preview": {"true"},
+	}
+	endpoint := t.apiBase + "/bot" + t.token + "/sendMessage"
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint,
+		strings.NewReader(form.Encode()))
+	if err != nil {
+		return ErrUpstream
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	response, err := t.client.Do(request)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		return errTransport
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10))
+		_ = response.Body.Close()
+	}()
+
+	var payload apiResponse
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&payload); err != nil {
+		return ErrUpstream
+	}
+	if !payload.OK {
+		return t.errorFor(payload)
+	}
+	return nil
 }

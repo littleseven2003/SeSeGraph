@@ -17,6 +17,7 @@ import (
 	"github.com/littleseven2003/SeSeGraph/backend/internal/db"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/storage"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/traffic"
 )
 
 // fakeStreamProvider 记录调用并允许测试控制打开行为。
@@ -547,5 +548,62 @@ func TestGatewayUnavailableWhileProviderNotReady(t *testing.T) {
 	}
 	if cache := response.Header.Get("Cache-Control"); cache != "no-store" {
 		t.Errorf("Cache-Control = %q，期望 no-store", cache)
+	}
+}
+
+// TestGatewayCountsTraffic 验证成功转发后按实际字节数计入流量统计。
+func TestGatewayCountsTraffic(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	cookie := env.setup(t)
+	postID := publishedPost(t, env)
+	code := shortCodeOf(t, env, postID)
+
+	meter := traffic.New(nil, traffic.Options{})
+	env.router = NewRouter(Deps{
+		Version: "test", Commit: "abc", Auth: env.auth, Sessions: env.sessions,
+		SetupToken: env.setupToken, Logger: env.logger, DataDir: env.dataDir, Posts: env.posts,
+		Streams: &fakeStreamProvider{}, Traffic: meter,
+	})
+
+	if rec := env.do(t, http.MethodGet, "/i/"+code, "", cookie); rec.Code != http.StatusOK {
+		t.Fatalf("状态码 = %d，期望 200", rec.Code)
+	}
+	stats, err := meter.Stats(context.Background())
+	if err != nil {
+		t.Fatalf("读取统计失败: %v", err)
+	}
+	if stats.BytesOut != int64(len("image-bytes")) || stats.RequestCount != 1 {
+		t.Errorf("统计 = %+v，期望按实际写出字节计数", stats)
+	}
+}
+
+// TestGatewayStopsAtMonthlyLimit 验证月度硬上限被触发后不再向 Telegram 取流。
+func TestGatewayStopsAtMonthlyLimit(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	cookie := env.setup(t)
+	postID := publishedPost(t, env)
+	code := shortCodeOf(t, env, postID)
+
+	streams := &fakeStreamProvider{}
+	meter := traffic.New(nil, traffic.Options{LimitBytes: 1})
+	meter.Add(context.Background(), 2) // 已超过 1 字节上限
+	env.router = NewRouter(Deps{
+		Version: "test", Commit: "abc", Auth: env.auth, Sessions: env.sessions,
+		SetupToken: env.setupToken, Logger: env.logger, DataDir: env.dataDir, Posts: env.posts,
+		Streams: streams, Traffic: meter,
+	})
+
+	rec := env.do(t, http.MethodGet, "/i/"+code, "", cookie)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("状态码 = %d，期望 503", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "本月流量已超限") {
+		t.Errorf("响应 = %s，期望说明流量超限", rec.Body.String())
+	}
+	if streams.callCount() != 0 {
+		t.Errorf("超限时不应向上游取流，调用 = %d", streams.callCount())
+	}
+	if rec.Header().Get("Cache-Control") != "no-store" {
+		t.Errorf("熔断响应不应被缓存: %s", rec.Header().Get("Cache-Control"))
 	}
 }

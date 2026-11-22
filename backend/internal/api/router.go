@@ -12,12 +12,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/auth"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/backup"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/provider"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/publisher"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/settings"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/storage"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/telegraph"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/traffic"
 )
 
 // Deps 汇总构建路由所需的依赖。
@@ -35,6 +37,12 @@ type Deps struct {
 	Streams storage.StreamProvider
 	// ImageConcurrency 是图片网关的并发上限，非正时使用默认值。
 	ImageConcurrency int
+	// Traffic 统计图片出站流量并按月度上限熔断，未装配时不计流量。
+	Traffic *traffic.Recorder
+	// Backup 生成并管理 SQLite 热备，未装配时备份接口不可用。
+	Backup *backup.Manager
+	// BackupSchedule 是定时备份的展示文案，为空表示未启用定时备份。
+	BackupSchedule string
 	// Telegraph 负责账户配置与建号，未配置时为 nil。
 	Telegraph *telegraph.Manager
 	// PublicURL 是对外访问地址，发布前要求为 HTTPS。
@@ -87,7 +95,7 @@ func NewRouter(deps Deps) *gin.Engine {
 	router.POST("/api/auth/logout", logoutHandler(deps))
 
 	// 公开图片网关：短码即凭证，不经过管理会话。
-	gateway := newImageGateway(deps.Posts, deps.Streams, deps.ImageConcurrency, deps.Logger)
+	gateway := newImageGateway(deps.Posts, deps.Streams, deps.ImageConcurrency, deps.Logger, deps.Traffic)
 	router.GET("/i/:short_code", gateway.handle)
 
 	admin := router.Group("/api", RequireAuth(deps.Sessions))
@@ -95,6 +103,7 @@ func NewRouter(deps Deps) *gin.Engine {
 	admin.GET("/posts/:id", postDetailHandler(deps))
 	admin.PUT("/posts/:id", limitBody(maxCreatePostBodyBytes), updatePostHandler(deps))
 	admin.PATCH("/posts/:id/toggle", limitBody(maxToggleBodyBytes), togglePostHandler(deps))
+	admin.GET("/stats/traffic", trafficHandler(deps))
 	admin.GET("/tags", tagsHandler(deps))
 	admin.GET("/thumbs/:filename", thumbHandler(deps))
 	admin.POST("/posts", limitBody(maxCreatePostBodyBytes), createPostHandler(deps))
@@ -105,6 +114,9 @@ func NewRouter(deps Deps) *gin.Engine {
 	admin.POST("/settings/test-connection", testConnectionHandler(deps))
 	admin.GET("/telegraph/status", telegraphStatusHandler(deps))
 	admin.POST("/settings/telegraph/create-account", limitBody(maxTelegraphBodyBytes), telegraphAccountHandler(deps))
+	admin.POST("/backup/trigger", backupTriggerHandler(deps))
+	admin.GET("/backup/download", backupDownloadHandler(deps))
+	admin.GET("/backup/status", backupStatusHandler(deps))
 	admin.GET("/posts/:id/progress", progressHandler(deps))
 	admin.POST("/posts/:id/retry", retryHandler(deps))
 	admin.POST("/posts/:id/publish", publishPostHandler(deps))

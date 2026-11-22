@@ -18,6 +18,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/api"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/auth"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/backup"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/config"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/db"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/netclient"
@@ -27,6 +28,7 @@ import (
 	"github.com/littleseven2003/SeSeGraph/backend/internal/settings"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/storage"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/telegraph"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/traffic"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/web"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/worker"
 )
@@ -168,6 +170,39 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		return errEditorConfig
 	}
 
+	// 月度流量统计：内存累加 + 定时刷盘，越过预警阈值时用 Bot 发一条通知。
+	alertBytes := readGigabytes(lookupEnv, "TRAFFIC_ALERT_GB")
+	limitBytes := readGigabytes(lookupEnv, "TRAFFIC_LIMIT_GB")
+	trafficMeter := traffic.New(store, traffic.Options{
+		AlertBytes: alertBytes,
+		LimitBytes: limitBytes,
+		Alert: func(month string, bytesOut, threshold int64) {
+			notifyTrafficAlert(ctx, switcher, month, bytesOut, threshold)
+		},
+	})
+	defer func() { _ = trafficMeter.Close(context.Background()) }()
+
+	// 自动备份：本地保留最近若干份，可按配置发送到频道。
+	backupManager := backup.New(backup.Options{
+		DataDir:       cfg.DataDir,
+		Handle:        store,
+		IncludeThumbs: !isFalse(envValue(lookupEnv, "BACKUP_COMMENTS_OFF")),
+		Sender:        backupSender(resolver, lookupEnv, switcher),
+	})
+	backupSchedule := ""
+	if enabled, _ := lookupEnv("BACKUP_ENABLED"); isTrue(strings.TrimSpace(enabled)) {
+		spec := envValue(lookupEnv, "BACKUP_CRON")
+		if spec == "" {
+			spec = "0 3 * * *"
+		}
+		hour, minute, parseErr := backup.ParseDaily(spec)
+		if parseErr != nil {
+			log.Print("备份周期不合法，定时备份未启用")
+		} else {
+			backupSchedule = backup.DailyText(hour, minute)
+		}
+	}
+
 	router := api.NewRouter(api.Deps{
 		Version:          version,
 		Commit:           commit,
@@ -187,6 +222,9 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		CommitProvider:   commitProvider,
 		SettingsLock:     settingsLock,
 		ImageConcurrency: readImageConcurrency(lookupEnv),
+		Traffic:          trafficMeter,
+		Backup:           backupManager,
+		BackupSchedule:   backupSchedule,
 	})
 
 	stopWorker := startUploadQueue(ctx, repository, cfg.DataDir, switcher, gate, lookupEnv)
@@ -194,6 +232,9 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 
 	stopPublisher := startPublisher(ctx, repository, telegraphManager, cfg.PublicURL)
 	defer stopPublisher()
+
+	stopBackup := startBackupScheduler(ctx, backupManager, backupSchedule, lookupEnv)
+	defer stopBackup()
 
 	// 只记录版本信息，监听地址与数据目录属于本地部署细节，不写入日志。
 	log.Printf("服务启动：版本 %s（提交 %s）", version, commit)
@@ -247,6 +288,168 @@ func newProvider(effective settings.Effective) (*storage.Telegram, error) {
 		return nil, err
 	}
 	return provider, nil
+}
+
+// isTrue 判断环境变量是否表示开启。
+func isTrue(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+// isFalse 判断环境变量是否明确表示关闭；未设置时按开启处理。
+func isFalse(raw string) bool {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	return value == "0" || value == "false" || value == "no" || value == "off"
+}
+
+// backupSender 按当前生效配置把备份发送到指定频道；频道未单独指定时使用图床频道。
+func backupSender(resolver *settings.Resolver, lookupEnv func(string) (string, bool), switcher *storage.Switcher) backup.Sender {
+	channel, _ := lookupEnv("BACKUP_CHANNEL_ID")
+	channel = strings.TrimSpace(channel)
+	return backupSenderFunc(func(ctx context.Context, path, caption string) error {
+		effective, err := resolver.Effective(ctx)
+		if err != nil {
+			return err
+		}
+		if channel == "" {
+			// 未指定独立频道时复用当前图床频道。
+			return switcher.SendDocument(ctx, path, caption)
+		}
+		client, err := netclient.NewClient(effective.ProxyConfig(), netclient.ServiceTelegram)
+		if err != nil {
+			return err
+		}
+		provider, err := storage.NewTelegram(storage.TelegramConfig{
+			Token:      effective.TelegramToken.Value,
+			ChatID:     channel,
+			APIBase:    effective.TelegramAPIBase.Value,
+			HTTPClient: client,
+		})
+		if err != nil {
+			return err
+		}
+		return uploadDocument(ctx, provider, path, caption)
+	})
+}
+
+// backupSenderFunc 让普通函数满足备份发送接口。
+type backupSenderFunc func(context.Context, string, string) error
+
+// SendDocument 调用底层函数发送备份文件。
+func (f backupSenderFunc) SendDocument(ctx context.Context, path, caption string) error {
+	return f(ctx, path, caption)
+}
+
+// uploadDocument 打开本地文件并按文档模式上传。
+func uploadDocument(ctx context.Context, provider *storage.Telegram, path, caption string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return errors.New("读取备份文件失败")
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil || info.IsDir() {
+		return errors.New("读取备份文件失败")
+	}
+	_, err = provider.Upload(ctx, storage.UploadRequest{
+		FileName: filepath.Base(path),
+		MIMEType: "application/zip",
+		Size:     info.Size(),
+		Mode:     storage.ModeDocument,
+		Caption:  caption,
+		Reader:   file,
+	})
+	return err
+}
+
+// startBackupScheduler 按每天固定时刻触发热备，返回停止函数。
+func startBackupScheduler(ctx context.Context, manager *backup.Manager, schedule string, lookupEnv func(string) (string, bool)) func() {
+	if manager == nil || schedule == "" {
+		log.Print("定时备份未启用")
+		return func() {}
+	}
+	spec := envValue(lookupEnv, "BACKUP_CRON")
+	if spec == "" {
+		spec = "0 3 * * *"
+	}
+	hour, minute, err := backup.ParseDaily(spec)
+	if err != nil {
+		log.Print("备份周期不合法，定时备份未启用")
+		return func() {}
+	}
+
+	schedulerCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			next := nextBackupTime(time.Now(), hour, minute)
+			timer := time.NewTimer(time.Until(next))
+			select {
+			case <-schedulerCtx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+
+			if err := manager.Start(); err != nil {
+				log.Print("上一次备份仍在进行，本次跳过")
+				continue
+			}
+			runCtx, runCancel := context.WithTimeout(schedulerCtx, 15*time.Minute)
+			result, runErr := manager.Run(runCtx)
+			runCancel()
+			if runErr != nil {
+				log.Print("定时备份未完成，请检查数据目录与图床配置")
+				continue
+			}
+			log.Printf("定时备份完成：%s（%.1f MB）", result.Name, float64(result.Size)/(1<<20))
+		}
+	}()
+
+	return func() {
+		cancel()
+		<-done
+	}
+}
+
+// nextBackupTime 计算下一次触发时刻。
+func nextBackupTime(now time.Time, hour, minute int) time.Time {
+	next := time.Date(now.Year(), now.Month(), now.Day(), hour, minute, 0, 0, now.Location())
+	if !next.After(now) {
+		next = next.Add(24 * time.Hour)
+	}
+	return next
+}
+
+// readGigabytes 读取以 GB 为单位的阈值，支持小数；非法或非正值视为未配置。
+func readGigabytes(lookupEnv func(string) (string, bool), key string) int64 {
+	raw, ok := lookupEnv(key)
+	if !ok {
+		return 0
+	}
+	value, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || value <= 0 {
+		return 0
+	}
+	return int64(value * float64(traffic.GB))
+}
+
+// notifyTrafficAlert 用一条纯文本消息提醒当月流量越过预警阈值。
+// 通知失败只记日志，不影响图片转发；消息里不出现令牌与原始地址。
+func notifyTrafficAlert(ctx context.Context, switcher *storage.Switcher, month string, bytesOut, threshold int64) {
+	notifyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	text := fmt.Sprintf("SeSeGraph 流量提醒：%s 已出站 %.2f GB，超过预警阈值 %.2f GB。",
+		month, float64(bytesOut)/float64(traffic.GB), float64(threshold)/float64(traffic.GB))
+	if err := switcher.SendMessage(notifyCtx, text); err != nil {
+		log.Print("流量预警通知发送失败，图床可能未配置或不可用")
+	}
 }
 
 // telegraphClient 按代理配置构建 Telegraph 传输层，未启用代理时为直连。

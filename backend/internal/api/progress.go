@@ -113,3 +113,19 @@ func retryHandler(deps Deps) gin.HandlerFunc {
 		})
 	}
 }
+
+// trafficHandler 返回当月出站流量与阈值，供后台查看。
+func trafficHandler(deps Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if deps.Traffic == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "流量统计不可用"})
+			return
+		}
+		stats, err := deps.Traffic.Stats(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取流量统计失败"})
+			return
+		}
+		c.JSON(http.StatusOK, stats)
+	}
+}

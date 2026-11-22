@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log"
@@ -11,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/storage"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/traffic"
 )
 
 const (
@@ -44,10 +46,12 @@ type imageGateway struct {
 	slots       chan struct{}
 	concurrency int
 	logger      *log.Logger
+	// meter 统计出站流量并判断月度硬上限，可为空。
+	meter *traffic.Recorder
 }
 
 // newImageGateway 创建网关，并发上限非正时使用默认值。
-func newImageGateway(repo *posts.Repository, streams storage.StreamProvider, concurrency int, logger *log.Logger) *imageGateway {
+func newImageGateway(repo *posts.Repository, streams storage.StreamProvider, concurrency int, logger *log.Logger, meter *traffic.Recorder) *imageGateway {
 	if concurrency <= 0 {
 		concurrency = DefaultImageConcurrency
 	}
@@ -57,6 +61,7 @@ func newImageGateway(repo *posts.Repository, streams storage.StreamProvider, con
 		slots:       make(chan struct{}, concurrency),
 		concurrency: concurrency,
 		logger:      logger,
+		meter:       meter,
 	}
 }
 
@@ -79,9 +84,14 @@ func validShortCode(code string) bool {
 
 // notFound 统一返回 404，并禁止上游与中间层缓存这个结果。
 func notFound(c *gin.Context) {
+	notFoundWithStatus(c, http.StatusNotFound, "图片不存在")
+}
+
+// notFoundWithStatus 返回指定的失败状态，用于流量熔断这类需要区分原因的拒绝。
+func notFoundWithStatus(c *gin.Context, status int, message string) {
 	c.Header("Cache-Control", "no-store")
 	c.Header("X-Content-Type-Options", "nosniff")
-	c.JSON(http.StatusNotFound, gin.H{"error": "图片不存在"})
+	c.JSON(status, gin.H{"error": message})
 }
 
 // handle 处理 GET /i/:short_code。
@@ -106,6 +116,12 @@ func (g *imageGateway) handle(c *gin.Context) {
 	if g.streams == nil {
 		c.Header("Cache-Control", "no-store")
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "图片暂不可用"})
+		return
+	}
+
+	// 本月出站流量超过硬上限时直接拒绝，不再向 Telegram 取流。
+	if g.meter.OverLimit() {
+		notFoundWithStatus(c, http.StatusServiceUnavailable, "本月流量已超限，图片暂不可用")
 		return
 	}
 
@@ -160,7 +176,10 @@ func (g *imageGateway) handle(c *gin.Context) {
 	}
 	c.Status(http.StatusOK)
 
-	if _, err := io.Copy(flushWriter{writer: c.Writer}, stream.Body); err != nil {
+	written, copyErr := io.Copy(flushWriter{writer: c.Writer}, stream.Body)
+	// 只统计真正写给客户端的字节；超过上限后由 OverLimit 在下一个请求处熔断。
+	g.meter.Add(context.WithoutCancel(c.Request.Context()), written)
+	if copyErr != nil {
 		// 客户端断开或上游中断：连接已不可用，这里只记录一次固定说明。
 		if c.Request.Context().Err() == nil && g.logger != nil {
 			g.logger.Print("图片转发中断")
