@@ -58,6 +58,26 @@ func TestDeletePostRejectsRunningTask(t *testing.T) {
 		}
 	}
 
+	// 存图完成但 Telegraph 待发布或发布中同样拒绝，避免发布队列拿着已删记录。
+	for _, state := range []string{posts.PublishPending, posts.PublishPublishing} {
+		postID, err := env.posts.Create(context.Background(), posts.Post{
+			Title: "待发布任务", ImageCount: 1, UploadMode: "photo", Status: posts.StatusCompleted,
+		})
+		if err != nil {
+			t.Fatalf("创建帖子失败: %v", err)
+		}
+		if _, err := env.handle.Exec(`UPDATE posts SET publish_state = ? WHERE id = ?`, state, postID); err != nil {
+			t.Fatalf("更新发布状态失败: %v", err)
+		}
+		rec := env.do(t, http.MethodDelete, "/api/posts/"+strconv.FormatInt(postID, 10), "", cookie)
+		if rec.Code != http.StatusConflict {
+			t.Errorf("发布状态 %s 删除 = %d，期望 409", state, rec.Code)
+		}
+		if _, err := env.posts.Get(context.Background(), postID); err != nil {
+			t.Errorf("发布状态 %s 删除后记录应保留: %v", state, err)
+		}
+	}
+
 	// 任务失败后允许删除。
 	postID, err := env.posts.Create(context.Background(), posts.Post{
 		Title: "失败任务", ImageCount: 1, UploadMode: "photo", Status: posts.StatusFailed,

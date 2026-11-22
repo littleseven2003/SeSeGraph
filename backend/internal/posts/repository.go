@@ -212,8 +212,9 @@ func (r *Repository) Delete(ctx context.Context, postID int64) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var status string
-	err = tx.QueryRowContext(ctx, `SELECT status FROM posts WHERE id = ?`, postID).Scan(&status)
+	var status, publishState string
+	err = tx.QueryRowContext(ctx, `SELECT status, publish_state FROM posts WHERE id = ?`, postID).
+		Scan(&status, &publishState)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -222,6 +223,11 @@ func (r *Repository) Delete(ctx context.Context, postID int64) error {
 	}
 	switch status {
 	case StatusUploading, StatusQueued, StatusPublishing:
+		return ErrTaskRunning
+	}
+	// 存图完成但 Telegraph 待发布或发布中时同样拒绝，避免发布队列拿着已删记录。
+	switch publishState {
+	case PublishPending, PublishPublishing:
 		return ErrTaskRunning
 	}
 
