@@ -20,6 +20,7 @@ import (
 	"github.com/littleseven2003/SeSeGraph/backend/internal/storage"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/telegraph"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/traffic"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/views"
 )
 
 // Deps 汇总构建路由所需的依赖。
@@ -60,6 +61,8 @@ type Deps struct {
 	CommitProvider func(context.Context, *provider.Candidate)
 	// SettingsLock 串行化设置保存，保证落库顺序与生效顺序一致。
 	SettingsLock *sync.Mutex
+	// Views 提供浏览量刷新，未装配时刷新接口返回 503。
+	Views *views.Service
 }
 
 // maxAuthBodyBytes 是登录与初始化请求体的上限，超出的请求不会被解码。
@@ -121,6 +124,7 @@ func NewRouter(deps Deps) *gin.Engine {
 	admin.GET("/posts/:id/progress", progressHandler(deps))
 	admin.POST("/posts/:id/retry", retryHandler(deps))
 	admin.POST("/posts/:id/publish", publishPostHandler(deps))
+	admin.POST("/posts/:id/views/refresh", refreshViewsHandler(deps))
 
 	if deps.WebFS != nil {
 		router.NoRoute(spaHandler(deps.WebFS))
