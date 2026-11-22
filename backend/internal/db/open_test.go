@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -121,5 +122,47 @@ func TestOpenErrorHidesPath(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), broken) || strings.Contains(err.Error(), blocker) {
 		t.Errorf("错误信息不应回显路径，实际: %s", err.Error())
+	}
+}
+
+// TestOpenWithSpecialCharactersInPath 验证数据目录含 ? # % 时仍指向同一个文件，
+// 连接串只在这些字符被转义后交给驱动。
+func TestOpenWithSpecialCharactersInPath(t *testing.T) {
+	for _, name := range []string{"data?x", "data#x", "data%x", "data?#%x"} {
+		t.Run(name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), name, "nested")
+			path := filepath.Join(dir, "sesegraph.db")
+			handle, err := Open(path)
+			if err != nil {
+				t.Fatalf("打开数据库失败: %v", err)
+			}
+			if err := Migrate(context.Background(), handle); err != nil {
+				_ = handle.Close()
+				t.Fatalf("迁移失败: %v", err)
+			}
+			if _, err := handle.ExecContext(context.Background(),
+				`INSERT INTO settings (key, value) VALUES ('probe', 'ok')`); err != nil {
+				_ = handle.Close()
+				t.Fatalf("写入失败: %v", err)
+			}
+			if err := handle.Close(); err != nil {
+				t.Fatalf("关闭失败: %v", err)
+			}
+
+			// 文件必须落在按字面量拼接的路径上，而不是被 ? 截断后的位置。
+			if _, err := os.Stat(path); err != nil {
+				t.Fatalf("数据库文件不在预期路径 %s: %v", path, err)
+			}
+			handle, err = Open(path)
+			if err != nil {
+				t.Fatalf("重新打开失败: %v", err)
+			}
+			defer func() { _ = handle.Close() }()
+			var value string
+			if err := handle.QueryRowContext(context.Background(),
+				`SELECT value FROM settings WHERE key = 'probe'`).Scan(&value); err != nil || value != "ok" {
+				t.Fatalf("读取 = %q err=%v，期望 ok", value, err)
+			}
+		})
 	}
 }
