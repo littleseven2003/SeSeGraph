@@ -10,7 +10,7 @@
 - 设置读写：`GET /api/settings` 汇总生效配置及其来源（环境变量 / 数据库 / 默认值），Bot Token 与 Telegraph 令牌只报告是否已设置；`PUT /api/settings` 校验频道标识、令牌与作者名后整体落库，空串清除数据库值并回落，由环境变量提供的字段返回 409。
 - 连通性面板与接口：`POST /api/settings/test-connection` 并行检测两处上游，Telegram 侧依次调用只读的 `getMe`、`getChat`、`getChatMember` 校验 Bot 身份与频道发布权限，Telegraph 侧调用 `getAccountInfo` 校验令牌；两项分别返回状态、耗时与固定说明，任一侧失败不影响另一侧，页面内直接展示结果。
 - 配置分层：环境变量优先、数据库次之；解析在单次配置快照上完成，避免并发保存时混用新旧值。
-- 代理配置：支持 `direct`（直连）、`system`（跟随 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`）与 `custom`（`http`、`https`、`socks5`，可带账密）三种模式，可分别对 Telegram Bot API 与 Telegraph API 启用；自定义地址在读写响应中只报告是否已设置，服务端仍使用完整取值。
+- 代理配置：支持 `direct`（直连）、`system`（跟随 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`）与 `custom`（`http`、`https`、`socks5`，可带账密）三种模式，可分别对 Telegram Bot API 与 Telegraph API 启用；自定义地址在读写响应中只报告是否已设置，服务端仍使用完整取值。同样的四项可由 `PROXY_MODE`、`PROXY_URL`、`PROXY_FOR_TELEGRAM`、`PROXY_FOR_TELEGRAPH` 环境变量托管，托管后界面只读。
 
 ### 变更
 
@@ -20,6 +20,7 @@
 - 配置与 Bot 归属在同一事务内落库，成功后直接启用已验证的客户端；落库失败时数据库与运行时都保留旧值。
 - 旧库升级：已有图片但缺少 Bot 归属记录时，首次绑定先用候选凭据确认旧图可读，确认属于同一个 Bot 才写入归属；读图失败时配置与归属都保持原值，避免历史图片全部失效。
 - 环境变量只提供 Telegraph 令牌时，作者名仍取自设置并在保存后热生效。
+- 数据目录含 `?`、`#`、`%` 时按 URI 规则转义数据库路径，避免连接串被截断后连到别的文件；页面回退与静态资源不再记为未匹配路由；压缩包内说明文件使用独立大小上限（64 KB），超限时忽略并提示，不影响图片解压。
 - 代理配置保存后重建传输层：上传队列、图片网关、发布队列与连通性自检都使用新配置；只影响 Telegraph 的改动不重新校验 Bot，只影响 Telegram 的改动会先验证 Bot 再落库。图床切换会回收旧提供方的空闲连接。
 - 上游地址（`TELEGRAM_API_BASE`、`TELEGRAPH_API_BASE`）只由环境变量或官方默认值决定，设置接口不接受地址修改，避免把已有令牌导向任意主机；自定义地址只返回来源与配置状态，不回显，避免反代地址中的认证信息出现在界面或响应里。
 - 详情卡片页脚改为「发布时间 + 时间」顺序，移动端搜索占位文案收窄，避免 390px 下被截断。

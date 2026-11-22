@@ -78,6 +78,8 @@
 
 Telegram 与 Telegraph 可以分别启用代理。保存后立即重建传输层，上传队列、图片网关、发布队列与连通性自检都使用新配置；自定义地址只报告是否已设置，响应与日志不出现地址取值。自定义模式下地址不能清空，需要清除时先切回直连。
 
+这四项也可以由环境变量提供：`PROXY_MODE`、`PROXY_URL`、`PROXY_FOR_TELEGRAM`、`PROXY_FOR_TELEGRAPH`（`true` / `false`）。环境变量优先于设置页，托管后在界面只读。
+
 Telegraph 发布需要一个访问令牌，二选一：
 
 - 通过环境变量提供 `TELEGRAPH_ACCESS_TOKEN`（可选 `TELEGRAPH_AUTHOR_NAME`、`TELEGRAPH_API_BASE`）；
