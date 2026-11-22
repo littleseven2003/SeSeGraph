@@ -173,13 +173,18 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	}
 
 	// 浏览量同步：低频拉取 Telegraph 浏览量写回本地缓存，接口只读缓存。
+	// 浏览量读取不需要发布令牌，单独按最新设置构建无令牌客户端，沿用同一套代理与超时。
 	viewsService, viewsErr := views.New(views.Options{
 		Store: repository,
 		Client: func(ctx context.Context) (views.Fetcher, error) {
-			if telegraphManager == nil {
-				return nil, telegraph.ErrNotConfigured
+			current, resolveErr := resolver.Effective(ctx)
+			if resolveErr != nil {
+				return nil, resolveErr
 			}
-			return telegraphManager.Client(ctx)
+			return telegraph.New(telegraph.Config{
+				HTTPClient: telegraphClient(current),
+				APIBase:    current.TelegraphAPIBase.Value,
+			}), nil
 		},
 		Interval: readViewsInterval(lookupEnv),
 		Cooldown: readViewsCooldown(lookupEnv),

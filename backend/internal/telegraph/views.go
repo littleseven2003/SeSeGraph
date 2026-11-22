@@ -1,49 +1,27 @@
 package telegraph
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"net/url"
 	"strings"
 )
 
-// GetViews 读取一页的累计浏览量。上游不要求访问令牌，这里也不发送。
-// Telegraph 按年、月、日、时逐层嵌套返回计数，这里把叶子节点累加成总数。
+// GetViews 读取一页的累计浏览量。上游默认只返回一个整数 result.views，
+// 缺失、null 与非整数都按上游失败处理，避免把旧缓存覆盖成错误的 0。
+// 该接口不要求访问令牌，这里也不发送。
 func (c *Client) GetViews(ctx context.Context, path string) (int, error) {
 	path = strings.TrimPrefix(strings.TrimSpace(path), "/")
 	if path == "" || strings.ContainsAny(path, "\r\n\t /\\?#") {
 		return 0, ErrInvalidInput
 	}
 	var result struct {
-		Views json.RawMessage `json:"views"`
+		Views *int `json:"views"`
 	}
 	if err := c.post(ctx, "getViews/"+url.PathEscape(path), url.Values{}, &result); err != nil {
 		return 0, err
 	}
-	return sumViews(result.Views), nil
-}
-
-// sumViews 递归累加嵌套计数，结构异常的部分按 0 处理。
-func sumViews(raw json.RawMessage) int {
-	raw = bytes.TrimSpace(raw)
-	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
-		return 0
+	if result.Views == nil || *result.Views < 0 {
+		return 0, ErrUpstream
 	}
-	var number float64
-	if err := json.Unmarshal(raw, &number); err == nil {
-		if number <= 0 {
-			return 0
-		}
-		return int(number)
-	}
-	var nested map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &nested); err != nil {
-		return 0
-	}
-	total := 0
-	for _, child := range nested {
-		total += sumViews(child)
-	}
-	return total
+	return *result.Views, nil
 }

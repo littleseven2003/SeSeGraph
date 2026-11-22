@@ -10,14 +10,14 @@ import (
 	"testing"
 )
 
-// TestGetViewsSumsNestedCounts 验证上游按年月日时嵌套返回的计数被累加成一个总数。
-func TestGetViewsSumsNestedCounts(t *testing.T) {
+// TestGetViewsReadsInteger 验证按契约读取单个整数，且请求不带令牌。
+func TestGetViewsReadsInteger(t *testing.T) {
 	var gotPath, gotBody string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		body, _ := io.ReadAll(r.Body)
 		gotBody = string(body)
-		_, _ = w.Write([]byte(`{"ok":true,"result":{"views":{"2026":{"11":{"22":{"10":3,"11":2},"23":{"9":1}}},"2027":{"1":{"1":{"8":5}}}}}}`))
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"views":1234}}`))
 	}))
 	defer server.Close()
 
@@ -26,14 +26,35 @@ func TestGetViewsSumsNestedCounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读取浏览量失败: %v", err)
 	}
-	if views != 11 {
-		t.Fatalf("浏览量 = %d，期望 11", views)
+	if views != 1234 {
+		t.Fatalf("浏览量 = %d，期望 1234", views)
 	}
 	if gotPath != "/getViews/Page-11-22" {
 		t.Errorf("请求路径 = %q", gotPath)
 	}
 	if strings.Contains(gotBody, "secret-token") || strings.Contains(gotBody, "access_token") {
 		t.Errorf("浏览量请求不应携带令牌：%q", gotBody)
+	}
+}
+
+// TestGetViewsRequiresInteger 验证缺失、null、负数与非整数都算上游失败。
+func TestGetViewsRequiresInteger(t *testing.T) {
+	bodies := []string{
+		`{"ok":true,"result":{}}`,
+		`{"ok":true,"result":{"views":null}}`,
+		`{"ok":true,"result":{"views":-1}}`,
+		`{"ok":true,"result":{"views":"12"}}`,
+		`{"ok":true,"result":{"views":{"2026":1}}}`,
+	}
+	for _, body := range bodies {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(body))
+		}))
+		client := New(Config{APIBase: server.URL})
+		if _, err := client.GetViews(context.Background(), "Page-11-22"); !errors.Is(err, ErrUpstream) {
+			t.Errorf("响应 %s 的错误 = %v，期望 ErrUpstream", body, err)
+		}
+		server.Close()
 	}
 }
 
