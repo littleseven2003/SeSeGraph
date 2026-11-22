@@ -29,6 +29,7 @@ import (
 	"github.com/littleseven2003/SeSeGraph/backend/internal/storage"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/telegraph"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/traffic"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/views"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/web"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/worker"
 )
@@ -171,6 +172,31 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		return errEditorConfig
 	}
 
+	// 浏览量同步：低频拉取 Telegraph 浏览量写回本地缓存，接口只读缓存。
+	viewsService, viewsErr := views.New(views.Options{
+		Store: repository,
+		Client: func(ctx context.Context) (views.Fetcher, error) {
+			if telegraphManager == nil {
+				return nil, telegraph.ErrNotConfigured
+			}
+			return telegraphManager.Client(ctx)
+		},
+		Interval: readViewsInterval(lookupEnv),
+		Cooldown: readViewsCooldown(lookupEnv),
+	})
+	if viewsErr != nil {
+		log.Print("浏览量同步初始化失败")
+	}
+	var stopViews func()
+	if viewsService != nil {
+		viewsCtx, viewsCancel := context.WithCancel(ctx)
+		go viewsService.Run(viewsCtx)
+		stopViews = viewsCancel
+	} else {
+		stopViews = func() {}
+	}
+	defer stopViews()
+
 	// 月度流量统计：内存累加 + 定时刷盘，越过预警阈值时用 Bot 发一条通知。
 	alertBytes := readGigabytes(lookupEnv, "TRAFFIC_ALERT_GB")
 	limitBytes := readGigabytes(lookupEnv, "TRAFFIC_LIMIT_GB")
@@ -229,6 +255,7 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		Traffic:          trafficMeter,
 		Backup:           backupManager,
 		BackupSchedule:   backupSchedule,
+		Views:            viewsService,
 	})
 
 	stopWorker := startUploadQueue(ctx, repository, cfg.DataDir, switcher, gate, lookupEnv)
@@ -584,6 +611,32 @@ func startUploadQueue(ctx context.Context, repository *posts.Repository, dataDir
 	go queue.Run(queueCtx)
 	log.Print("上传队列已启动")
 	return cancel
+}
+
+// readViewsInterval 读取浏览量同步间隔，未配置或取值不合法时使用默认值。
+func readViewsInterval(lookupEnv func(string) (string, bool)) time.Duration {
+	raw, ok := lookupEnv("VIEWS_SYNC_MINUTES")
+	if !ok {
+		return views.DefaultInterval
+	}
+	minutes, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || minutes <= 0 {
+		return views.DefaultInterval
+	}
+	return time.Duration(minutes) * time.Minute
+}
+
+// readViewsCooldown 读取手动刷新冷却，未配置或取值不合法时使用默认值。
+func readViewsCooldown(lookupEnv func(string) (string, bool)) time.Duration {
+	raw, ok := lookupEnv("VIEWS_COOLDOWN_SECONDS")
+	if !ok {
+		return views.DefaultCooldown
+	}
+	seconds, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || seconds <= 0 {
+		return views.DefaultCooldown
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 // readUploadInterval 读取上传间隔，未配置或取值不合法时使用默认值。
