@@ -74,6 +74,9 @@ type GalleryItem struct {
 	PublishedAt    string
 	CreatedAt      string
 	UpdatedAt      string
+	// ViewsCount 是上次同步到的累计浏览量，ViewsUpdatedAt 为空表示尚未同步。
+	ViewsCount     int
+	ViewsUpdatedAt string
 }
 
 // GalleryPage 是一页画廊结果。
@@ -165,7 +168,8 @@ func (r *Repository) ListGallery(ctx context.Context, query GalleryQuery) (*Gall
 		        p.is_public, p.is_disabled, p.telegraph_urls,
 		        COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', p.published_at), ''),
 		        strftime('%Y-%m-%dT%H:%M:%SZ', p.created_at),
-		        strftime('%Y-%m-%dT%H:%M:%SZ', p.updated_at)
+		        strftime('%Y-%m-%dT%H:%M:%SZ', p.updated_at),
+		        p.views_count, COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', p.views_updated_at), '')
 		 FROM posts p`+where+` ORDER BY p.created_at DESC, p.id DESC LIMIT ? OFFSET ?`, pageArgs...)
 	if err != nil {
 		return nil, errors.New("读取画廊失败")
@@ -180,7 +184,7 @@ func (r *Repository) ListGallery(ctx context.Context, query GalleryQuery) (*Gall
 		var urls string
 		if err := rows.Scan(&item.ID, &item.Title, &item.CoverThumbPath, &item.ImageCount, &item.Status,
 			&item.PublishState, &public, &disabled, &urls, &item.PublishedAt,
-			&item.CreatedAt, &item.UpdatedAt); err != nil {
+			&item.CreatedAt, &item.UpdatedAt, &item.ViewsCount, &item.ViewsUpdatedAt); err != nil {
 			return nil, errors.New("读取画廊失败")
 		}
 		item.IsPublic = public == 1
@@ -246,12 +250,14 @@ func (r *Repository) GalleryDetail(ctx context.Context, id int64) (*GalleryDetai
 		        p.is_public, p.is_disabled, p.telegraph_urls, p.telegraph_paths,
 		        COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', p.published_at), ''),
 		        strftime('%Y-%m-%dT%H:%M:%SZ', p.created_at),
-		        strftime('%Y-%m-%dT%H:%M:%SZ', p.updated_at)
+		        strftime('%Y-%m-%dT%H:%M:%SZ', p.updated_at),
+		        p.views_count, COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', p.views_updated_at), '')
 		 FROM posts p WHERE p.id = ?`, id,
 	).Scan(&detail.ID, &detail.Title, &detail.Description, &detail.AuthorName, &detail.CoverThumbPath,
 		&detail.ImageCount, &detail.UploadMode, &detail.Status, &detail.ErrorMessage,
 		&detail.PublishState, &detail.PublishError, &public, &disabled, &urls, &paths,
-		&detail.PublishedAt, &detail.CreatedAt, &detail.UpdatedAt)
+		&detail.PublishedAt, &detail.CreatedAt, &detail.UpdatedAt,
+		&detail.ViewsCount, &detail.ViewsUpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

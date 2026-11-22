@@ -8,7 +8,7 @@ import (
 )
 
 // SchemaVersion 是当前代码期望的数据库结构版本，写入 SQLite 的 user_version。
-const SchemaVersion = 7
+const SchemaVersion = 8
 
 // schemaStatements 是首次建库所需的语句，顺序即执行顺序。
 var schemaStatements = []string{
@@ -34,6 +34,8 @@ var schemaStatements = []string{
 		publish_state TEXT DEFAULT 'idle',
 		publish_error TEXT DEFAULT '',
 		published_at DATETIME DEFAULT NULL,
+		views_count INTEGER NOT NULL DEFAULT 0,
+		views_updated_at DATETIME DEFAULT NULL,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	)`,
@@ -129,6 +131,13 @@ func Migrate(ctx context.Context, handle *sql.DB) error {
 		`UPDATE posts SET published_at = updated_at
 		 WHERE publish_state = 'published' AND (published_at IS NULL OR published_at = '')`); err != nil {
 		return errors.New("回填发布时间失败")
+	}
+	// 旧库升级：补浏览量缓存。visits 为空表示尚未同步，0 配合时间戳才是已确认的零浏览。
+	if err := ensureColumn(ctx, tx, "posts", "views_count", "ALTER TABLE posts ADD COLUMN views_count INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return errors.New("升级浏览量失败")
+	}
+	if err := ensureColumn(ctx, tx, "posts", "views_updated_at", "ALTER TABLE posts ADD COLUMN views_updated_at DATETIME DEFAULT NULL"); err != nil {
+		return errors.New("升级浏览量同步时间失败")
 	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", SchemaVersion)); err != nil {
 		return errors.New("写入数据库结构版本失败")

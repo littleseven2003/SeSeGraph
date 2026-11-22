@@ -35,6 +35,9 @@ type galleryItemResponse struct {
 	PublishedAt    string   `json:"published_at"`
 	CreatedAt      string   `json:"created_at"`
 	UpdatedAt      string   `json:"updated_at"`
+	ViewsCount     int      `json:"views_count"`
+	// ViewsUpdatedAt 为空表示尚未同步过，接口输出 null，前端据此隐藏浏览量。
+	ViewsUpdatedAt *string `json:"views_updated_at"`
 }
 
 // galleryImageResponse 是详情中的单图结构，不暴露远端标识。
@@ -106,7 +109,18 @@ func toGalleryItem(item posts.GalleryItem) galleryItemResponse {
 		PublishedAt:    item.PublishedAt,
 		CreatedAt:      item.CreatedAt,
 		UpdatedAt:      item.UpdatedAt,
+		ViewsCount:     item.ViewsCount,
+		ViewsUpdatedAt: optionalTimestamp(item.ViewsUpdatedAt),
 	}
+}
+
+// optionalTimestamp 把空串转成 nil，接口输出 null 表示尚未同步。
+func optionalTimestamp(raw string) *string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	value := raw
+	return &value
 }
 
 // parseGalleryQuery 解析列表的筛选与分页参数，返回空字符串表示通过。
