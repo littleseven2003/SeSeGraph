@@ -63,6 +63,12 @@ const created = computed(() => (props.detail === null ? '' : formatPublishedAt(p
 const shareUrl = computed(() => (props.detail === null ? '' : postShareUrl(props.detail)))
 const publicBase = computed(() => (props.detail === null ? '' : props.detail.public_base_url))
 const shareReady = computed(() => shareUrl.value !== '')
+// shareHint 说明当前为什么不能分享：撤回与未发布分别给出对应提示。
+const shareHint = computed(() =>
+  props.detail !== null && props.detail.disabled
+    ? '已撤回访问，恢复后可分享整帖'
+    : '发布完成并生成链接后可分享整帖',
+)
 const previewValues = computed(() => ({
   title: props.detail?.title ?? '标题',
   description: props.detail?.description ?? '说明',
@@ -459,7 +465,7 @@ watch(
               </button>
             </div>
             <p class="mt-2 min-h-[16px] text-xs text-muted" aria-live="polite">
-              {{ feedback !== '' ? feedback : shareReady ? '' : '发布完成并生成互链后可分享整帖' }}
+              {{ feedback !== '' ? feedback : shareReady ? '' : shareHint }}
             </p>
           </section>
 

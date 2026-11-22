@@ -300,7 +300,7 @@ export function toggleActionLabel(disabled: boolean): string {
 /** toggleHint 返回撤回/恢复的状态说明，含已缓存副本的客观提示。 */
 export function toggleHint(disabled: boolean): string {
   return disabled
-    ? '已撤回：源站短码立即返回 404，已缓存的副本可能仍显示一段时间。'
+    ? '源站短码立即返回 404，已缓存的副本可能仍显示一段时间。'
     : '撤回后该帖短码立即返回 404，重新开启即恢复访问。'
 }
 
