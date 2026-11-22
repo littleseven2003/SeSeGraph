@@ -329,3 +329,77 @@ func TestParseDaily(t *testing.T) {
 		t.Errorf("展示文案 = %q，期望 每天 03:00", text)
 	}
 }
+
+// inspectingSender 在发送时校验目标文件已完整可读。
+type inspectingSender struct {
+	t       *testing.T
+	checked int
+}
+
+func (s *inspectingSender) SendDocument(_ context.Context, path, _ string) error {
+	s.t.Helper()
+	entries := archiveEntries(s.t, path)
+	if _, ok := entries[databaseFileName]; !ok {
+		s.t.Errorf("发送时 zip 内缺少数据库条目: %v", entries)
+	}
+	s.checked++
+	return nil
+}
+
+// TestRunPublishesCompleteArchive 验证 zip 完整关闭后才进入最终文件名，发送时可直接回读。
+func TestRunPublishesCompleteArchive(t *testing.T) {
+	sender := &inspectingSender{t: t}
+	manager, _, dataDir, _ := newEnv(t, Options{Sender: sender})
+	if err := manager.Start(); err != nil {
+		t.Fatalf("开始备份失败: %v", err)
+	}
+	result, err := manager.Run(context.Background())
+	if err != nil {
+		t.Fatalf("备份失败: %v", err)
+	}
+	if !result.Sent || sender.checked != 1 {
+		t.Fatalf("发送次数 = %d，期望发送一次", sender.checked)
+	}
+
+	// 临时文件不应留在备份目录，只有最终产物对下载可见。
+	entries, err := os.ReadDir(filepath.Join(dataDir, DirName))
+	if err != nil {
+		t.Fatalf("读取备份目录失败: %v", err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".part-") {
+			t.Errorf("残留临时文件 %q", entry.Name())
+		}
+	}
+	latest, err := manager.LatestPath()
+	if err != nil {
+		t.Fatalf("读取最新备份失败: %v", err)
+	}
+	if filepath.Base(latest) != result.Name {
+		t.Errorf("最新备份 = %q，期望 %q", filepath.Base(latest), result.Name)
+	}
+}
+
+// TestRunPrunesWhenSendFails 验证连续发送失败时仍只保留最近 Keep 份。
+func TestRunPrunesWhenSendFails(t *testing.T) {
+	sender := &fakeSender{err: errors.New("发送失败")}
+	manager, _, _, clock := newEnv(t, Options{Keep: 2, Sender: sender})
+
+	for index := 0; index < 4; index++ {
+		if err := manager.Start(); err != nil {
+			t.Fatalf("第 %d 次备份开始失败: %v", index+1, err)
+		}
+		if _, err := manager.Run(context.Background()); err == nil {
+			t.Fatalf("第 %d 次备份应返回发送错误", index+1)
+		}
+		clock.Advance(time.Second)
+	}
+
+	files, err := manager.list()
+	if err != nil {
+		t.Fatalf("列出备份失败: %v", err)
+	}
+	if len(files) != 2 {
+		t.Errorf("保留份数 = %d，期望 2：%v", len(files), files)
+	}
+}

@@ -103,6 +103,14 @@ func DailyText(hour, minute int) string {
 // ErrBusy 表示已有备份正在进行。
 var ErrBusy = errors.New("备份正在进行中")
 
+// 备份目标不可安全发送时返回这两类错误：只保留本地文件，不向远端发送。
+var (
+	// ErrTargetPublic 表示目标频道公开可访问。
+	ErrTargetPublic = errors.New("备份目标是公开频道")
+	// ErrTargetUnverified 表示无法确认目标是否为私有会话。
+	ErrTargetUnverified = errors.New("无法确认备份目标")
+)
+
 // Manager 串行执行备份，保证同一时刻只有一份产物在写。
 type Manager struct {
 	opts Options
@@ -182,11 +190,28 @@ func (m *Manager) Run(ctx context.Context) (Result, error) {
 	// 快照只在打包期间使用，打包结束即删除。
 	defer func() { _ = os.Remove(hotCopy) }()
 
-	includes, err := m.writeArchive(target, hotCopy)
+	// 2. 先写临时文件，完整关闭后再改名。下载接口只认最终文件名，不会读到半份 ZIP。
+	temp, err := os.CreateTemp(dir, ".part-*.zip")
 	if err != nil {
-		_ = os.Remove(target)
+		return Result{}, errors.New("创建备份文件失败")
+	}
+	tempPath := temp.Name()
+	if closeErr := temp.Close(); closeErr != nil {
+		_ = os.Remove(tempPath)
+		return Result{}, errors.New("创建备份文件失败")
+	}
+
+	includes, err := m.writeArchive(tempPath, hotCopy)
+	if err != nil {
+		_ = os.Remove(tempPath)
 		return Result{}, err
 	}
+	if err := os.Rename(tempPath, target); err != nil {
+		_ = os.Remove(tempPath)
+		return Result{}, errors.New("保存备份文件失败")
+	}
+	// 发送成功与否都执行保留策略，避免发送失败时备份越积越多。
+	defer m.prune()
 
 	info, err := os.Stat(target)
 	if err != nil {
@@ -204,7 +229,6 @@ func (m *Manager) Run(ctx context.Context) (Result, error) {
 		result.Sent = true
 	}
 
-	m.prune()
 	return result, nil
 }
 
