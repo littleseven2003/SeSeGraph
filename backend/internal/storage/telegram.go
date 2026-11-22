@@ -9,6 +9,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -157,12 +159,14 @@ type ChatInfo struct {
 	Type     string `json:"type"`
 	Username string `json:"username"`
 	Title    string `json:"title"`
+	// ActiveUsernames 是可直接通过 t.me 访问的别名，任意一个存在即为公开会话。
+	ActiveUsernames []string `json:"active_usernames"`
 }
 
 // Private 报告会话是否只对成员可见。
 // 带公开用户名的频道或群任何人都能访问，私聊与无公开用户名的会话视为私有。
 func (c ChatInfo) Private() bool {
-	if c.Username != "" {
+	if c.Username != "" || len(c.ActiveUsernames) > 0 {
 		return false
 	}
 	switch c.Type {
@@ -214,6 +218,32 @@ func (t *Telegram) ChatInfo(ctx context.Context) (ChatInfo, error) {
 		return ChatInfo{}, ErrUpstream
 	}
 	return info, nil
+}
+
+// SendDocument 把本地文件作为文档上传，用于自动备份推送。
+// 提供方实例自带固定的令牌与目标频道，校验与发送应复用同一个实例。
+func (t *Telegram) SendDocument(ctx context.Context, path, caption string) error {
+	if t == nil {
+		return ErrNotConfigured
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return errors.New("读取备份文件失败")
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil || info.IsDir() {
+		return errors.New("读取备份文件失败")
+	}
+	_, err = t.Upload(ctx, UploadRequest{
+		FileName: filepath.Base(path),
+		MIMEType: "application/zip",
+		Size:     info.Size(),
+		Mode:     ModeDocument,
+		Caption:  caption,
+		Reader:   file,
+	})
+	return err
 }
 
 // Upload 以流式 multipart 方式上传单张图片，不把文件整体载入内存。

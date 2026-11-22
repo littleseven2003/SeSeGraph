@@ -2,9 +2,6 @@ package storage
 
 import (
 	"context"
-	"errors"
-	"os"
-	"path/filepath"
 	"sync"
 )
 
@@ -68,6 +65,12 @@ func (s *Switcher) current() (*Telegram, error) {
 	return s.provider, nil
 }
 
+// Current 返回当前提供方实例，供调用方在同一份配置上完成校验与发送。
+// 即使随后保存设置切换了频道，已取得的实例仍指向原来的令牌与目标。
+func (s *Switcher) Current() (*Telegram, error) {
+	return s.current()
+}
+
 // Snapshot 返回当前提供方的固定视图，调用方可在一段流程内复用同一份配置。
 func (s *Switcher) Snapshot() (StreamProvider, bool) {
 	if s == nil {
@@ -118,27 +121,11 @@ func (s *Switcher) ChatInfo(ctx context.Context) (ChatInfo, error) {
 }
 
 // SendDocument 按当前提供方把本地文件作为文档发送，用于自动备份推送。
+// 需要与校验绑定同一份配置时，改用 Current 取实例再调用其 SendDocument。
 func (s *Switcher) SendDocument(ctx context.Context, path, caption string) error {
 	provider, err := s.current()
 	if err != nil {
 		return err
 	}
-	file, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = file.Close() }()
-	info, err := file.Stat()
-	if err != nil || info.IsDir() {
-		return errors.New("读取备份文件失败")
-	}
-	_, err = provider.Upload(ctx, UploadRequest{
-		FileName: filepath.Base(path),
-		MIMEType: "application/zip",
-		Size:     info.Size(),
-		Mode:     ModeDocument,
-		Caption:  caption,
-		Reader:   file,
-	})
-	return err
+	return provider.SendDocument(ctx, path, caption)
 }

@@ -636,6 +636,8 @@ func TestTelegramChatInfoPrivacy(t *testing.T) {
 	}{
 		{"私有频道", map[string]any{"id": -1001, "type": "channel", "title": "备份"}, "channel", true},
 		{"公开频道", map[string]any{"id": -1002, "type": "channel", "username": "sese_backup"}, "channel", false},
+		{"公开别名", map[string]any{"id": -1005, "type": "channel", "active_usernames": []string{"sese_alias"}}, "channel", false},
+		{"无用户名的群", map[string]any{"id": -1006, "type": "group", "title": "运维"}, "group", true},
 		{"私有群", map[string]any{"id": -1003, "type": "supergroup", "title": "运维"}, "supergroup", true},
 		{"公开群", map[string]any{"id": -1004, "type": "supergroup", "username": "sese_ops"}, "supergroup", false},
 		{"私聊", map[string]any{"id": 77, "type": "private"}, "private", true},

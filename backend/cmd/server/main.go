@@ -319,11 +319,16 @@ func backupSender(resolver *settings.Resolver, lookupEnv func(string) (string, b
 			return err
 		}
 		if channel == "" {
-			// 未指定独立频道时复用当前图床频道。
-			if err := ensurePrivateTarget(ctx, switcher); err != nil {
+			// 未指定独立频道时复用当前图床频道：先固定提供方实例，
+			// 让校验与发送使用同一份令牌与目标，避免中途保存设置换了频道。
+			provider, err := switcher.Current()
+			if err != nil {
+				return backup.ErrTargetUnverified
+			}
+			if err := ensurePrivateTarget(ctx, provider); err != nil {
 				return err
 			}
-			return switcher.SendDocument(ctx, path, caption)
+			return provider.SendDocument(ctx, path, caption)
 		}
 		client, err := netclient.NewClient(effective.ProxyConfig(), netclient.ServiceTelegram)
 		if err != nil {
