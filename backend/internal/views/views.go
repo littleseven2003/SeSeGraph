@@ -88,8 +88,12 @@ type Service struct {
 	last     map[int64]time.Time
 	failed   map[int64]bool
 	inflight map[int64]*call
-	gate     sync.Mutex
-	gateAt   time.Time
+
+	// slot 是后台与手刷共用的唯一联网许可，覆盖整个上游请求；
+	// gateMu 只保护发起间隔，避免两个请求同时打出去。
+	slot   chan struct{}
+	gateMu sync.Mutex
+	gateAt time.Time
 }
 
 // New 创建同步服务，未填写的参数使用默认值。
@@ -110,6 +114,7 @@ func New(opts Options) (*Service, error) {
 		last:      make(map[int64]time.Time),
 		failed:    make(map[int64]bool),
 		inflight:  make(map[int64]*call),
+		slot:      make(chan struct{}, 1),
 	}
 	if service.interval <= 0 {
 		service.interval = DefaultInterval
@@ -262,19 +267,36 @@ func (s *Service) pruneLocked() {
 	}
 }
 
-// acquire 是后台与手刷共用的上游入口：同一时刻只有一个请求，且请求之间至少间隔 spacing。
-func (s *Service) acquire(ctx context.Context) error {
-	s.gate.Lock()
-	defer s.gate.Unlock()
+// acquire 取到后台与手刷共用的唯一联网许可，并保证相邻请求的发起间隔不少于 spacing。
+// 许可覆盖整个上游请求，必须用返回的释放函数交还；等待期间 ctx 取消会立刻返回。
+func (s *Service) acquire(ctx context.Context) (func(), error) {
+	select {
+	case s.slot <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	release := func() { <-s.slot }
+
+	s.gateMu.Lock()
+	wait := time.Duration(0)
 	if !s.gateAt.IsZero() {
-		if wait := s.spacing - s.now().Sub(s.gateAt); wait > 0 {
-			if err := s.sleep(ctx, wait); err != nil {
-				return err
-			}
+		wait = s.spacing - s.now().Sub(s.gateAt)
+	}
+	s.gateMu.Unlock()
+	if wait > 0 {
+		if err := s.sleep(ctx, wait); err != nil {
+			release()
+			return nil, err
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		release()
+		return nil, err
+	}
+	s.gateMu.Lock()
 	s.gateAt = s.now()
-	return nil
+	s.gateMu.Unlock()
+	return release, nil
 }
 
 // execute 读取上游并写回缓存，结果与错误都留给等待者复用。
@@ -292,11 +314,13 @@ func (s *Service) execute(ctx context.Context, entry *call, target posts.ViewTar
 		entry.err = ErrFetch
 		return Result{}, ErrFetch
 	}
-	if err := s.acquire(ctx); err != nil {
+	release, err := s.acquire(ctx)
+	if err != nil {
 		entry.err = err
 		return Result{}, err
 	}
 	count, err := fetcher.GetViews(ctx, target.Path)
+	release()
 	if err != nil {
 		s.markFailed(target.PostID, true)
 		entry.err = ErrFetch

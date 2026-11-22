@@ -431,3 +431,137 @@ func TestCachedAfterFailureReportsFailed(t *testing.T) {
 		t.Fatalf("冷却期结果 = %+v，期望标明失败并显示缓存", result)
 	}
 }
+
+// blockingFetcher 可以卡住指定路径，用来观察并发是否真的串行。
+type blockingFetcher struct {
+	mu        sync.Mutex
+	inflight  int
+	maxFlight int
+	calls     int
+	starts    []time.Time
+	paths     []string
+	blockedOn string
+	started   chan string
+	release   chan struct{}
+}
+
+func newBlockingFetcher(blockedOn string) *blockingFetcher {
+	return &blockingFetcher{
+		blockedOn: blockedOn,
+		started:   make(chan string, 8),
+		release:   make(chan struct{}),
+	}
+}
+
+func (f *blockingFetcher) GetViews(_ context.Context, path string) (int, error) {
+	f.mu.Lock()
+	f.inflight++
+	if f.inflight > f.maxFlight {
+		f.maxFlight = f.inflight
+	}
+	f.calls++
+	f.starts = append(f.starts, time.Now())
+	f.paths = append(f.paths, path)
+	f.mu.Unlock()
+	defer func() {
+		f.mu.Lock()
+		f.inflight--
+		f.mu.Unlock()
+	}()
+
+	f.started <- path
+	if path == f.blockedOn {
+		<-f.release
+	}
+	return 5, nil
+}
+
+func (f *blockingFetcher) stats() (calls, maxFlight int, starts []time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls, f.maxFlight, append([]time.Time(nil), f.starts...)
+}
+
+func newRealClockService(t *testing.T, store Store, fetcher Fetcher) *Service {
+	t.Helper()
+	service, err := New(Options{
+		Store:  store,
+		Client: func(context.Context) (Fetcher, error) { return fetcher, nil },
+		Logger: log.New(io.Discard, "", 0),
+	})
+	if err != nil {
+		t.Fatalf("创建服务失败: %v", err)
+	}
+	return service
+}
+
+func TestUpstreamPermitCoversWholeRequest(t *testing.T) {
+	store := newFakeStore(
+		posts.ViewTarget{PostID: 1, Path: "Slow-1"},
+		posts.ViewTarget{PostID: 2, Path: "Next-2"},
+	)
+	fetcher := newBlockingFetcher("Slow-1")
+	service := newRealClockService(t, store, fetcher)
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := service.Refresh(context.Background(), 1)
+		firstDone <- err
+	}()
+	if got := <-fetcher.started; got != "Slow-1" {
+		t.Fatalf("首个请求路径 = %q", got)
+	}
+
+	secondDone := make(chan error, 1)
+	go func() {
+		_, err := service.Refresh(context.Background(), 2)
+		secondDone <- err
+	}()
+	// 首个响应还在途时，第二个请求不得进入上游。
+	time.Sleep(150 * time.Millisecond)
+	if calls, _, _ := fetcher.stats(); calls != 1 {
+		t.Fatalf("慢请求期间上游被并发调用：%d 次", calls)
+	}
+
+	close(fetcher.release)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("首个请求失败: %v", err)
+	}
+	if err := <-secondDone; err != nil {
+		t.Fatalf("第二个请求失败: %v", err)
+	}
+	calls, maxFlight, starts := fetcher.stats()
+	if calls != 2 || maxFlight != 1 {
+		t.Fatalf("上游调用 %d 次、最大并发 %d，期望 2 次且串行", calls, maxFlight)
+	}
+	if gap := starts[1].Sub(starts[0]); gap < DefaultSpacing {
+		t.Fatalf("相邻发起间隔 = %v，期望不少于 %v", gap, DefaultSpacing)
+	}
+}
+
+func TestUpstreamPermitCancellableWhileWaiting(t *testing.T) {
+	store := newFakeStore(
+		posts.ViewTarget{PostID: 1, Path: "Slow-1"},
+		posts.ViewTarget{PostID: 2, Path: "Next-2"},
+	)
+	fetcher := newBlockingFetcher("Slow-1")
+	service := newRealClockService(t, store, fetcher)
+
+	go func() {
+		_, _ = service.Refresh(context.Background(), 1)
+	}()
+	if got := <-fetcher.started; got != "Slow-1" {
+		t.Fatalf("首个请求路径 = %q", got)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+	if _, err := service.Refresh(ctx, 2); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("等待许可的取消错误 = %v，期望 context.DeadlineExceeded", err)
+	}
+	if calls, _, _ := fetcher.stats(); calls != 1 {
+		t.Fatalf("取消后仍进入上游：%d 次", calls)
+	}
+	close(fetcher.release)
+	time.Sleep(20 * time.Millisecond)
+}
