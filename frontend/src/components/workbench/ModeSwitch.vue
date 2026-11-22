@@ -32,7 +32,7 @@ const limitText = computed(() =>
           :key="option.value"
           type="button"
           class="h-8 rounded px-2.5 text-xs font-medium transition disabled:opacity-50"
-          :class="props.mode === option.value ? 'bg-brand text-brand-ink' : 'text-muted hover:bg-canvas'"
+          :class="props.mode === option.value ? 'bg-accent text-white' : 'text-muted hover:bg-canvas'"
           :disabled="props.disabled"
           @click="emit('select', option.value)"
         >
@@ -59,7 +59,7 @@ const limitText = computed(() =>
           :key="option.value"
           type="button"
           class="h-8 rounded px-2.5 text-xs font-medium transition disabled:opacity-50"
-          :class="props.mode === option.value ? 'bg-brand text-brand-ink' : 'text-muted hover:bg-canvas'"
+          :class="props.mode === option.value ? 'bg-accent text-white' : 'text-muted hover:bg-canvas'"
           :disabled="props.disabled"
           @click="emit('select', option.value)"
         >

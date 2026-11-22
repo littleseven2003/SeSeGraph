@@ -146,7 +146,7 @@ async function onDrop(event: DragEvent): Promise<void> {
 
   <section
     v-else
-    class="rounded-lg border border-dashed bg-surface px-6 py-9 text-center transition"
+    class="viewfinder-corners rounded-lg border border-dashed bg-surface px-6 py-9 text-center transition"
     :class="dragging ? 'border-brand bg-brand/5' : 'border-line'"
     @dragover.prevent="dragging = !props.disabled"
     @dragleave.prevent="dragging = false"

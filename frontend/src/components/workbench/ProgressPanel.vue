@@ -25,7 +25,7 @@ const canPublish = computed(() => canRequestPublish(props.progress))
 const percent = computed(() => progressPercent(props.progress))
 const canRetry = computed(() => needsRetry(props.progress))
 const tone = computed(() => {
-  if (props.progress.status === 'completed') return 'border-accent/40 bg-accent/5'
+  if (props.progress.status === 'completed') return 'border-accent/30 bg-accent-soft'
   if (props.progress.status === 'failed') return 'border-danger/40 bg-danger-soft'
   return 'border-line bg-surface'
 })
@@ -68,7 +68,7 @@ const tone = computed(() => {
     <div class="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-canvas" role="progressbar" :aria-valuenow="percent" aria-valuemin="0" aria-valuemax="100">
       <div
         class="h-full rounded-full transition-[width]"
-        :class="props.progress.status === 'failed' ? 'bg-danger' : 'bg-brand'"
+        :class="props.progress.status === 'failed' ? 'bg-danger' : props.progress.status === 'completed' ? 'bg-accent' : 'bg-brand'"
         :style="{ width: `${percent}%` }"
       ></div>
     </div>

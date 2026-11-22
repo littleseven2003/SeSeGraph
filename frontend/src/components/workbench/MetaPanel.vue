@@ -80,7 +80,7 @@ function applyFromPackage(): void {
             :key="option.value"
             type="button"
             class="h-7 rounded px-2 text-xs font-medium transition"
-            :class="parseMode === option.value ? 'bg-brand text-brand-ink' : 'text-muted hover:bg-canvas'"
+            :class="parseMode === option.value ? 'bg-accent text-white' : 'text-muted hover:bg-canvas'"
             @click="parseMode = option.value as ParseMode"
           >
             {{ option.label }}
