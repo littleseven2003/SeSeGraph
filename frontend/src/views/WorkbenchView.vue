@@ -23,6 +23,7 @@ import {
 } from '../utils/task-store.ts'
 import { acceptedCount, initialStatuses, planUploads, type UploadStatus } from '../utils/upload.ts'
 import { DEFAULT_META_FILENAMES, unpackZip } from '../utils/zip.ts'
+import { fetchSettings } from '../api/settings.ts'
 import {
   appendSelection,
   assignSortOrders,
@@ -47,6 +48,10 @@ type Phase = WorkbenchPhase
 const storage: StorageLike | null = browserStorage()
 
 const mode = ref<UploadMode>('photo')
+// 设置页保存的说明文件名与解析方式；读取失败时沿用内置默认值。
+const metaNames = ref<string[]>([...DEFAULT_META_FILENAMES])
+const metaParseMode = ref<'first-line' | 'key-value'>('first-line')
+let modeTouched = false
 const tiles = ref<WorkbenchTile[]>([])
 const coverId = ref('')
 const working = ref(false)
@@ -114,11 +119,27 @@ const phaseText = computed(() => {
 })
 
 onMounted(() => {
+  void loadSettingsDefaults()
   const saved = loadTask(storage)
   if (!saved) return
   snapshot.value = saved
   void hydrate(saved)
 })
+
+// loadSettingsDefaults 读取设置页保存的发帖默认值，失败时保持内置默认。
+async function loadSettingsDefaults(): Promise<void> {
+  try {
+    const view = await fetchSettings()
+    if (view.meta.filenames.length > 0) metaNames.value = view.meta.filenames
+    metaParseMode.value = view.meta.parse_mode === 'key-value' ? 'key-value' : 'first-line'
+    // 只在用户还没手动切换、也不在续传时应用默认画质。
+    if (!modeTouched && !locked.value) {
+      mode.value = view.upload.default_mode === 'document' ? 'document' : 'photo'
+    }
+  } catch {
+    // 默认值读取失败不影响发帖，保留内置默认。
+  }
+}
 
 // hydrate 按快照读取服务端进度，刷新后可直接查看进度并重试。
 async function hydrate(saved: TaskSnapshot): Promise<void> {
@@ -219,6 +240,7 @@ function setMode(next: UploadMode): void {
     return
   }
   mode.value = next
+  modeTouched = true
 }
 
 function onZip(file: File): void {
@@ -227,7 +249,7 @@ function onZip(file: File): void {
   const reader = new FileReader()
   reader.onload = () => {
     try {
-      const result = unpackZip(new Uint8Array(reader.result as ArrayBuffer), { metaNames: DEFAULT_META_FILENAMES })
+      const result = unpackZip(new Uint8Array(reader.result as ArrayBuffer), { metaNames: metaNames.value })
       if (!result.ok) {
         pushError(result.error)
         return
@@ -750,6 +772,7 @@ onBeforeUnmount(() => {
             v-model="draft"
             :meta-text="metaText"
             :meta-source="metaSource"
+            :parse-default="metaParseMode"
             :disabled="locked"
             @error="pushError"
           />

@@ -25,12 +25,31 @@ const (
 	DefaultTelegraphAPIBase = "https://api.telegra.ph"
 )
 
+// 发帖默认值与说明文件解析规则的默认取值。
+const (
+	// DefaultUploadMode 是新任务的默认画质模式。
+	DefaultUploadMode = "photo"
+	// DefaultMetaFilenames 是压缩包内说明文件的默认候选名。
+	DefaultMetaFilenames = "info.txt,meta.txt,readme.txt"
+	// DefaultMetaParseMode 是说明文件的默认解析方式。
+	DefaultMetaParseMode = "first-line"
+)
+
+// 说明文件解析方式。
+const (
+	MetaParseFirstLine = "first-line"
+	MetaParseKeyValue  = "key-value"
+)
+
 // 取值上限，超出后拒绝保存，避免把异常输入写进数据库。
 const (
 	maxCredentialRunes = 200
 	maxChannelRunes    = 100
 	maxAuthorRunes     = 100
 	maxAPIBaseRunes    = 200
+	// 说明文件名最多 10 个、每个不超过 64 字符。
+	maxMetaFilenames = 10
+	maxMetaNameRunes = 64
 )
 
 // 频道标识允许 @用户名 或 -100 开头的数字编号。
@@ -72,6 +91,8 @@ type Env struct {
 	ProxyURL       string
 	ProxyTelegram  string
 	ProxyTelegraph string
+	// UploadMode 是新任务的默认画质模式，photo 或 document。
+	UploadMode string
 }
 
 // Value 是一项生效配置及其来源。敏感项只通过 Value 在校验与自检内部使用，不对外输出。
@@ -98,6 +119,12 @@ type Effective struct {
 	// ProxyTelegram 与 ProxyTelegraph 是两项上游的启用开关与来源（true / false）。
 	ProxyTelegram  Value
 	ProxyTelegraph Value
+	// UploadMode 是新任务的默认画质模式。
+	UploadMode Value
+	// MetaFilenames 是压缩包内说明文件的候选名（逗号分隔）。
+	MetaFilenames Value
+	// MetaParseMode 是说明文件的默认解析方式。
+	MetaParseMode Value
 }
 
 // ProxyEnabled 报告某项服务是否启用代理。
@@ -174,6 +201,45 @@ func (r *Resolver) effectiveFrom(stored map[string]string) Effective {
 		ProxyURL:         resolve(r.env.ProxyURL, stored, KeyProxyURL, ""),
 		ProxyTelegram:    resolveFlag(r.env.ProxyTelegram, stored[KeyProxyTelegram]),
 		ProxyTelegraph:   resolveFlag(r.env.ProxyTelegraph, stored[KeyProxyTelegraph]),
+		UploadMode:       resolveUploadMode(r.env.UploadMode, stored[KeyUploadMode]),
+		MetaFilenames:    resolve("", stored, KeyMetaFilenames, DefaultMetaFilenames),
+		MetaParseMode:    resolveMetaParseMode(stored[KeyMetaParseMode]),
+	}
+}
+
+// resolveUploadMode 解析新任务默认画质：环境变量优先，其次数据库，非法取值回落到 photo。
+// 环境变量写错时只回落默认值，不影响服务启动。
+func resolveUploadMode(envMode, storedMode string) Value {
+	if value := normalizeUploadMode(envMode); value != "" {
+		return Value{Value: value, Source: SourceEnv}
+	}
+	if value := normalizeUploadMode(storedMode); value != "" {
+		return Value{Value: value, Source: SourceStored}
+	}
+	return Value{Value: DefaultUploadMode, Source: SourceDefault}
+}
+
+// normalizeUploadMode 把取值归一化为 photo 或 document，非法时返回空串。
+func normalizeUploadMode(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "photo":
+		return "photo"
+	case "document":
+		return "document"
+	default:
+		return ""
+	}
+}
+
+// resolveMetaParseMode 解析说明文件默认解析方式，非法值回落到首行标题模式。
+func resolveMetaParseMode(stored string) Value {
+	switch strings.ToLower(strings.TrimSpace(stored)) {
+	case MetaParseKeyValue:
+		return Value{Value: MetaParseKeyValue, Source: SourceStored}
+	case MetaParseFirstLine:
+		return Value{Value: MetaParseFirstLine, Source: SourceStored}
+	default:
+		return Value{Value: DefaultMetaParseMode, Source: SourceDefault}
 	}
 }
 
@@ -227,12 +293,16 @@ type Patch struct {
 	ProxyURL       *string
 	ProxyTelegram  *bool
 	ProxyTelegraph *bool
+	// 压缩包说明文件：候选文件名与默认解析方式。
+	MetaFilenames *[]string
+	MetaParseMode *string
 }
 
 // Empty 报告补丁是否没有任何字段。
 func (p Patch) Empty() bool {
 	return p.TelegramToken == nil && p.TelegramChannel == nil && p.TelegraphAuthor == nil &&
-		p.ProxyMode == nil && p.ProxyURL == nil && p.ProxyTelegram == nil && p.ProxyTelegraph == nil
+		p.ProxyMode == nil && p.ProxyURL == nil && p.ProxyTelegram == nil && p.ProxyTelegraph == nil &&
+		p.MetaFilenames == nil && p.MetaParseMode == nil
 }
 
 // Prepare 校验补丁并返回应用后的生效配置，不写入数据库。
@@ -311,6 +381,7 @@ func (r *Resolver) classify(stored map[string]string, patch Patch) (Effective, m
 	apply(patch.TelegramChannel, current.TelegramChannel, KeyTelegramChannel, "telegram.channel_id", validateChannel)
 	apply(patch.TelegraphAuthor, current.TelegraphAuthor, KeyTelegraphAuthorName, "telegraph.author_name", validateAuthor)
 	applyProxy(patch, current, values, &deletes, &invalid, &conflicts)
+	applyMeta(patch, current, values, &deletes, &invalid)
 
 	if len(invalid) > 0 {
 		return Effective{}, nil, nil, &FieldProblem{Fields: invalid}
@@ -389,6 +460,67 @@ func applyProxy(patch Patch, current Effective, values map[string]string, delete
 
 	applyToggle(patch.ProxyTelegram, current.ProxyTelegram, KeyProxyTelegram, "proxy.telegram", values, conflicts)
 	applyToggle(patch.ProxyTelegraph, current.ProxyTelegraph, KeyProxyTelegraph, "proxy.telegraph", values, conflicts)
+}
+
+// applyMeta 归类说明文件名与解析方式：空列表或空串表示清除数据库值、回落默认。
+func applyMeta(patch Patch, current Effective, values map[string]string, deletes *[]string, invalid *[]string) {
+	if patch.MetaFilenames != nil {
+		joined, err := normalizeMetaFilenames(*patch.MetaFilenames)
+		if err != nil {
+			*invalid = append(*invalid, "meta.filenames")
+		} else if joined != current.MetaFilenames.Value {
+			if joined == "" {
+				*deletes = append(*deletes, KeyMetaFilenames)
+			} else {
+				values[KeyMetaFilenames] = joined
+			}
+		}
+	}
+	if patch.MetaParseMode != nil {
+		mode := strings.ToLower(strings.TrimSpace(*patch.MetaParseMode))
+		if mode != "" && mode != MetaParseFirstLine && mode != MetaParseKeyValue {
+			*invalid = append(*invalid, "meta.parse_mode")
+			return
+		}
+		if mode != current.MetaParseMode.Value {
+			if mode == "" {
+				*deletes = append(*deletes, KeyMetaParseMode)
+			} else {
+				values[KeyMetaParseMode] = mode
+			}
+		}
+	}
+}
+
+// normalizeMetaFilenames 校验并规整说明文件名：转小写、去重、禁止路径与空白字符。
+// 空列表返回空串，表示回落到默认候选名。
+func normalizeMetaFilenames(names []string) (string, error) {
+	cleaned := make([]string, 0, len(names))
+	seen := make(map[string]bool, len(names))
+	for _, raw := range names {
+		name := strings.ToLower(strings.TrimSpace(raw))
+		if name == "" {
+			continue
+		}
+		if utf8.RuneCountInString(name) > maxMetaNameRunes || strings.ContainsAny(name, "/\\:*?\"<>|") {
+			return "", ErrInvalidValue
+		}
+		if strings.ContainsAny(name, " \t\r\n") {
+			return "", ErrInvalidValue
+		}
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		cleaned = append(cleaned, name)
+	}
+	if len(cleaned) == 0 {
+		return "", nil
+	}
+	if len(cleaned) > maxMetaFilenames {
+		return "", ErrInvalidValue
+	}
+	return strings.Join(cleaned, ","), nil
 }
 
 // applyToggle 归类代理开关：环境变量提供时不可修改，数据库值只在变化时写入。

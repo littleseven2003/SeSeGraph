@@ -131,6 +131,16 @@ export interface SettingsForm {
   proxyUrl: string
   proxyTelegram: boolean
   proxyTelegraph: boolean
+  metaFilenames: string
+  metaParseMode: string
+}
+
+/** splitMetaFilenames 把逗号或顿号分隔的输入拆成候选文件名列表。 */
+export function splitMetaFilenames(raw: string): string[] {
+  return raw
+    .split(/[,，、]/)
+    .map((name) => name.trim())
+    .filter((name) => name !== '')
 }
 
 /** changedPatch 只提交改动且非环境变量托管的字段。 */
@@ -161,9 +171,17 @@ export function changedPatch(view: SettingsView, form: SettingsForm): SettingsPa
   if (form.proxyTelegraph !== view.proxy.telegraph_enabled) {
     proxy.telegraph_enabled = form.proxyTelegraph
   }
+  const meta: NonNullable<SettingsPatch['meta']> = {}
+  if (form.metaFilenames.trim() !== view.meta.filenames.join(', ')) {
+    meta.filenames = splitMetaFilenames(form.metaFilenames)
+  }
+  if (form.metaParseMode !== view.meta.parse_mode) {
+    meta.parse_mode = form.metaParseMode
+  }
   if (Object.keys(telegram).length > 0) patch.telegram = telegram
   if (Object.keys(telegraph).length > 0) patch.telegraph = telegraph
   if (Object.keys(proxy).length > 0) patch.proxy = proxy
+  if (Object.keys(meta).length > 0) patch.meta = meta
   return patch
 }
 

@@ -954,3 +954,77 @@ func TestTrafficStatsHandler(t *testing.T) {
 		t.Errorf("阈值 = %d / %d，期望 3GB / 5GB", body.AlertByte, body.LimitByte)
 	}
 }
+
+// TestSettingsMetaUpdate 验证说明文件名与解析方式的读写与回落。
+func TestSettingsMetaUpdate(t *testing.T) {
+	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
+		deps.Settings = settings.NewResolver(settings.NewStore(handle), settings.Env{})
+	})
+	cookie := env.setup(t)
+
+	rec := env.do(t, http.MethodGet, "/api/settings", "", cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("读取设置状态 = %d", rec.Code)
+	}
+	var view map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
+		t.Fatalf("解析响应失败: %v", err)
+	}
+	meta := view["meta"].(map[string]any)
+	if meta["parse_mode"] != settings.DefaultMetaParseMode {
+		t.Errorf("默认解析方式 = %v，期望 %q", meta["parse_mode"], settings.DefaultMetaParseMode)
+	}
+	filenames := meta["filenames"].([]any)
+	if len(filenames) != 3 || filenames[0] != "info.txt" {
+		t.Errorf("默认说明文件名 = %v", filenames)
+	}
+	upload := view["upload"].(map[string]any)
+	if upload["default_mode"] != settings.DefaultUploadMode {
+		t.Errorf("默认画质 = %v，期望 photo", upload["default_mode"])
+	}
+
+	body := `{"meta":{"filenames":["Info.TXT","notes.md"],"parse_mode":"key-value"}}`
+	rec = env.do(t, http.MethodPut, "/api/settings", body, cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("保存状态 = %d，响应: %s", rec.Code, rec.Body.String())
+	}
+	_, effective := readEffectiveSettings(t, env, cookie)
+	if effective.MetaFilenames.Value != "info.txt,notes.md" || effective.MetaParseMode.Value != "key-value" {
+		t.Errorf("保存后配置 = %q / %q", effective.MetaFilenames.Value, effective.MetaParseMode.Value)
+	}
+
+	// 空值清除，回落默认。
+	rec = env.do(t, http.MethodPut, "/api/settings", `{"meta":{"filenames":[],"parse_mode":""}}`, cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("清除状态 = %d", rec.Code)
+	}
+	_, effective = readEffectiveSettings(t, env, cookie)
+	if effective.MetaFilenames.Value != settings.DefaultMetaFilenames ||
+		effective.MetaParseMode.Value != settings.DefaultMetaParseMode {
+		t.Errorf("清除后配置 = %q / %q", effective.MetaFilenames.Value, effective.MetaParseMode.Value)
+	}
+
+	// 非法解析方式整体拒绝。
+	rec = env.do(t, http.MethodPut, "/api/settings", `{"meta":{"parse_mode":"regex"}}`, cookie)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("非法解析方式状态 = %d，期望 400", rec.Code)
+	}
+}
+
+// readEffectiveSettings 读取设置视图并返回解析后的生效配置。
+func readEffectiveSettings(t *testing.T, env *testEnv, cookie *http.Cookie) (map[string]any, settings.Effective) {
+	t.Helper()
+	rec := env.do(t, http.MethodGet, "/api/settings", "", cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("读取设置状态 = %d", rec.Code)
+	}
+	var view map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
+		t.Fatalf("解析响应失败: %v", err)
+	}
+	effective, err := settings.NewResolver(settings.NewStore(env.handle), settings.Env{}).Effective(context.Background())
+	if err != nil {
+		t.Fatalf("解析生效配置失败: %v", err)
+	}
+	return view, effective
+}

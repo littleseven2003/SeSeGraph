@@ -7,11 +7,13 @@ const draft = defineModel<PostMeta>({ required: true })
 const props = defineProps<{
   metaText: string
   metaSource: string
+  /** 设置页保存的默认解析方式 */
+  parseDefault?: ParseMode
   disabled?: boolean
 }>()
 const emit = defineEmits<{ (event: 'error', message: string): void }>()
 
-const parseMode = ref<ParseMode>('first-line')
+const parseMode = ref<ParseMode>(props.parseDefault ?? 'first-line')
 const tagInput = ref('')
 
 const hasMetaText = computed(() => props.metaText.trim() !== '')

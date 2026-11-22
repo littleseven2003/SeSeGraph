@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -67,6 +68,17 @@ type settingsView struct {
 		TelegramEnabled  bool   `json:"telegram_enabled"`
 		TelegraphEnabled bool   `json:"telegraph_enabled"`
 	} `json:"proxy"`
+	// Upload 汇报新任务默认画质及其来源。
+	Upload struct {
+		DefaultMode string `json:"default_mode"`
+		ModeSource  string `json:"mode_source"`
+	} `json:"upload"`
+	// Meta 是压缩包说明文件的候选名与默认解析方式。
+	Meta struct {
+		Filenames []string `json:"filenames"`
+		ParseMode string   `json:"parse_mode"`
+		Source    string   `json:"source"`
+	} `json:"meta"`
 	// EnvManaged 列出由环境变量提供、界面不可覆盖的字段。
 	EnvManaged []string `json:"env_managed"`
 }
@@ -78,6 +90,21 @@ func endpointValue(value settings.Value) string {
 		return value.Value
 	}
 	return ""
+}
+
+// splitMetaFilenames 把逗号分隔的说明文件名转成列表，空值时回落默认候选。
+func splitMetaFilenames(raw string) []string {
+	parts := strings.Split(raw, ",")
+	names := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if name := strings.TrimSpace(part); name != "" {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		names = strings.Split(settings.DefaultMetaFilenames, ",")
+	}
+	return names
 }
 
 // buildSettingsView 汇总生效配置。敏感项只输出布尔标记。
@@ -103,6 +130,11 @@ func buildSettingsView(effective settings.Effective, publicURL string) settingsV
 	view.Proxy.URLSource = effective.ProxyURL.Source
 	view.Proxy.TelegramEnabled = effective.ProxyEnabled(netclient.ServiceTelegram)
 	view.Proxy.TelegraphEnabled = effective.ProxyEnabled(netclient.ServiceTelegraph)
+	view.Upload.DefaultMode = effective.UploadMode.Value
+	view.Upload.ModeSource = effective.UploadMode.Source
+	view.Meta.Filenames = splitMetaFilenames(effective.MetaFilenames.Value)
+	view.Meta.ParseMode = effective.MetaParseMode.Value
+	view.Meta.Source = effective.MetaFilenames.Source
 
 	fields := []struct {
 		name  string
@@ -118,6 +150,7 @@ func buildSettingsView(effective settings.Effective, publicURL string) settingsV
 		{"proxy.url", effective.ProxyURL},
 		{"proxy.telegram", effective.ProxyTelegram},
 		{"proxy.telegraph", effective.ProxyTelegraph},
+		{"upload.mode", effective.UploadMode},
 	}
 	for _, field := range fields {
 		if field.value.Source == settings.SourceEnv {
@@ -162,6 +195,10 @@ type settingsPatchRequest struct {
 	Telegraph *struct {
 		AuthorName *string `json:"author_name"`
 	} `json:"telegraph"`
+	Meta *struct {
+		Filenames *[]string `json:"filenames"`
+		ParseMode *string   `json:"parse_mode"`
+	} `json:"meta"`
 	Proxy *struct {
 		Mode             *string `json:"mode"`
 		URL              *string `json:"url"`
@@ -185,6 +222,10 @@ func (r settingsPatchRequest) toPatch() settings.Patch {
 		patch.ProxyURL = r.Proxy.URL
 		patch.ProxyTelegram = r.Proxy.TelegramEnabled
 		patch.ProxyTelegraph = r.Proxy.TelegraphEnabled
+	}
+	if r.Meta != nil {
+		patch.MetaFilenames = r.Meta.Filenames
+		patch.MetaParseMode = r.Meta.ParseMode
 	}
 	return patch
 }

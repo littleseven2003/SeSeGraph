@@ -54,12 +54,23 @@ function view(overrides: Partial<SettingsView> = {}): SettingsView {
       telegram_enabled: false,
       telegraph_enabled: false,
     },
+    upload: {
+      default_mode: 'photo',
+      mode_source: 'default',
+    },
+    meta: {
+      filenames: ['info.txt', 'meta.txt', 'readme.txt'],
+      parse_mode: 'first-line',
+      source: 'default',
+    },
     env_managed: [],
     ...overrides,
   }
 }
 
 const baseForm = {
+  metaFilenames: 'info.txt, meta.txt, readme.txt',
+  metaParseMode: 'first-line',
   token: '',
   channelId: '@sese_channel',
   authorName: 'SeSe',
@@ -113,6 +124,9 @@ test('自检结论汇总两种目标', () => {
 test('补丁只提交改动项', () => {
   const current = view()
   assert.equal(hasPatch(changedPatch(current, { ...baseForm })), false)
+
+  const metaPatch = changedPatch(current, { ...baseForm, metaFilenames: 'Info.TXT, notes.md', metaParseMode: 'key-value' })
+  assert.deepEqual(metaPatch, { meta: { filenames: ['Info.TXT', 'notes.md'], parse_mode: 'key-value' } })
 
   const patch = changedPatch(current, { ...baseForm, token: '123:new', channelId: '@other_channel' })
   assert.deepEqual(patch, { telegram: { token: '123:new', channel_id: '@other_channel' } })

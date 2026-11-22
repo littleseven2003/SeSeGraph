@@ -28,11 +28,26 @@ export interface ProxySettings {
   telegraph_enabled: boolean
 }
 
+/** UploadSettings 是新任务的默认画质及其来源。 */
+export interface UploadSettings {
+  default_mode: string
+  mode_source: string
+}
+
+/** MetaSettings 是压缩包说明文件的候选名与默认解析方式。 */
+export interface MetaSettings {
+  filenames: string[]
+  parse_mode: string
+  source: string
+}
+
 export interface SettingsView {
   public_url: string
   telegram: TelegramSettings
   telegraph: TelegraphSettings
   proxy: ProxySettings
+  upload: UploadSettings
+  meta: MetaSettings
   env_managed: string[]
 }
 
@@ -44,6 +59,10 @@ export interface SettingsPatch {
     url?: string
     telegram_enabled?: boolean
     telegraph_enabled?: boolean
+  }
+  meta?: {
+    filenames?: string[]
+    parse_mode?: string
   }
 }
 

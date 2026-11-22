@@ -405,3 +405,88 @@ func TestProxyMixedSourcesPerField(t *testing.T) {
 		t.Fatalf("错误 = %v，期望 proxy.mode 冲突", err)
 	}
 }
+
+// TestUploadModeDefault 验证默认画质来自环境变量、数据库或默认值，非法取值不影响启动。
+func TestUploadModeDefault(t *testing.T) {
+	ctx := context.Background()
+
+	resolver := newResolver(t, Env{})
+	effective, err := resolver.Effective(ctx)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if effective.UploadMode.Value != DefaultUploadMode || effective.UploadMode.Source != SourceDefault {
+		t.Errorf("默认画质 = %+v，期望 photo / default", effective.UploadMode)
+	}
+
+	envResolver := newResolver(t, Env{UploadMode: "document"})
+	effective, err = envResolver.Effective(ctx)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if effective.UploadMode.Value != "document" || effective.UploadMode.Source != SourceEnv {
+		t.Errorf("环境变量画质 = %+v，期望 document / env", effective.UploadMode)
+	}
+
+	invalid := newResolver(t, Env{UploadMode: "ultra"})
+	effective, err = invalid.Effective(ctx)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if effective.UploadMode.Value != DefaultUploadMode {
+		t.Errorf("非法环境值应回落默认，实际 %+v", effective.UploadMode)
+	}
+}
+
+// TestMetaSettingsDefaultsAndUpdate 验证说明文件候选名与解析方式的默认值、规整与校验。
+func TestMetaSettingsDefaultsAndUpdate(t *testing.T) {
+	ctx := context.Background()
+	resolver := newResolver(t, Env{})
+
+	effective, err := resolver.Effective(ctx)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if effective.MetaFilenames.Value != DefaultMetaFilenames || effective.MetaFilenames.Source != SourceDefault {
+		t.Errorf("默认说明文件名 = %+v，期望 %q / default", effective.MetaFilenames, DefaultMetaFilenames)
+	}
+	if effective.MetaParseMode.Value != DefaultMetaParseMode {
+		t.Errorf("默认解析方式 = %+v，期望 %q", effective.MetaParseMode, DefaultMetaParseMode)
+	}
+
+	names := []string{" Info.TXT ", "meta.txt", "info.txt", "自定义.md"}
+	mode := "key-value"
+	if err := resolver.Update(ctx, Patch{MetaFilenames: &names, MetaParseMode: &mode}); err != nil {
+		t.Fatalf("保存失败: %v", err)
+	}
+	effective, err = resolver.Effective(ctx)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if effective.MetaFilenames.Value != "info.txt,meta.txt,自定义.md" {
+		t.Errorf("规整后文件名 = %q，期望小写去重", effective.MetaFilenames.Value)
+	}
+	if effective.MetaFilenames.Source != SourceStored || effective.MetaParseMode.Value != "key-value" {
+		t.Errorf("保存后配置 = %+v / %+v", effective.MetaFilenames, effective.MetaParseMode)
+	}
+
+	// 空列表与空串表示清除数据库值，回落默认。
+	empty := []string{}
+	emptyMode := ""
+	if err := resolver.Update(ctx, Patch{MetaFilenames: &empty, MetaParseMode: &emptyMode}); err != nil {
+		t.Fatalf("清除失败: %v", err)
+	}
+	effective, err = resolver.Effective(ctx)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if effective.MetaFilenames.Value != DefaultMetaFilenames || effective.MetaParseMode.Value != DefaultMetaParseMode {
+		t.Errorf("清除后应回落默认，实际 %+v / %+v", effective.MetaFilenames, effective.MetaParseMode)
+	}
+
+	// 非法取值整体拒绝。
+	bad := []string{"../etc/passwd"}
+	if err := resolver.Update(ctx, Patch{MetaFilenames: &bad}); !errors.Is(err, ErrInvalidValue) {
+		t.Errorf("非法文件名错误 = %v，期望 ErrInvalidValue", err)
+	}
+}

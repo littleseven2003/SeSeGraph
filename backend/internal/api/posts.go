@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/settings"
 )
 
 const (
@@ -82,7 +83,13 @@ func createPostHandler(deps Deps) gin.HandlerFunc {
 
 		mode := req.UploadMode
 		if mode == "" {
-			mode = "photo"
+			// 未指定时沿用全局默认画质（UPLOAD_MODE 或设置页保存值）。
+			mode = settings.DefaultUploadMode
+			if deps.Settings != nil {
+				if effective, err := deps.Settings.Effective(c.Request.Context()); err == nil && effective.UploadMode.Value != "" {
+					mode = effective.UploadMode.Value
+				}
+			}
 		}
 		id, err := deps.Posts.Create(c.Request.Context(), posts.Post{
 			Title:       title,

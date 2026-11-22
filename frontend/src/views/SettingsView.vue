@@ -72,6 +72,8 @@ const form = reactive({
   proxyUrl: '',
   proxyTelegram: false,
   proxyTelegraph: false,
+  metaFilenames: '',
+  metaParseMode: 'first-line',
 })
 
 function applyView(next: SettingsView): void {
@@ -83,6 +85,8 @@ function applyView(next: SettingsView): void {
   form.proxyUrl = ''
   form.proxyTelegram = next.proxy.telegram_enabled
   form.proxyTelegraph = next.proxy.telegraph_enabled
+  form.metaFilenames = next.meta.filenames.join(', ')
+  form.metaParseMode = next.meta.parse_mode
 }
 
 function managed(field: string): boolean {
@@ -468,6 +472,47 @@ onMounted(() => {
             <p class="text-xs text-muted">
               直连模式忽略上面的开关；跟随系统模式读取进程环境变量 HTTP_PROXY / HTTPS_PROXY / ALL_PROXY。
             </p>
+          </div>
+        </section>
+
+        <section class="mt-5 rounded-lg border border-line bg-surface">
+          <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-4">
+            <div>
+              <h2 class="text-sm font-semibold">发帖默认值</h2>
+              <p class="mt-0.5 text-xs text-muted">说明文件命中后自动预填标题与说明，工作台的解析方式默认按这里。</p>
+            </div>
+          </div>
+          <div class="space-y-4 px-5 py-4">
+            <div>
+              <label class="block text-xs font-medium text-muted" for="meta-filenames">说明文件名</label>
+              <input
+                id="meta-filenames"
+                v-model="form.metaFilenames"
+                type="text"
+                class="mt-1 h-9 w-full rounded-md border border-line bg-canvas px-3 text-sm outline-none transition focus:border-brand"
+                placeholder="info.txt, meta.txt, readme.txt"
+              />
+              <p class="mt-1 text-xs text-muted">多个文件名用逗号分隔，最多 10 个，匹配时不区分大小写。</p>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-muted" for="meta-parse-mode">解析方式</label>
+              <select
+                id="meta-parse-mode"
+                v-model="form.metaParseMode"
+                class="mt-1 h-9 w-full rounded-md border border-line bg-canvas px-3 text-sm outline-none transition focus:border-brand"
+              >
+                <option value="first-line">首行标题 + 其余正文</option>
+                <option value="key-value">键值匹配</option>
+              </select>
+            </div>
+            <div>
+              <span class="block text-xs font-medium text-muted">默认画质</span>
+              <p class="mt-1 text-sm">
+                {{ view.upload.default_mode === 'document' ? 'document（原图）' : 'photo（省流量）' }}
+                <span v-if="view.upload.mode_source === 'env'" class="ml-1 text-xs text-muted">{{ ENV_MANAGED_HINT }}</span>
+              </p>
+              <p class="mt-1 text-xs text-muted">新任务默认使用该画质，单帖仍可在工作台覆盖；续传沿用原任务的画质。</p>
+            </div>
           </div>
         </section>
 

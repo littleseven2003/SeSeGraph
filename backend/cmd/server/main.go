@@ -100,6 +100,7 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		ProxyURL:         envValue(lookupEnv, "PROXY_URL"),
 		ProxyTelegram:    envValue(lookupEnv, "PROXY_FOR_TELEGRAM"),
 		ProxyTelegraph:   envValue(lookupEnv, "PROXY_FOR_TELEGRAPH"),
+		UploadMode:       envValue(lookupEnv, "UPLOAD_MODE"),
 	})
 	effective, err := resolver.Effective(ctx)
 	if err != nil {
