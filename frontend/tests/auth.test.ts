@@ -20,8 +20,11 @@ test('设置页分组锚点与就近字段错误', () => {
 
 test('登录与初始化共用字标并支持密码显隐', () => {
   const mark = source('components/BrandMark.vue')
-  assert.equal(mark.includes('bg-brand'), false, '字标不再使用实心蓝底方块')
-  assert.ok(mark.includes('border-line'), '字标改为细线边框')
+  assert.equal(mark.includes('bg-brand'), false, '字标不再使用实心方块')
+  assert.ok(mark.includes('<svg'), '字标改为内联 SVG 徽标')
+  assert.ok(mark.includes('rotate(-7'), '徽标带一张轻斜的纸卡，形成图册叠影')
+  assert.ok(mark.includes('#ffd7cc'), '底层纸卡用柔珊瑚')
+  assert.ok(mark.includes('#0d7a72'), '明信片内嵌松石青山影')
 
   for (const file of ['views/LoginView.vue', 'views/SetupView.vue']) {
     const view = source(file)
