@@ -39,9 +39,9 @@ export function buildGalleryQuery(input: {
   return params.toString()
 }
 
-/** formatPublishedAt 把接口时间转成本地「YYYY-MM-DD HH:mm」，空值返回空串。 */
-export function formatPublishedAt(value: string): string {
-  if (value.trim() === '') return ''
+/** formatPublishedAt 把接口时间转成本地「YYYY-MM-DD HH:mm」，空值与缺字段都返回空串。 */
+export function formatPublishedAt(value: string | null | undefined): string {
+  if (typeof value !== 'string' || value.trim() === '') return ''
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return ''
   const pad = (part: number): string => String(part).padStart(2, '0')

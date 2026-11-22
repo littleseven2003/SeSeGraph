@@ -154,6 +154,14 @@ test('模糊偏好默认开启并能持久化关闭', () => {
   assert.equal(readBlurPreference(undefined), true)
 })
 
+test('formatPublishedAt 容忍空值与缺字段', () => {
+  assert.equal(formatPublishedAt(''), '')
+  assert.equal(formatPublishedAt(null), '')
+  assert.equal(formatPublishedAt(undefined), '')
+  assert.equal(formatPublishedAt('不是时间'), '')
+  assert.match(formatPublishedAt('2026-11-22T09:18:20Z'), /^2026-11-22 \d{2}:\d{2}$/)
+})
+
 test('pageWindow 最多五页并夹在当前页附近', () => {
   assert.deepEqual(pageWindow(1, 12, 0), [1])
   assert.deepEqual(pageWindow(1, 12, 60), [1, 2, 3, 4, 5])
