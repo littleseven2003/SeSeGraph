@@ -756,8 +756,8 @@ onBeforeUnmount(() => {
             <DropZone compact :disabled="working || locked" @zip="onZip" @images="onImages" @error="pushError" />
           </div>
 
-          <aside class="hidden lg:block">
-            <div class="sticky top-[76px] space-y-3">
+          <aside class="hidden lg:sticky lg:top-[76px] lg:block">
+            <div class="space-y-3">
               <section class="rounded-md border border-line bg-surface p-3.5">
                 <p class="text-xs font-medium text-muted">封面缩略图</p>
                 <div class="mt-2 aspect-[4/3] overflow-hidden rounded bg-canvas">
@@ -823,16 +823,6 @@ onBeforeUnmount(() => {
           </aside>
         </div>
 
-        <div v-if="serverProgress" class="mt-4">
-          <ProgressPanel
-            :progress="serverProgress"
-            :retrying="retrying"
-            :publishing="publishing"
-            @retry="retryFailed"
-            @publish="publishToTelegraph"
-          />
-        </div>
-
         <div class="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface px-4 py-2.5 lg:hidden">
           <div class="flex items-center gap-3">
             <div class="min-w-0 flex-1">
@@ -869,6 +859,17 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </template>
+
+      <!-- 进度面板对所有状态可见：刷新后未重新选图也能继续发布或重试。 -->
+      <div v-if="serverProgress" class="mt-4">
+        <ProgressPanel
+          :progress="serverProgress"
+          :retrying="retrying"
+          :publishing="publishing"
+          @retry="retryFailed"
+          @publish="publishToTelegraph"
+        />
+      </div>
     </main>
   </div>
 </template>
