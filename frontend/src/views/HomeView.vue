@@ -20,7 +20,7 @@ import {
   type GalleryView,
 } from '../utils/gallery'
 import DetailDrawer from '../components/gallery/DetailDrawer.vue'
-import BrandLockup from '../components/BrandLockup.vue'
+import BrandMark from '../components/BrandMark.vue'
 import PostCard from '../components/gallery/PostCard.vue'
 import PostList from '../components/gallery/PostList.vue'
 import FocusCarousel from '../components/gallery/FocusCarousel.vue'
@@ -219,7 +219,11 @@ onBeforeUnmount(() => {
   <div class="min-h-full">
     <header class="border-b border-line/60">
       <div class="mx-auto flex w-full max-w-[1240px] items-center justify-between gap-4 px-5 py-3">
-        <BrandLockup />
+        <div class="flex min-w-0 items-center gap-2.5">
+          <BrandMark :width="132" />
+          <span class="hidden h-4 w-px shrink-0 bg-line sm:block" aria-hidden="true"></span>
+          <span class="hidden shrink-0 text-xs font-medium tracking-[0.04em] text-muted sm:inline">SeSe图册</span>
+        </div>
 
         <div class="flex items-center gap-1">
           <router-link

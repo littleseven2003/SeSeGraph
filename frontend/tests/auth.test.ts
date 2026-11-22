@@ -20,14 +20,15 @@ test('设置页分组锚点与就近字段错误', () => {
 
 test('登录与初始化共用字标并支持密码显隐', () => {
   const mark = source('components/BrandMark.vue')
-  assert.ok(mark.includes("'/sesegraph-mark.svg'"), '徽标与 favicon 共用同一份矢量源')
+  assert.ok(mark.includes("'/sesegraph-wordmark.svg'"), '顶栏与登录共用完整艺术字标')
+  assert.ok(mark.includes('184') && mark.includes('40'), '字标按原始比例缩放，避免拉伸')
+  assert.ok(source('views/HomeView.vue').includes('SeSe图册'), '顶栏保留响应式中文副标')
+  for (const file of ['views/LoginView.vue', 'views/SetupView.vue']) {
+    assert.ok(source(file).includes('SeSe图册'), `${file} 保留中文副标`)
+  }
   assert.equal(mark.includes('<svg'), false, '图形不在组件内重复维护')
-
-  const lockup = source('components/BrandLockup.vue')
-  assert.ok(lockup.includes('SeSeGraph') && lockup.includes('SeSe图册'), '锁排包含中英文字标')
-  assert.ok(lockup.includes("layout === 'stack'"), '登录与初始化使用双行锁排')
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8')
-  assert.ok(html.includes('href="/sesegraph-mark.svg"'), 'favicon 指向同一份矢量源')
+  assert.ok(html.includes('href="/sesegraph-mark.svg"'), 'favicon 指向同一份品牌源')
 
   for (const file of ['views/LoginView.vue', 'views/SetupView.vue']) {
     const view = source(file)
