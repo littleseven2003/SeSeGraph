@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { ApiError } from '../api/client.ts'
 import {
   fetchBackupStatus,
@@ -267,13 +267,7 @@ async function check(): Promise<void> {
 }
 
 onMounted(() => {
-  // 手机端有吸底保存条，页脚需要额外留白。
-  document.body.classList.add('has-bottom-actions')
   void load()
-})
-
-onBeforeUnmount(() => {
-  document.body.classList.remove('has-bottom-actions')
 })
 </script>
 
@@ -316,7 +310,8 @@ onBeforeUnmount(() => {
       </nav>
     </header>
 
-    <main class="mx-auto flex w-full max-w-[1240px] items-start gap-8 px-5 py-7 pb-16 lg:pb-7">
+    <main class="mx-auto w-full max-w-[1240px] px-5 py-7">
+      <div class="flex items-start gap-8">
       <nav class="sticky top-24 hidden w-[168px] shrink-0 lg:block" aria-label="设置分组">
         <ul class="space-y-0.5">
           <li v-for="item in SETTING_NAV" :key="item.id">
@@ -480,7 +475,7 @@ onBeforeUnmount(() => {
                           v-for="option in PROXY_MODES"
                           :key="option.value"
                           class="flex min-h-11 cursor-pointer items-center gap-2.5 rounded-md border border-line bg-canvas px-3 py-2.5 text-sm transition hover:border-ink/25 focus-within:border-ink"
-                          :class="form.proxyMode === option.value ? 'border-ink bg-surface' : ''"
+                          :class="form.proxyMode === option.value ? 'border-accent bg-accent-soft' : ''"
                         >
                           <input
                             v-model="form.proxyMode"
@@ -488,7 +483,7 @@ onBeforeUnmount(() => {
                             name="proxy-mode"
                             :value="option.value"
                             :disabled="saving || managed(FIELD_PROXY_MODE)"
-                            class="h-6 w-6 shrink-0 accent-brand"
+                            class="h-6 w-6 shrink-0 accent-accent"
                           />
                           <span>{{ option.label }}</span>
                         </label>
@@ -538,7 +533,7 @@ onBeforeUnmount(() => {
                           v-model="form.proxyTelegram"
                           type="checkbox"
                           :disabled="saving || form.proxyMode === 'direct' || managed(FIELD_PROXY_TELEGRAM)"
-                          class="h-6 w-6 shrink-0 accent-brand"
+                          class="h-6 w-6 shrink-0 accent-accent"
                         />
                         <span>Telegram Bot API 走代理</span>
                       </label>
@@ -549,7 +544,7 @@ onBeforeUnmount(() => {
                           v-model="form.proxyTelegraph"
                           type="checkbox"
                           :disabled="saving || form.proxyMode === 'direct' || managed(FIELD_PROXY_TELEGRAPH)"
-                          class="h-6 w-6 shrink-0 accent-brand"
+                          class="h-6 w-6 shrink-0 accent-accent"
                         />
                         <span>Telegraph API 走代理</span>
                       </label>
@@ -728,24 +723,28 @@ onBeforeUnmount(() => {
             </section>
           </div>
 
-          <div class="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-surface px-5 py-3 lg:hidden">
-            <div class="flex items-center justify-between gap-3">
-              <div class="min-w-0 flex-1 text-xs" aria-live="polite">
-                <p v-if="saveError !== ''" class="text-danger">{{ saveError }}</p>
-                <p v-else-if="feedback !== ''" class="text-accent">{{ feedback }}</p>
-                <p v-else class="text-muted">已发布帖会保留原页面路径，修改作者名只影响后续发布。</p>
-              </div>
-              <button
-                type="button"
-                :disabled="saving"
-                class="h-11 shrink-0 rounded-md bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
-                @click="save"
-              >
-                {{ saving ? '保存中…' : '保存设置' }}
-              </button>
-            </div>
-          </div>
         </template>
+        </div>
+      </div>
+
+      <div
+        class="sticky bottom-0 z-20 -mx-5 mt-6 border-t border-line bg-surface px-5 py-3 lg:hidden"
+      >
+        <div class="flex items-center justify-between gap-3">
+          <div class="min-w-0 flex-1 text-xs" aria-live="polite">
+            <p v-if="saveError !== ''" class="text-danger">{{ saveError }}</p>
+            <p v-else-if="feedback !== ''" class="text-accent">{{ feedback }}</p>
+            <p v-else class="text-muted">已发布帖会保留原页面路径，修改作者名只影响后续发布。</p>
+          </div>
+          <button
+            type="button"
+            :disabled="saving"
+            class="h-11 shrink-0 rounded-md bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+            @click="save"
+          >
+            {{ saving ? '保存中…' : '保存设置' }}
+          </button>
+        </div>
       </div>
     </main>
   </div>

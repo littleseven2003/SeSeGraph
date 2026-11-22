@@ -86,7 +86,7 @@ function imageLink(image: { short_code: string; status: string }): string {
 const toneClass = computed(() => {
   switch (status.value.tone) {
     case 'ok':
-      return 'bg-accent/10 text-accent'
+      return 'bg-accent-soft text-accent'
     case 'progress':
       return 'bg-brand-soft text-brand-strong'
     case 'error':
