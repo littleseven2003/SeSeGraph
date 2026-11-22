@@ -37,10 +37,11 @@ async function submit(): Promise<void> {
         </div>
       </div>
 
-      <h1 class="mt-8 text-xl font-semibold tracking-tight">登录管理后台</h1>
-      <p class="mt-1.5 text-sm text-muted">单管理员账户，登录后管理图册与发布记录。</p>
+      <h1 class="mt-8 text-xl font-semibold tracking-tight">回到你的私人图册</h1>
+      <p class="mt-1.5 text-sm text-muted">输入管理员账号和密码，打开冲印台与发布记录。</p>
 
-      <form class="mt-6 rounded-md border border-line bg-surface p-5" novalidate @submit.prevent="submit">
+      <form class="mt-6 overflow-hidden rounded-md border border-line bg-surface p-5" novalidate @submit.prevent="submit">
+        <div class="sprocket -mx-5 -mt-5 mb-5 h-3" aria-hidden="true"></div>
         <div>
           <label for="username" class="block text-xs font-medium text-muted">账号</label>
           <input
@@ -68,7 +69,7 @@ async function submit(): Promise<void> {
             />
             <button
               type="button"
-              class="absolute right-1 top-1/2 flex h-9 -translate-y-1/2 items-center rounded px-2 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
+              class="absolute right-0.5 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
               :aria-pressed="showPassword"
               :aria-label="showPassword ? '隐藏密码' : '显示密码'"
               @click="showPassword = !showPassword"

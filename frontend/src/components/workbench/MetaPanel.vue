@@ -88,7 +88,7 @@ function applyFromPackage(): void {
         </div>
         <button
           type="button"
-          class="h-8 rounded-md border border-line px-2.5 text-xs font-medium transition hover:border-muted/40 hover:bg-canvas disabled:opacity-50"
+          class="h-11 rounded-md border border-line px-3 text-xs font-medium transition hover:border-muted/40 hover:bg-canvas disabled:opacity-50"
           :disabled="props.disabled || !hasMetaText"
           :title="hasMetaText ? `从 ${props.metaSource || '包内文本'} 读取` : '压缩包内没有可用的说明文件'"
           @click="applyFromPackage"

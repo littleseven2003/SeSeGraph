@@ -61,10 +61,11 @@ async function submit(): Promise<void> {
         </div>
       </div>
 
-      <h1 class="mt-8 text-xl font-semibold tracking-tight">初始化管理员</h1>
-      <p class="mt-1.5 text-sm text-muted">这是首次启动，创建唯一的后台账户后即可使用。</p>
+      <h1 class="mt-8 text-xl font-semibold tracking-tight">布置你的第一间冲印室</h1>
+      <p class="mt-1.5 text-sm text-muted">首次启动，创建一个管理员账号即可开始使用。</p>
 
-      <form class="mt-6 rounded-md border border-line bg-surface p-5" novalidate @submit.prevent="submit">
+      <form class="mt-6 overflow-hidden rounded-md border border-line bg-surface p-5" novalidate @submit.prevent="submit">
+        <div class="sprocket -mx-5 -mt-5 mb-5 h-3" aria-hidden="true"></div>
         <div>
           <label for="username" class="block text-xs font-medium text-muted">账号</label>
           <input
@@ -92,7 +93,7 @@ async function submit(): Promise<void> {
             />
             <button
               type="button"
-              class="absolute right-1 top-1/2 flex h-9 -translate-y-1/2 items-center rounded px-2 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
+              class="absolute right-0.5 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
               :aria-pressed="showPassword"
               :aria-label="showPassword ? '隐藏密码' : '显示密码'"
               @click="showPassword = !showPassword"
@@ -117,7 +118,7 @@ async function submit(): Promise<void> {
             />
             <button
               type="button"
-              class="absolute right-1 top-1/2 flex h-9 -translate-y-1/2 items-center rounded px-2 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
+              class="absolute right-0.5 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
               :aria-pressed="showConfirm"
               :aria-label="showConfirm ? '隐藏确认密码' : '显示确认密码'"
               @click="showConfirm = !showConfirm"
@@ -141,7 +142,7 @@ async function submit(): Promise<void> {
             />
             <button
               type="button"
-              class="absolute right-1 top-1/2 flex h-9 -translate-y-1/2 items-center rounded px-2 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
+              class="absolute right-0.5 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
               :aria-pressed="showToken"
               :aria-label="showToken ? '隐藏初始化凭证' : '显示初始化凭证'"
               @click="showToken = !showToken"
