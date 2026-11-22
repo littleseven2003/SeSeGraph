@@ -201,6 +201,12 @@ onBeforeUnmount(() => {
           >
             发帖工作台
           </router-link>
+          <router-link
+            :to="{ name: 'settings' }"
+            class="h-9 items-center rounded-md border border-line px-3 text-sm font-medium transition hover:bg-canvas inline-flex"
+          >
+            设置
+          </router-link>
           <button
             type="button"
             :disabled="signingOut"
@@ -247,7 +253,7 @@ onBeforeUnmount(() => {
             <input
               v-model="keyword"
               type="search"
-              placeholder="搜索标题、说明或标签"
+              placeholder="搜索标题或标签"
               class="h-10 w-full rounded-md border border-line bg-canvas pl-9 pr-3 text-sm outline-none transition focus:border-brand focus:bg-surface"
             />
           </label>

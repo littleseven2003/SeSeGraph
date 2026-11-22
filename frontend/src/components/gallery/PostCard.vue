@@ -101,8 +101,8 @@ const toneClass = computed(() => {
         <span v-if="restTags > 0" class="px-1 py-0.5 text-xs text-muted">+{{ restTags }}</span>
       </span>
       <span class="mt-auto flex items-center justify-between gap-2 text-xs text-muted">
-        <span class="tnum">{{ published !== '' ? published : '未发布' }}</span>
         <span class="truncate">{{ published !== '' ? '发布时间' : '创建后待发布' }}</span>
+        <span class="tnum">{{ published !== '' ? published : '未发布' }}</span>
       </span>
     </span>
   </button>
