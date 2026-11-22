@@ -6,6 +6,9 @@ export const TOUCH_REVEAL_MS = 2500
 /** 模糊开关的本地存储键。 */
 export const BLUR_STORAGE_KEY = 'sesegraph.gallery.blur'
 
+/** 主页布局偏好的本地存储键。 */
+export const VIEW_STORAGE_KEY = 'sesegraph.gallery.view'
+
 /** 分享文案模板的本地存储键。 */
 export const SHARE_TEMPLATE_STORAGE_KEY = 'sesegraph.gallery.shareTemplate'
 
@@ -171,6 +174,35 @@ export function readBlurPreference(storage: StorageLike | undefined): boolean {
   } catch {
     return true
   }
+}
+
+/** GalleryView 是主页的两种布局。 */
+export type GalleryView = 'gallery' | 'list'
+
+/** readViewPreference 读取主页布局偏好，默认画廊视图。 */
+export function readViewPreference(storage: StorageLike | undefined): GalleryView {
+  if (storage === undefined) return 'gallery'
+  try {
+    return storage.getItem(VIEW_STORAGE_KEY) === 'list' ? 'list' : 'gallery'
+  } catch {
+    return 'gallery'
+  }
+}
+
+/** saveViewPreference 持久化主页布局偏好。 */
+export function saveViewPreference(storage: StorageLike | undefined, view: GalleryView): void {
+  if (storage === undefined) return
+  try {
+    storage.setItem(VIEW_STORAGE_KEY, view)
+  } catch {
+    // 隐私模式写入失败时按当前会话使用
+  }
+}
+
+/** stepIndex 在给定总数里循环移动一位，用于焦点轮播的上一组/下一组。 */
+export function stepIndex(current: number, total: number, delta: number): number {
+  if (total <= 0) return 0
+  return ((current + delta) % total + total) % total
 }
 
 /** saveBlurPreference 持久化模糊开关。 */

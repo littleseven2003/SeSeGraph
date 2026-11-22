@@ -25,6 +25,9 @@ import {
   updateFailureText,
   validateMetadata,
   readBlurPreference,
+  readViewPreference,
+  saveViewPreference,
+  stepIndex,
   renderShareText,
   saveBlurPreference,
   statusLabel,
@@ -160,6 +163,27 @@ test('formatPublishedAt 容忍空值与缺字段', () => {
   assert.equal(formatPublishedAt(undefined), '')
   assert.equal(formatPublishedAt('不是时间'), '')
   assert.match(formatPublishedAt('2026-11-22T09:18:20Z'), /^2026-11-22 \d{2}:\d{2}$/)
+})
+
+test('主页布局偏好默认画廊并持久化', () => {
+  const store = new Map<string, string>()
+  const storage = {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => void store.set(key, value),
+  }
+  assert.equal(readViewPreference(storage), 'gallery')
+  assert.equal(saveViewPreference(storage, 'list'), undefined)
+  assert.equal(readViewPreference(storage), 'list')
+  assert.equal(readViewPreference(undefined), 'gallery')
+  store.set('sesegraph.gallery.view', '其它值')
+  assert.equal(readViewPreference(storage), 'gallery')
+})
+
+test('stepIndex 循环切换焦点条目', () => {
+  assert.equal(stepIndex(0, 5, 1), 1)
+  assert.equal(stepIndex(4, 5, 1), 0)
+  assert.equal(stepIndex(0, 5, -1), 4)
+  assert.equal(stepIndex(2, 0, 1), 0)
 })
 
 test('pageWindow 最多五页并夹在当前页附近', () => {

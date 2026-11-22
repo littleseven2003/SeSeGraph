@@ -81,7 +81,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div v-if="props.tags.length > 0" class="relative mt-4">
-    <div class="flex items-center gap-2 overflow-x-auto pb-1">
+    <div class="flex flex-wrap items-center gap-2 pb-1 sm:flex-nowrap sm:overflow-x-auto">
       <span class="shrink-0 text-xs text-muted">标签</span>
 
       <button

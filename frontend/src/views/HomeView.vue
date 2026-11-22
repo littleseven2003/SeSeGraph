@@ -14,12 +14,16 @@ import {
   createLatestGuard,
   pageWindow,
   readBlurPreference,
+  readViewPreference,
   saveBlurPreference,
-  shouldFeatureFirst,
+  saveViewPreference,
+  type GalleryView,
 } from '../utils/gallery'
 import DetailDrawer from '../components/gallery/DetailDrawer.vue'
 import BrandLockup from '../components/BrandLockup.vue'
 import PostCard from '../components/gallery/PostCard.vue'
+import PostList from '../components/gallery/PostList.vue'
+import FocusCarousel from '../components/gallery/FocusCarousel.vue'
 import TagFilter from '../components/gallery/TagFilter.vue'
 
 const PAGE_SIZE = 12
@@ -34,6 +38,7 @@ const selectedTags = ref<string[]>([])
 const loading = ref(false)
 const error = ref('')
 const blurEnabled = ref(true)
+const viewMode = ref<GalleryView>('gallery')
 
 const signingOut = ref(false)
 const drawerOpen = ref(false)
@@ -51,20 +56,24 @@ const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)
 const pages = computed(() => pageWindow(page.value, PAGE_SIZE, total.value))
 const narrowPages = computed(() => pageWindow(page.value, PAGE_SIZE, total.value, 3))
 const hasFilter = computed(() => keyword.value.trim() !== '' || selectedTags.value.length > 0)
-// 精选位只在未筛选的第一页出现；首帖已撤回时整页回到普通网格，不抬后面帖子补位。
-const featuredItem = computed<GalleryItem | null>(() => {
-  const first = items.value[0]
-  if (first === undefined) return null
-  return shouldFeatureFirst({
-    filtered: hasFilter.value,
-    page: page.value,
-    count: items.value.length,
-    firstDisabled: first.disabled,
-  })
-    ? first
-    : null
-})
-const gridItems = computed(() => (featuredItem.value === null ? items.value : items.value.slice(1)))
+// 焦点区只在未筛选的画廊首页出现；筛选、翻页或切到列表视图时一律隐藏，下方画廊保留完整数据。
+const showFocus = computed(
+  () => viewMode.value === 'gallery' && !hasFilter.value && page.value === 1 && items.value.length > 0,
+)
+const focusItems = computed(() => items.value.slice(0, 5))
+
+function setViewMode(next: GalleryView): void {
+  viewMode.value = next
+  saveViewPreference(storageOrUndefined(), next)
+}
+
+function storageOrUndefined(): Storage | undefined {
+  try {
+    return window.localStorage
+  } catch {
+    return undefined
+  }
+}
 
 function messageOf(cause: unknown): string {
   if (cause instanceof ApiError) return cause.message
@@ -196,6 +205,7 @@ watch(keyword, () => {
 
 onMounted(() => {
   blurEnabled.value = readBlurPreference(window.localStorage)
+  viewMode.value = readViewPreference(window.localStorage)
   void loadTags()
   void loadList()
 })
@@ -354,26 +364,63 @@ onBeforeUnmount(() => {
         </div>
 
         <template v-else>
-          <PostCard
-            v-if="featuredItem !== null"
-            :item="featuredItem"
+          <div class="flex items-center justify-end gap-3 pb-1">
+            <div class="flex rounded-full bg-canvas p-1" role="group" aria-label="视图切换">
+              <button
+                type="button"
+                class="inline-flex h-11 items-center gap-1.5 rounded-full px-3.5 text-xs font-medium transition"
+                :class="viewMode === 'gallery' ? 'bg-surface text-ink shadow-[0_1px_0_0_rgba(27,26,23,0.08)]' : 'text-muted hover:text-ink'"
+                :aria-pressed="viewMode === 'gallery'"
+                @click="setViewMode('gallery')"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4" aria-hidden="true">
+                  <rect x="3.5" y="3.5" width="7" height="7" rx="1.5" />
+                  <rect x="13.5" y="3.5" width="7" height="7" rx="1.5" />
+                  <rect x="3.5" y="13.5" width="7" height="7" rx="1.5" />
+                  <rect x="13.5" y="13.5" width="7" height="7" rx="1.5" />
+                </svg>
+                画廊
+              </button>
+              <button
+                type="button"
+                class="inline-flex h-11 items-center gap-1.5 rounded-full px-3.5 text-xs font-medium transition"
+                :class="viewMode === 'list' ? 'bg-surface text-ink shadow-[0_1px_0_0_rgba(27,26,23,0.08)]' : 'text-muted hover:text-ink'"
+                :aria-pressed="viewMode === 'list'"
+                @click="setViewMode('list')"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4" aria-hidden="true">
+                  <path d="M4 6h16M4 12h16M4 18h16" stroke-linecap="round" />
+                </svg>
+                列表
+              </button>
+            </div>
+          </div>
+
+          <FocusCarousel
+            v-if="showFocus"
+            :items="focusItems"
             :blurred="blurEnabled"
-            featured
+            class="mt-4"
             @open="openDetail"
           />
 
-          <div
-            class="grid grid-cols-2 gap-4 md:grid-cols-3 md:gap-6"
-            :class="featuredItem !== null ? 'mt-8' : ''"
-          >
+          <div v-if="viewMode === 'gallery'" class="mt-6 grid grid-cols-2 gap-4 md:grid-cols-3 md:gap-6">
             <PostCard
-              v-for="item in gridItems"
+              v-for="item in items"
               :key="item.id"
               :item="item"
               :blurred="blurEnabled"
               @open="openDetail"
             />
           </div>
+
+          <PostList
+            v-else
+            class="mt-4"
+            :items="items"
+            :blurred="blurEnabled"
+            @open="openDetail"
+          />
 
           <nav v-if="totalPages > 1" class="mt-8 flex items-center justify-center gap-1.5" aria-label="分页">
             <button
