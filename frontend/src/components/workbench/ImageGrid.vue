@@ -132,7 +132,7 @@ function moveBy(index: number, delta: number): void {
         <div class="flex items-center gap-0.5">
           <button
             type="button"
-            class="h-7 rounded px-1.5 text-xs font-medium text-muted transition hover:bg-canvas hover:text-brand disabled:opacity-40"
+            class="h-7 rounded px-1.5 text-xs font-medium text-muted transition hover:bg-canvas hover:text-brand-strong disabled:opacity-40"
             :disabled="props.disabled || item.id === props.coverId"
             :aria-label="`将 ${item.name} 设为封面`"
             @click="emit('select-cover', item.id)"

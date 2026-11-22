@@ -88,7 +88,7 @@ const toneClass = computed(() => {
     case 'ok':
       return 'bg-accent/10 text-accent'
     case 'progress':
-      return 'bg-brand/10 text-brand'
+      return 'bg-brand-soft text-brand-strong'
     case 'error':
       return 'bg-danger-soft text-danger'
     default:
@@ -493,7 +493,7 @@ watch(
                   :href="url"
                   target="_blank"
                   rel="noreferrer noopener"
-                  class="inline-flex min-h-6 min-w-0 flex-1 items-center truncate text-xs text-brand hover:underline"
+                  class="inline-flex min-h-6 min-w-0 flex-1 items-center truncate text-xs text-brand-strong hover:underline"
                   >{{ url }}</a
                 >
                 <button
@@ -526,7 +526,7 @@ watch(
                     :href="imageLink(image)"
                     target="_blank"
                     rel="noreferrer noopener"
-                    class="inline-flex min-h-6 shrink-0 items-center text-xs text-brand hover:underline"
+                    class="inline-flex min-h-6 shrink-0 items-center text-xs text-brand-strong hover:underline"
                     >查看外链</a
                   >
                   <button

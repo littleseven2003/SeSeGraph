@@ -1,16 +1,22 @@
 @import "tailwindcss";
 
 @theme {
-  /* 画廊纸面底与墨色文字：让图片成为唯一的色彩来源。 */
-  --color-canvas: #f7f6f2;
+  /* 日光画纸底与暖沙细线：图片之外只留一层清透的底。 */
+  --color-canvas: #faf8f5;
   --color-surface: #ffffff;
-  --color-ink: #141413;
-  --color-muted: #5c5c58;
-  --color-line: #e5e3dc;
-  --color-brand: #18181b;
-  --color-brand-strong: #000000;
+  --color-ink: #1b1a17;
+  --color-muted: #5e5b53;
+  --color-line: #e8e4da;
+  /* 日落珊瑚主操作，配白字 4.68:1；深一档用于浅底上的文字与链接。 */
+  --color-brand: #d04223;
+  --color-brand-strong: #b83519;
   --color-brand-ink: #ffffff;
-  --color-accent: #0e7490;
+  --color-brand-soft: #fff0eb;
+  /* 晴空松石青做选中态与完成态，配白字 5.19:1。 */
+  --color-accent: #0d7a72;
+  --color-accent-soft: #e6f6f4;
+  --color-warn-soft: #fef3c7;
+  --color-warn: #92400e;
   --color-danger: #b91c1c;
   --color-danger-soft: #fbefee;
 
@@ -51,6 +57,11 @@
   *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+  }
+
+  /* 减少动效时不做位移与缩放，只保留颜色变化。 */
+  .lift-on-hover:hover {
+    transform: none !important;
   }
 }
 

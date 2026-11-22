@@ -93,7 +93,7 @@ const tone = computed(() => {
       </div>
       <ul v-if="props.progress.telegraph_urls.length > 0" class="mt-2 space-y-1">
         <li v-for="url in props.progress.telegraph_urls" :key="url" class="text-xs">
-          <a :href="url" target="_blank" rel="noreferrer noopener" class="text-brand underline underline-offset-2">{{ url }}</a>
+          <a :href="url" target="_blank" rel="noreferrer noopener" class="text-brand-strong underline underline-offset-2">{{ url }}</a>
         </li>
       </ul>
     </div>
