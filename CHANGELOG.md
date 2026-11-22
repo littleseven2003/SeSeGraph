@@ -2,13 +2,17 @@
 
 本文件记录本项目各版本的变更，格式参考 Keep a Changelog，版本号遵循 SemVer 2.0.0。
 
-## [未发布]
+## [v1.0.0] - 2026-11-22
+
+首个完整版本：图集发布链路、在线设置、网络代理、流量看护、自动备份与帖子删除全部可用，支持原生单二进制、单容器 Docker 与 Docker Compose 三种部署形态。
 
 ### 新增
 
 - 流量看护：按自然月统计图片网关的出站字节与请求次数，内存累加、每 30 秒或每 5MB 刷盘 `traffic_stats`；`GET /api/stats/traffic` 返回当月用量与阈值；越过 `TRAFFIC_ALERT_GB` 时通过 Bot 发一条提醒（同月一次），达到 `TRAFFIC_LIMIT_GB` 后网关返回 503 且不再向上游取流。
 - 自动备份：`VACUUM INTO` 生成一致性快照后打包 zip（可选含封面缩略图），保留最近 7 份；`POST /api/backup/trigger` 手动触发、`GET /api/backup/download` 流式下载、`GET /api/backup/status` 查看定时说明与最近一份；`BACKUP_ENABLED` 与 `BACKUP_CRON` 控制每日定时任务，可经 Bot 发送到指定频道。
 - 设置页新增「流量看护」与「自动备份」两块：展示当月用量与阈值状态、最近备份与定时说明，支持立即备份与下载。
+- 设置页新增「发帖默认值」：可配置压缩包说明文件候选名（默认 `info.txt` / `meta.txt` / `readme.txt`）与默认解析方式，`UPLOAD_MODE` 成为新任务默认画质，单帖仍可覆盖，续传沿用原任务。
+- 新增 `DELETE /api/posts/{id}`：删除帖子、图片与标签关联并清理本地封面与临时目录；上传、排队或发布进行中返回 409，删除后短码立即 404。
 
 ### 修复
 
