@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import DropZone from '../components/workbench/DropZone.vue'
 import ImageGrid from '../components/workbench/ImageGrid.vue'
+import ModeSwitch from '../components/workbench/ModeSwitch.vue'
 import MetaPanel from '../components/workbench/MetaPanel.vue'
 import ProgressPanel from '../components/workbench/ProgressPanel.vue'
 import { commitPost, createPost, fetchProgress, publishPost, retryPost, uploadImage, type ServerProgress } from '../api/posts.ts'
@@ -103,9 +104,6 @@ const resuming = computed(() => {
 // 续传时沿用旧任务元数据，文件与任务不匹配时解锁，允许重新选择或放弃。
 const locked = computed(() => busy.value || (postId.value > 0 && tiles.value.length > 0 && resuming.value))
 const viewingTask = computed(() => snapshot.value !== null && tiles.value.length === 0)
-const modeLimitText = computed(() =>
-  mode.value === 'document' ? 'document 原图，单图上限 20MB' : 'photo 省流量，单图上限 10MB',
-)
 const phaseText = computed(() => {
   if (serverProgress.value?.status === 'completed') {
     return '存图完成，图片已进入频道，可以关闭网页'
@@ -629,33 +627,33 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="min-h-full">
-    <header class="border-b border-line bg-surface">
-      <div class="mx-auto flex w-full max-w-[1100px] items-center justify-between gap-4 px-4 py-3">
-        <div class="flex items-center gap-3">
+  <div class="min-h-full" :class="tiles.length > 0 ? 'pb-24 lg:pb-0' : ''">
+    <header class="sticky top-0 z-20 border-b border-line bg-surface">
+      <div class="mx-auto flex w-full max-w-[1240px] items-center justify-between gap-4 px-5 py-3">
+        <div class="flex min-w-0 items-center gap-1.5">
           <router-link
             :to="{ name: 'home' }"
-            class="flex h-9 w-9 items-center justify-center rounded-lg border border-line text-muted transition hover:bg-canvas hover:text-ink"
+            class="-ml-2 flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted transition hover:bg-canvas hover:text-ink"
             aria-label="返回图集"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4">
               <path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
           </router-link>
-          <div>
-            <p class="text-xs font-medium tracking-wide text-muted">发帖工作台</p>
-            <p class="text-sm font-semibold">新建图集</p>
+          <div class="min-w-0">
+            <p class="truncate text-sm font-semibold tracking-tight">新建图集</p>
+            <p class="mt-0.5 truncate text-xs text-muted">导入 · 整理 · 发布</p>
           </div>
         </div>
 
-        <div class="flex items-center gap-2">
+        <div class="flex shrink-0 items-center gap-2">
           <span class="tnum hidden text-xs text-muted sm:inline"
             >{{ imageCount }} 张 · {{ formatBytes(totalSize) }}</span
           >
           <button
             v-if="tiles.length > 0 && !locked"
             type="button"
-            class="h-9 rounded-md border border-line px-3 text-sm font-medium transition hover:border-muted/40 hover:bg-canvas"
+            class="h-11 rounded-md border border-line px-3 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas"
             @click="clearAll"
           >
             清空
@@ -664,14 +662,14 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
-    <main class="mx-auto w-full max-w-[1100px] px-4 py-6">
+    <main class="mx-auto w-full max-w-[1240px] px-5 py-6">
       <p v-if="message" class="mb-4 rounded-md border border-line bg-surface px-3 py-2 text-sm text-muted" role="status">
         {{ message }}
       </p>
 
-      <div v-if="snapshot" class="mb-4 rounded-lg border border-line bg-surface p-4" role="status">
+      <div v-if="snapshot" class="mb-4 rounded-md border border-line bg-surface p-4" role="status">
         <div class="flex flex-wrap items-start justify-between gap-3">
-          <div>
+          <div class="min-w-0">
             <p class="flex items-center gap-2 text-sm font-semibold">
               上次任务 #{{ snapshot.postId }}
               <span
@@ -680,7 +678,7 @@ onBeforeUnmount(() => {
                 >{{ resuming ? '已匹配' : '未匹配' }}</span
               >
             </p>
-            <p class="mt-0.5 text-xs text-muted">
+            <p class="mt-1 text-xs leading-relaxed text-muted">
               {{ snapshot.imageCount }} 张，文件：
               {{ snapshot.files.slice(0, 2).map((file) => file.name).join('、')
               }}{{ snapshot.files.length > 2 ? ' 等' : '' }}。
@@ -689,65 +687,47 @@ onBeforeUnmount(() => {
               <template v-else>当前选择与上次任务不一致，请重新选择同一批文件，或放弃此任务后重新开始。</template>
             </p>
           </div>
-          <div class="flex items-center gap-2">
-            <button
-              type="button"
-              class="h-9 rounded-md border border-line px-3 text-sm font-medium transition hover:border-muted/40 hover:bg-canvas disabled:opacity-50"
-              :disabled="!canLeaveResume(ready, phase)"
-              @click="discardSnapshot"
-            >
-              放弃此任务
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div class="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-surface px-4 py-3">
-        <div>
-          <p class="text-sm font-medium">画质模式</p>
-          <p class="mt-0.5 text-xs text-muted">{{ modeLimitText }}</p>
-        </div>
-        <div class="flex rounded-md border border-line p-0.5" role="group" aria-label="画质模式">
           <button
-            v-for="option in [
-              { value: 'photo', label: 'photo 省流量' },
-              { value: 'document', label: 'document 原图' },
-            ]"
-            :key="option.value"
             type="button"
-            class="h-8 rounded px-2.5 text-xs font-medium transition disabled:opacity-50"
-            :class="mode === option.value ? 'bg-brand text-brand-ink' : 'text-muted hover:bg-canvas'"
-            :disabled="!ready || locked"
-            @click="setMode(option.value as UploadMode)"
+            class="h-10 rounded-md border border-line px-3 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas disabled:opacity-50"
+            :disabled="!canLeaveResume(ready, phase)"
+            @click="discardSnapshot"
           >
-            {{ option.label }}
+            放弃此任务
           </button>
         </div>
       </div>
 
-      <DropZone :disabled="!ready || working || locked" @zip="onZip" @images="onImages" @error="pushError" />
+      <div v-if="tiles.length === 0" class="mx-auto w-full max-w-[720px]">
+        <DropZone :disabled="!ready || working || locked" @zip="onZip" @images="onImages" @error="pushError">
+          <ModeSwitch layout="stack" :mode="mode" :disabled="!ready || locked" @select="setMode" />
+        </DropZone>
+        <p v-if="!ready" class="mt-3 text-center text-sm text-muted">正在读取设置与续传信息…</p>
+        <p v-else-if="working" class="mt-3 text-center text-sm text-muted">正在解压压缩包…</p>
+      </div>
 
-      <div v-if="!ready" class="mt-3 text-sm text-muted">正在读取设置与续传信息…</div>
-      <div v-else-if="working" class="mt-3 text-sm text-muted">正在解压压缩包…</div>
+      <template v-else>
+        <div class="lg:grid lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start lg:gap-5">
+          <div class="min-w-0 space-y-4">
+            <div class="flex flex-wrap items-end justify-between gap-3">
+              <div class="min-w-0">
+                <h2 class="text-base font-semibold tracking-tight">图片顺序</h2>
+                <p class="mt-1 text-xs text-muted">拖拽或用箭头调整顺序，序号即上传顺序，点选封面用于列表展示。</p>
+              </div>
+              <button
+                type="button"
+                class="h-10 rounded-md border border-line px-3 text-xs font-medium transition hover:border-ink/25 hover:bg-canvas disabled:opacity-50"
+                :disabled="locked"
+                @click="onSortByName"
+              >
+                按文件名排序
+              </button>
+            </div>
 
-      <template v-if="tiles.length > 0">
-        <div class="mt-5 flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 class="text-base font-semibold">图片顺序</h2>
-            <p class="mt-0.5 text-xs text-muted">拖拽或使用箭头调整顺序，序号即上传顺序，点选封面用于列表展示。</p>
-          </div>
-          <button
-            type="button"
-            class="h-8 rounded-md border border-line px-2.5 text-xs font-medium transition hover:border-muted/40 hover:bg-canvas disabled:opacity-50"
-            :disabled="locked"
-            @click="onSortByName"
-          >
-            按文件名排序
-          </button>
-        </div>
+            <div class="rounded-md border border-line bg-surface px-3 py-3 lg:hidden">
+              <ModeSwitch :mode="mode" :disabled="!ready || locked" @select="setMode" />
+            </div>
 
-        <div class="mt-3 flex flex-col gap-4 lg:flex-row">
-          <div class="min-w-0 flex-1">
             <ImageGrid
               :items="tiles"
               :cover-id="coverId"
@@ -757,93 +737,132 @@ onBeforeUnmount(() => {
               @remove="onRemove"
               @select-cover="onSelectCover"
             />
+
+            <MetaPanel
+              v-model="draft"
+              :meta-text="metaText"
+              :meta-source="metaSource"
+              :parse-default="metaParseMode"
+              :disabled="locked"
+              @error="pushError"
+            />
+
+            <DropZone compact :disabled="working || locked" @zip="onZip" @images="onImages" @error="pushError" />
           </div>
 
-          <aside class="w-full shrink-0 lg:w-[280px]">
-            <div class="rounded-lg border border-line bg-surface p-3">
-              <p class="text-xs font-medium tracking-wide text-muted">封面缩略图</p>
-              <div class="mt-2 aspect-[4/3] overflow-hidden rounded-md bg-canvas">
-                <img v-if="coverPreview" :src="coverPreview" alt="封面缩略图" class="h-full w-full object-cover" />
-                <div v-else class="flex h-full items-center justify-center text-xs text-muted">生成中…</div>
-              </div>
-              <dl class="tnum mt-3 space-y-1 text-xs text-muted">
-                <div class="flex justify-between">
-                  <dt>宽度</dt>
-                  <dd>400px WebP</dd>
+          <aside class="hidden lg:block">
+            <div class="sticky top-[76px] space-y-3">
+              <section class="rounded-md border border-line bg-surface p-3.5">
+                <p class="text-xs font-medium text-muted">封面缩略图</p>
+                <div class="mt-2 aspect-[4/3] overflow-hidden rounded bg-canvas">
+                  <img v-if="coverPreview" :src="coverPreview" alt="封面缩略图" class="h-full w-full object-cover" />
+                  <div v-else class="flex h-full items-center justify-center text-xs text-muted">生成中…</div>
                 </div>
-                <div class="flex justify-between">
-                  <dt>体积</dt>
-                  <dd>{{ coverBytes > 0 ? formatBytes(coverBytes) : '—' }}</dd>
+                <dl class="tnum mt-3 space-y-1 text-xs text-muted">
+                  <div class="flex justify-between gap-2">
+                    <dt>宽度</dt>
+                    <dd>400px WebP</dd>
+                  </div>
+                  <div class="flex justify-between gap-2">
+                    <dt>体积</dt>
+                    <dd>{{ coverBytes > 0 ? formatBytes(coverBytes) : '—' }}</dd>
+                  </div>
+                  <div class="flex justify-between gap-2">
+                    <dt>封面文件</dt>
+                    <dd class="max-w-[62%] truncate" :title="coverTile?.name">{{ coverTile?.name ?? '—' }}</dd>
+                  </div>
+                </dl>
+              </section>
+
+              <section class="rounded-md border border-line bg-surface p-3.5">
+                <ModeSwitch :mode="mode" :disabled="!ready || locked" @select="setMode" />
+
+                <div class="mt-3 border-t border-line pt-3">
+                  <p class="tnum text-sm font-medium">
+                    <template v-if="postId > 0">任务 #{{ postId }} · {{ uploadedCount }} / {{ imageCount }} 张已提交</template>
+                    <template v-else>共 {{ imageCount }} 张 · {{ formatBytes(totalSize) }}</template>
+                  </p>
+                  <p v-if="phaseText" class="mt-1 text-xs leading-relaxed text-muted">{{ phaseText }}</p>
+                  <p v-else class="mt-1 text-xs leading-relaxed text-muted">封面 {{ coverTile?.name ?? '—' }}</p>
                 </div>
-                <div class="flex justify-between">
-                  <dt>封面文件</dt>
-                  <dd class="max-w-[60%] truncate" :title="coverTile?.name">{{ coverTile?.name ?? '—' }}</dd>
+
+                <div class="mt-3 space-y-2">
+                  <button
+                    type="button"
+                    class="h-11 w-full rounded-md bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+                    :disabled="busy || phase === 'queued' || finished"
+                    @click="publish"
+                  >
+                    {{ busy ? '正在上传…' : finished ? '存图完成' : serverProgress?.status === 'uploading' ? '继续上传' : '发布' }}
+                  </button>
+                  <button
+                    v-if="finished"
+                    type="button"
+                    class="h-10 w-full rounded-md border border-line px-3 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas"
+                    @click="clearAll"
+                  >
+                    再发一组
+                  </button>
+                  <button
+                    v-else-if="phase === 'failed' || phase === 'queued'"
+                    type="button"
+                    class="h-10 w-full rounded-md border border-line px-3 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas"
+                    @click="discardSnapshot"
+                  >
+                    重新开始
+                  </button>
                 </div>
-              </dl>
+              </section>
             </div>
           </aside>
         </div>
 
-        <div class="mt-5">
-          <MetaPanel
-            v-model="draft"
-            :meta-text="metaText"
-            :meta-source="metaSource"
-            :parse-default="metaParseMode"
-            :disabled="locked"
-            @error="pushError"
+        <div v-if="serverProgress" class="mt-4">
+          <ProgressPanel
+            :progress="serverProgress"
+            :retrying="retrying"
+            :publishing="publishing"
+            @retry="retryFailed"
+            @publish="publishToTelegraph"
           />
         </div>
+
+        <div class="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface px-4 py-2.5 lg:hidden">
+          <div class="flex items-center gap-3">
+            <div class="min-w-0 flex-1">
+              <p class="tnum truncate text-sm font-medium">
+                <template v-if="postId > 0">任务 #{{ postId }} · {{ uploadedCount }} / {{ imageCount }}</template>
+                <template v-else>{{ imageCount }} 张 · {{ formatBytes(totalSize) }}</template>
+              </p>
+              <p class="truncate text-xs text-muted">{{ phaseText !== '' ? phaseText : '封面 ' + (coverTile?.name ?? '—') }}</p>
+            </div>
+            <button
+              v-if="finished"
+              type="button"
+              class="h-10 shrink-0 rounded-md border border-line px-3 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas"
+              @click="clearAll"
+            >
+              再发一组
+            </button>
+            <button
+              v-else-if="phase === 'failed' || phase === 'queued'"
+              type="button"
+              class="h-10 shrink-0 rounded-md border border-line px-3 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas"
+              @click="discardSnapshot"
+            >
+              重新开始
+            </button>
+            <button
+              type="button"
+              class="h-11 shrink-0 rounded-md bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+              :disabled="busy || phase === 'queued' || finished"
+              @click="publish"
+            >
+              {{ busy ? '正在上传…' : finished ? '存图完成' : serverProgress?.status === 'uploading' ? '继续上传' : '发布' }}
+            </button>
+          </div>
+        </div>
       </template>
-
-      <div v-if="serverProgress" class="mt-4">
-        <ProgressPanel
-          :progress="serverProgress"
-          :retrying="retrying"
-          :publishing="publishing"
-          @retry="retryFailed"
-          @publish="publishToTelegraph"
-        />
-      </div>
-
-      <div
-        v-if="tiles.length > 0"
-        class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-surface px-4 py-3"
-      >
-        <div class="min-w-0">
-          <p class="tnum text-sm font-medium">
-            <template v-if="postId > 0">任务 #{{ postId }} · {{ uploadedCount }} / {{ imageCount }} 张已提交</template>
-            <template v-else>共 {{ imageCount }} 张 · 封面 {{ coverTile?.name ?? '—' }} · {{ formatBytes(totalSize) }}</template>
-          </p>
-          <p v-if="phaseText" class="mt-0.5 text-xs text-muted">{{ phaseText }}</p>
-        </div>
-        <div class="flex items-center gap-2">
-          <button
-            v-if="finished"
-            type="button"
-            class="h-10 rounded-md border border-line px-3 text-sm font-medium transition hover:border-muted/40 hover:bg-canvas"
-            @click="clearAll"
-          >
-            再发一组
-          </button>
-          <button
-            v-else-if="phase === 'failed' || phase === 'queued'"
-            type="button"
-            class="h-10 rounded-md border border-line px-3 text-sm font-medium transition hover:border-muted/40 hover:bg-canvas"
-            @click="discardSnapshot"
-          >
-            重新开始
-          </button>
-          <button
-            type="button"
-            class="h-10 rounded-md bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
-            :disabled="busy || phase === 'queued' || finished"
-            @click="publish"
-          >
-            {{ busy ? '正在上传…' : finished ? '存图完成' : serverProgress?.status === 'uploading' ? '继续上传' : '发布' }}
-          </button>
-        </div>
-      </div>
     </main>
   </div>
 </template>
