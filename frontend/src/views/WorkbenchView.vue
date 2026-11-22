@@ -663,11 +663,11 @@ onBeforeUnmount(() => {
     </header>
 
     <main class="mx-auto w-full max-w-[1240px] px-5 py-6">
-      <p v-if="message" class="mb-4 rounded-md border border-line bg-surface px-3 py-2 text-sm text-muted" role="status">
+      <p v-if="message" class="mb-4 rounded-2xl bg-surface px-3.5 py-2.5 text-sm text-muted shadow-[0_1px_0_0_rgba(27,26,23,0.05)]" role="status">
         {{ message }}
       </p>
 
-      <div v-if="snapshot" class="mb-4 rounded-md border border-line bg-surface p-4" role="status">
+      <div v-if="snapshot" class="mb-4 rounded-2xl bg-surface p-4 shadow-[0_1px_0_0_rgba(27,26,23,0.05)]" role="status">
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div class="min-w-0">
             <p class="flex items-center gap-2 text-sm font-semibold">
@@ -689,7 +689,7 @@ onBeforeUnmount(() => {
           </div>
           <button
             type="button"
-            class="h-10 rounded-md border border-line px-3 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas disabled:opacity-50"
+            class="h-11 rounded-full px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-50"
             :disabled="!canLeaveResume(ready, phase)"
             @click="discardSnapshot"
           >
@@ -716,7 +716,7 @@ onBeforeUnmount(() => {
               </div>
               <button
                 type="button"
-                class="h-10 rounded-md border border-line px-3 text-xs font-medium transition hover:border-ink/25 hover:bg-canvas disabled:opacity-50"
+                class="h-11 rounded-full px-3.5 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-50"
                 :disabled="locked"
                 @click="onSortByName"
               >
@@ -724,7 +724,7 @@ onBeforeUnmount(() => {
               </button>
             </div>
 
-            <div class="rounded-md border border-line bg-surface px-3 py-3 lg:hidden">
+            <div class="rounded-2xl bg-surface px-3 py-3 shadow-[0_1px_0_0_rgba(27,26,23,0.05)] lg:hidden">
               <ModeSwitch :mode="mode" :disabled="!ready || locked" @select="setMode" />
             </div>
 
@@ -752,7 +752,7 @@ onBeforeUnmount(() => {
 
           <aside class="hidden lg:sticky lg:top-[76px] lg:block">
             <div class="space-y-3">
-              <section class="rounded-md border border-line bg-surface p-3.5">
+              <section class="rounded-2xl bg-surface p-3.5 shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
                 <p class="text-xs font-medium text-muted">封面缩略图</p>
                 <div class="mt-2 aspect-[4/3] overflow-hidden rounded bg-canvas">
                   <img v-if="coverPreview" :src="coverPreview" alt="封面缩略图" class="h-full w-full object-cover" />
@@ -774,7 +774,7 @@ onBeforeUnmount(() => {
                 </dl>
               </section>
 
-              <section class="rounded-md border border-line bg-surface p-3.5">
+              <section class="rounded-2xl bg-surface p-3.5 shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
                 <ModeSwitch :mode="mode" :disabled="!ready || locked" @select="setMode" />
 
                 <div class="mt-3 border-t border-line pt-3">
@@ -789,7 +789,7 @@ onBeforeUnmount(() => {
                 <div class="mt-3 space-y-2">
                   <button
                     type="button"
-                    class="h-11 w-full rounded-md bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+                    class="h-11 w-full rounded-full bg-brand px-4 text-sm font-medium text-brand-ink shadow-[0_2px_0_0_#9e2b12] transition hover:bg-brand-strong motion-safe:active:translate-y-[2px] active:shadow-none disabled:opacity-60"
                     :disabled="busy || phase === 'queued' || finished"
                     @click="publish"
                   >
@@ -798,7 +798,7 @@ onBeforeUnmount(() => {
                   <button
                     v-if="finished"
                     type="button"
-                    class="h-10 w-full rounded-md border border-line px-3 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas"
+                    class="h-11 w-full rounded-full px-3 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
                     @click="clearAll"
                   >
                     再发一组
@@ -806,7 +806,7 @@ onBeforeUnmount(() => {
                   <button
                     v-else-if="phase === 'failed' || phase === 'queued'"
                     type="button"
-                    class="h-10 w-full rounded-md border border-line px-3 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas"
+                    class="h-11 w-full rounded-full px-3 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
                     @click="discardSnapshot"
                   >
                     重新开始
@@ -829,7 +829,7 @@ onBeforeUnmount(() => {
             <button
               v-if="finished"
               type="button"
-              class="h-10 shrink-0 rounded-md border border-line px-3 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas"
+              class="h-11 shrink-0 rounded-full px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
               @click="clearAll"
             >
               再发一组
@@ -837,14 +837,14 @@ onBeforeUnmount(() => {
             <button
               v-else-if="phase === 'failed' || phase === 'queued'"
               type="button"
-              class="h-10 shrink-0 rounded-md border border-line px-3 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas"
+              class="h-11 shrink-0 rounded-full px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
               @click="discardSnapshot"
             >
               重新开始
             </button>
             <button
               type="button"
-              class="h-11 shrink-0 rounded-md bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+              class="h-11 shrink-0 rounded-full bg-brand px-4 text-sm font-medium text-brand-ink shadow-[0_2px_0_0_#9e2b12] transition hover:bg-brand-strong motion-safe:active:translate-y-[2px] active:shadow-none disabled:opacity-60"
               :disabled="busy || phase === 'queued' || finished"
               @click="publish"
             >

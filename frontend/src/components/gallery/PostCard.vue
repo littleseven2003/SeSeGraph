@@ -101,7 +101,7 @@ const copyLabel = computed(() => {
   >
     <button
       type="button"
-      class="relative block aspect-[16/10] w-full overflow-hidden rounded-2xl bg-canvas"
+      class="relative block aspect-[16/10] w-full overflow-hidden rounded-2xl bg-canvas lg:aspect-[16/9] lg:max-h-[420px]"
       :aria-label="`打开《${item.title}》详情`"
       data-reveal="cover"
       @click="onOpen"
@@ -152,7 +152,7 @@ const copyLabel = computed(() => {
       <div class="mt-5 flex items-center gap-2.5">
         <button
           type="button"
-          class="h-11 rounded-full bg-brand px-5 text-sm font-medium text-brand-ink transition hover:bg-brand-strong"
+          class="h-11 rounded-full bg-ink px-5 text-sm font-medium text-brand-ink transition hover:bg-ink/90"
           @click="onOpen"
         >
           打开图集

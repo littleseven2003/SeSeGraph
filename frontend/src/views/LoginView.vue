@@ -40,8 +40,7 @@ async function submit(): Promise<void> {
       <h1 class="mt-8 text-xl font-semibold tracking-tight">回到你的私人图册</h1>
       <p class="mt-1.5 text-sm text-muted">输入管理员账号和密码，打开冲印台与发布记录。</p>
 
-      <form class="mt-6 overflow-hidden rounded-md border border-line bg-surface p-5" novalidate @submit.prevent="submit">
-        <div class="sprocket -mx-5 -mt-5 mb-5 h-3" aria-hidden="true"></div>
+      <form class="mt-6 overflow-hidden rounded-2xl bg-surface p-5 shadow-[0_1px_0_0_rgba(27,26,23,0.05),0_24px_60px_-40px_rgba(27,26,23,0.35)]" novalidate @submit.prevent="submit">
         <div>
           <label for="username" class="block text-xs font-medium text-muted">账号</label>
           <input
@@ -51,7 +50,7 @@ async function submit(): Promise<void> {
             type="text"
             autocomplete="username"
             required
-            class="mt-1.5 h-11 w-full rounded-md border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface"
+            class="mt-1.5 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface"
           />
         </div>
 
@@ -65,11 +64,11 @@ async function submit(): Promise<void> {
               :type="showPassword ? 'text' : 'password'"
               autocomplete="current-password"
               required
-              class="h-11 w-full rounded-md border border-line bg-canvas pl-3 pr-14 text-sm outline-none transition focus:border-ink/40 focus:bg-surface"
+              class="h-11 w-full rounded-xl border border-line bg-canvas pl-3 pr-14 text-sm outline-none transition focus:border-ink/40 focus:bg-surface"
             />
             <button
               type="button"
-              class="absolute right-0.5 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
+              class="absolute right-0.5 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
               :aria-pressed="showPassword"
               :aria-label="showPassword ? '隐藏密码' : '显示密码'"
               @click="showPassword = !showPassword"
@@ -82,7 +81,7 @@ async function submit(): Promise<void> {
         <p
           v-if="errorMessage"
           role="alert"
-          class="mt-4 rounded-md border border-danger/20 bg-danger-soft px-3 py-2 text-sm text-danger"
+          class="mt-4 rounded-xl bg-danger-soft px-3 py-2 text-sm text-danger"
         >
           {{ errorMessage }}
         </p>
@@ -90,7 +89,7 @@ async function submit(): Promise<void> {
         <button
           type="submit"
           :disabled="pending || username === '' || password === ''"
-          class="mt-5 h-11 w-full rounded-md bg-brand text-sm font-medium text-brand-ink shadow-[0_2px_0_0_#9e2b12] transition hover:bg-brand-strong motion-safe:active:translate-y-[2px] active:shadow-none disabled:cursor-not-allowed disabled:bg-line disabled:text-muted disabled:shadow-none"
+          class="mt-5 h-11 w-full rounded-full bg-brand text-sm font-medium text-brand-ink shadow-[0_2px_0_0_#9e2b12] transition hover:bg-brand-strong motion-safe:active:translate-y-[2px] active:shadow-none disabled:cursor-not-allowed disabled:bg-line disabled:text-muted disabled:shadow-none"
         >
           {{ pending ? '正在登录…' : '登录' }}
         </button>

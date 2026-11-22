@@ -183,15 +183,26 @@ export function saveBlurPreference(storage: StorageLike | undefined, enabled: bo
   }
 }
 
-/** pageWindow 计算分页按钮要显示的页码，最多五页并以省略区间收拢。 */
-export function pageWindow(page: number, pageSize: number, total: number): number[] {
+/** pageWindow 计算分页按钮要显示的页码，默认五页，窄屏可传 span 收窄到三页。 */
+export function pageWindow(page: number, pageSize: number, total: number, span = 5): number[] {
   const totalPages = Math.max(1, Math.ceil(total / Math.max(1, pageSize)))
   const current = Math.min(Math.max(1, page), totalPages)
-  const start = Math.max(1, Math.min(current - 2, totalPages - 4))
-  const end = Math.min(totalPages, start + 4)
+  const size = Math.max(1, Math.min(span, totalPages))
+  const lead = Math.floor(size / 2)
+  const start = Math.max(1, Math.min(current - lead, totalPages - size + 1))
   const pages: number[] = []
-  for (let index = start; index <= end; index += 1) pages.push(index)
+  for (let index = start; index < start + size; index += 1) pages.push(index)
   return pages
+}
+
+/** shouldFeatureFirst 判断首帖能否做大幅主视觉：未筛选首页、至少两组，且首帖未撤回。 */
+export function shouldFeatureFirst(options: {
+  filtered: boolean
+  page: number
+  count: number
+  firstDisabled: boolean
+}): boolean {
+  return !options.filtered && options.page === 1 && options.count >= 2 && !options.firstDisabled
 }
 
 /** normalizeShareTemplate 去掉首尾空白，空模板回落到默认值。 */

@@ -14,6 +14,7 @@ import {
   normalizeShareTemplate,
   pageWindow,
   postShareUrl,
+  shouldFeatureFirst,
   readShareTemplate,
   saveShareTemplate,
   shouldRevealOnTap,
@@ -158,6 +159,21 @@ test('pageWindow 最多五页并夹在当前页附近', () => {
   assert.deepEqual(pageWindow(1, 12, 60), [1, 2, 3, 4, 5])
   assert.deepEqual(pageWindow(5, 12, 240), [3, 4, 5, 6, 7])
   assert.deepEqual(pageWindow(20, 12, 240), [16, 17, 18, 19, 20])
+})
+
+test('pageWindow 窄屏收窄到三页并保持当前页居中', () => {
+  assert.deepEqual(pageWindow(1, 12, 240, 3), [1, 2, 3])
+  assert.deepEqual(pageWindow(10, 12, 240, 3), [9, 10, 11])
+  assert.deepEqual(pageWindow(20, 12, 240, 3), [18, 19, 20])
+  assert.deepEqual(pageWindow(1, 12, 0, 3), [1])
+})
+
+test('shouldFeatureFirst 只在未筛选首页且首帖未撤回时启用精选位', () => {
+  assert.equal(shouldFeatureFirst({ filtered: false, page: 1, count: 4, firstDisabled: false }), true)
+  assert.equal(shouldFeatureFirst({ filtered: true, page: 1, count: 4, firstDisabled: false }), false)
+  assert.equal(shouldFeatureFirst({ filtered: false, page: 2, count: 4, firstDisabled: false }), false)
+  assert.equal(shouldFeatureFirst({ filtered: false, page: 1, count: 1, firstDisabled: false }), false)
+  assert.equal(shouldFeatureFirst({ filtered: false, page: 1, count: 4, firstDisabled: true }), false)
 })
 
 test('分享模板默认值、持久化与恢复默认', () => {

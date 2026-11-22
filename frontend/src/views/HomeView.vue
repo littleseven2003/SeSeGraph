@@ -10,7 +10,13 @@ import {
   type PostDetail,
   type TagCount,
 } from '../api/gallery'
-import { createLatestGuard, pageWindow, readBlurPreference, saveBlurPreference } from '../utils/gallery'
+import {
+  createLatestGuard,
+  pageWindow,
+  readBlurPreference,
+  saveBlurPreference,
+  shouldFeatureFirst,
+} from '../utils/gallery'
 import DetailDrawer from '../components/gallery/DetailDrawer.vue'
 import BrandMark from '../components/BrandMark.vue'
 import PostCard from '../components/gallery/PostCard.vue'
@@ -42,11 +48,21 @@ const detailGuard = createLatestGuard()
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
 const pages = computed(() => pageWindow(page.value, PAGE_SIZE, total.value))
+const narrowPages = computed(() => pageWindow(page.value, PAGE_SIZE, total.value, 3))
 const hasFilter = computed(() => keyword.value.trim() !== '' || selectedTags.value.length > 0)
-// 精选位只在未筛选的第一页出现，且至少要有一张普通帖陪衬，避免只剩一张时不规则。
-const featuredItem = computed<GalleryItem | null>(() =>
-  !hasFilter.value && page.value === 1 && items.value.length >= 2 ? items.value[0] : null,
-)
+// 精选位只在未筛选的第一页出现；首帖已撤回时整页回到普通网格，不抬后面帖子补位。
+const featuredItem = computed<GalleryItem | null>(() => {
+  const first = items.value[0]
+  if (first === undefined) return null
+  return shouldFeatureFirst({
+    filtered: hasFilter.value,
+    page: page.value,
+    count: items.value.length,
+    firstDisabled: first.disabled,
+  })
+    ? first
+    : null
+})
 const gridItems = computed(() => (featuredItem.value === null ? items.value : items.value.slice(1)))
 
 function messageOf(cause: unknown): string {
@@ -388,17 +404,32 @@ onBeforeUnmount(() => {
           <nav v-if="totalPages > 1" class="mt-8 flex items-center justify-center gap-1.5" aria-label="分页">
             <button
               type="button"
-              class="h-11 rounded-md border border-line px-3 text-sm transition hover:bg-surface disabled:opacity-50"
+              class="h-11 shrink-0 rounded-full border border-line px-3 text-sm transition hover:bg-surface disabled:opacity-50"
               :disabled="page <= 1"
               @click="loadList(page - 1)"
             >
               上一页
             </button>
             <button
-              v-for="target in pages"
-              :key="target"
+              v-for="target in narrowPages"
+              :key="'narrow-' + target"
               type="button"
-              class="h-11 w-11 rounded-md text-sm transition tnum"
+              class="h-11 w-11 shrink-0 rounded-full text-sm transition tnum sm:hidden"
+              :class="
+                target === page
+                  ? 'border border-ink bg-ink text-brand-ink'
+                  : 'border border-line hover:bg-surface'
+              "
+              :aria-current="target === page ? 'page' : undefined"
+              @click="loadList(target)"
+            >
+              {{ target }}
+            </button>
+            <button
+              v-for="target in pages"
+              :key="'wide-' + target"
+              type="button"
+              class="hidden h-11 w-11 shrink-0 rounded-full text-sm transition tnum sm:inline-block"
               :class="
                 target === page
                   ? 'border border-ink bg-ink text-brand-ink'
@@ -411,7 +442,7 @@ onBeforeUnmount(() => {
             </button>
             <button
               type="button"
-              class="h-11 rounded-md border border-line px-3 text-sm transition hover:bg-surface disabled:opacity-50"
+              class="h-11 shrink-0 rounded-full border border-line px-3 text-sm transition hover:bg-surface disabled:opacity-50"
               :disabled="page >= totalPages"
               @click="loadList(page + 1)"
             >

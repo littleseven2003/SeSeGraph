@@ -369,7 +369,7 @@ onBeforeUnmount(() => {
         </div>
         <router-link
           :to="{ name: 'home' }"
-          class="inline-flex h-11 shrink-0 items-center rounded-md border border-line px-3 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas"
+          class="inline-flex h-11 shrink-0 items-center rounded-full border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
         >
           返回图集
         </router-link>
@@ -396,9 +396,9 @@ onBeforeUnmount(() => {
           <li v-for="item in SETTING_NAV" :key="item.id">
             <a
               :href="'#' + item.id"
-              class="flex items-center gap-2 rounded-md px-3 py-2 text-sm transition hover:bg-canvas hover:text-ink"
+              class="flex items-center gap-2 rounded-full px-3 py-2 text-sm transition hover:bg-brand-soft/70 hover:text-ink"
               @click="selectSection(item.id)"
-              :class="activeSection === item.id ? 'text-ink' : 'text-muted'"
+              :class="activeSection === item.id ? 'bg-brand-soft text-ink' : 'text-muted'"
             >
               <span
                 class="h-1.5 w-1.5 shrink-0 rounded-full transition"
@@ -419,7 +419,7 @@ onBeforeUnmount(() => {
           <button
             type="button"
             :disabled="saving"
-            class="mt-3 h-11 w-full rounded-md bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+            class="mt-3 h-11 w-full rounded-full bg-brand px-4 text-sm font-medium text-brand-ink shadow-[0_2px_0_0_#9e2b12] transition hover:bg-brand-strong motion-safe:active:translate-y-[2px] active:shadow-none disabled:opacity-60"
             @click="save"
           >
             {{ saving ? '保存中…' : '保存设置' }}
@@ -430,11 +430,11 @@ onBeforeUnmount(() => {
       <div class="min-w-0 max-w-[880px] flex-1">
         <p v-if="loading" class="py-16 text-center text-sm text-muted">正在读取设置…</p>
 
-        <div v-else-if="loadError !== ''" class="rounded-md border border-line bg-surface px-4 py-10 text-center">
+        <div v-else-if="loadError !== ''" class="rounded-2xl bg-surface px-4 py-10 text-center shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
           <p class="text-sm text-danger">{{ loadError }}</p>
           <button
             type="button"
-            class="mt-3 h-10 rounded-md border border-line px-3 text-sm font-medium transition hover:bg-canvas"
+            class="mt-3 h-11 rounded-full border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
             @click="load"
           >
             重试
@@ -451,8 +451,8 @@ onBeforeUnmount(() => {
               <p class="mt-1 text-xs text-muted">图片与发布的上游凭据、代理走向，保存后立即重建传输层。</p>
 
               <div class="mt-3 space-y-3">
-                <div class="rounded-md border border-line bg-surface">
-                  <div class="border-b border-line px-5 py-4">
+                <div class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+                  <div class="border-b border-line/70 px-5 py-4">
                     <h3 class="text-sm font-semibold">Telegram 图床</h3>
                     <p class="mt-1 text-xs text-muted">图片经该 Bot 存入私有频道，保存后上传队列与图片网关立即使用新配置。</p>
                   </div>
@@ -466,13 +466,13 @@ onBeforeUnmount(() => {
                           autocomplete="off"
                           :disabled="saving || managed(FIELD_TELEGRAM_TOKEN)"
                           :placeholder="tokenPlaceholder(view.telegram.token_set)"
-                          class="h-10 min-w-0 flex-1 rounded-md border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface disabled:opacity-60"
+                          class="h-11 min-w-0 flex-1 rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface disabled:opacity-60"
                         />
                         <button
                           v-if="view.telegram.token_set && !managed(FIELD_TELEGRAM_TOKEN)"
                           type="button"
                           :disabled="saving"
-                          class="h-10 shrink-0 rounded-md border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas disabled:opacity-60"
+                          class="h-11 shrink-0 rounded-full border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas disabled:opacity-60"
                           @click="clearToken"
                         >
                           清除
@@ -493,7 +493,7 @@ onBeforeUnmount(() => {
                         autocomplete="off"
                         :disabled="saving || managed(FIELD_TELEGRAM_CHANNEL)"
                         placeholder="@channel 或 -1001234567890"
-                        class="mt-1 h-10 w-full rounded-md border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface disabled:opacity-60"
+                        class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface disabled:opacity-60"
                         :class="fieldErrors.includes(FIELD_TELEGRAM_CHANNEL) ? 'border-danger' : ''"
                       />
                       <p v-if="fieldErrorText(FIELD_TELEGRAM_CHANNEL) !== ''" class="mt-1 text-xs text-danger">
@@ -504,15 +504,15 @@ onBeforeUnmount(() => {
                       </p>
                     </label>
 
-                    <div class="rounded-md border border-line bg-canvas px-3 py-2.5">
+                    <div class="rounded-xl bg-canvas px-3 py-2.5">
                       <p class="text-xs text-muted">上游地址</p>
                       <p class="mt-0.5 text-sm">{{ endpointText(view.telegram.api_base_source) }}</p>
                     </div>
                   </div>
                 </div>
 
-                <div class="rounded-md border border-line bg-surface">
-                  <div class="border-b border-line px-5 py-4">
+                <div class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+                  <div class="border-b border-line/70 px-5 py-4">
                     <h3 class="text-sm font-semibold">Telegraph 发布</h3>
                     <p class="mt-1 text-xs text-muted">发布页面的作者名由这里提供，令牌通过「申请账户」或环境变量写入。</p>
                   </div>
@@ -525,7 +525,7 @@ onBeforeUnmount(() => {
                         autocomplete="off"
                         :disabled="saving || managed(FIELD_TELEGRAPH_AUTHOR)"
                         placeholder="留空则使用 Telegraph 默认作者"
-                        class="mt-1 h-10 w-full rounded-md border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface disabled:opacity-60"
+                        class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface disabled:opacity-60"
                         :class="fieldErrors.includes(FIELD_TELEGRAPH_AUTHOR) ? 'border-danger' : ''"
                       />
                       <p v-if="fieldErrorText(FIELD_TELEGRAPH_AUTHOR) !== ''" class="mt-1 text-xs text-danger">
@@ -537,11 +537,11 @@ onBeforeUnmount(() => {
                     </label>
 
                     <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <div class="rounded-md border border-line bg-canvas px-3 py-2.5">
+                      <div class="rounded-xl bg-canvas px-3 py-2.5">
                         <p class="text-xs text-muted">访问令牌</p>
                         <p class="mt-0.5 text-sm">{{ view.telegraph.token_set ? '已配置' : '未配置' }}</p>
                       </div>
-                      <div class="rounded-md border border-line bg-canvas px-3 py-2.5">
+                      <div class="rounded-xl bg-canvas px-3 py-2.5">
                         <p class="text-xs text-muted">上游地址</p>
                         <p class="mt-0.5 text-sm">{{ endpointText(view.telegraph.api_base_source) }}</p>
                       </div>
@@ -549,8 +549,8 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
 
-                <div class="rounded-md border border-line bg-surface">
-                  <div class="border-b border-line px-5 py-4">
+                <div class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+                  <div class="border-b border-line/70 px-5 py-4">
                     <h3 class="text-sm font-semibold">网络代理</h3>
                     <p class="mt-1 text-xs text-muted">
                       分别控制两项上游是否经代理访问，保存后立即重建传输层。自定义地址可带账密，不会回显。
@@ -563,7 +563,7 @@ onBeforeUnmount(() => {
                         <label
                           v-for="option in PROXY_MODES"
                           :key="option.value"
-                          class="flex min-h-11 cursor-pointer items-center gap-2.5 rounded-md border border-line bg-canvas px-3 py-2.5 text-sm transition hover:border-ink/25 focus-within:border-ink"
+                          class="flex min-h-11 cursor-pointer items-center gap-2.5 rounded-xl border border-line bg-canvas px-3 py-2.5 text-sm transition hover:border-ink/25 focus-within:border-ink"
                           :class="form.proxyMode === option.value ? 'border-accent bg-accent-soft' : ''"
                         >
                           <input
@@ -592,14 +592,14 @@ onBeforeUnmount(() => {
                           autocomplete="off"
                           :disabled="saving || managed(FIELD_PROXY_URL)"
                           :placeholder="proxyURLHint(view.proxy.url_set, view.proxy.mode)"
-                          class="h-10 min-w-0 flex-1 rounded-md border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface disabled:opacity-60"
+                          class="h-11 min-w-0 flex-1 rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface disabled:opacity-60"
                           :class="fieldErrors.includes(FIELD_PROXY_URL) ? 'border-danger' : ''"
                         />
                         <button
                           v-if="view.proxy.url_set && view.proxy.mode !== 'custom' && !managed(FIELD_PROXY_URL)"
                           type="button"
                           :disabled="saving"
-                          class="h-10 shrink-0 rounded-md border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas disabled:opacity-60"
+                          class="h-11 shrink-0 rounded-full border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas disabled:opacity-60"
                           @click="clearProxy"
                         >
                           清除
@@ -616,7 +616,7 @@ onBeforeUnmount(() => {
 
                     <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       <label
-                        class="flex min-h-11 cursor-pointer items-center gap-2.5 rounded-md border border-line bg-canvas px-3 py-2.5 text-sm transition hover:border-ink/25 focus-within:border-ink"
+                        class="flex min-h-11 cursor-pointer items-center gap-2.5 rounded-xl border border-line bg-canvas px-3 py-2.5 text-sm transition hover:border-ink/25 focus-within:border-ink"
                       >
                         <input
                           v-model="form.proxyTelegram"
@@ -627,7 +627,7 @@ onBeforeUnmount(() => {
                         <span>Telegram Bot API 走代理</span>
                       </label>
                       <label
-                        class="flex min-h-11 cursor-pointer items-center gap-2.5 rounded-md border border-line bg-canvas px-3 py-2.5 text-sm transition hover:border-ink/25 focus-within:border-ink"
+                        class="flex min-h-11 cursor-pointer items-center gap-2.5 rounded-xl border border-line bg-canvas px-3 py-2.5 text-sm transition hover:border-ink/25 focus-within:border-ink"
                       >
                         <input
                           v-model="form.proxyTelegraph"
@@ -653,7 +653,7 @@ onBeforeUnmount(() => {
               </div>
               <p class="mt-1 text-xs text-muted">说明文件命中后自动预填标题与说明，工作台的解析方式默认按这里。</p>
 
-              <div class="mt-3 rounded-md border border-line bg-surface">
+              <div class="mt-3 rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
                 <div class="space-y-4 px-5 py-4">
                   <div>
                     <label class="block text-xs font-medium text-muted" for="meta-filenames">说明文件名</label>
@@ -661,7 +661,7 @@ onBeforeUnmount(() => {
                       id="meta-filenames"
                       v-model="form.metaFilenames"
                       type="text"
-                      class="mt-1 h-10 w-full rounded-md border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface"
+                      class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface"
                       placeholder="info.txt, meta.txt, readme.txt"
                     />
                     <p class="mt-1 text-xs text-muted">多个文件名用逗号分隔，最多 10 个，匹配时不区分大小写。</p>
@@ -671,7 +671,7 @@ onBeforeUnmount(() => {
                     <select
                       id="meta-parse-mode"
                       v-model="form.metaParseMode"
-                      class="mt-1 h-10 w-full rounded-md border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface"
+                      class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface"
                     >
                       <option value="first-line">首行标题 + 其余正文</option>
                       <option value="key-value">键值匹配</option>
@@ -696,13 +696,13 @@ onBeforeUnmount(() => {
               </div>
               <p class="mt-1 text-xs text-muted">并行检测 Bot 与频道权限、Telegraph 账户，只读请求，不发送任何内容。</p>
 
-              <div class="mt-3 rounded-md border border-line bg-surface">
+              <div class="mt-3 rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
                 <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3.5">
                   <p class="text-xs text-muted">保存设置后再检测，读到的是最新上游配置。</p>
                   <button
                     type="button"
                     :disabled="checking"
-                    class="h-11 shrink-0 rounded-md border border-line px-3 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas disabled:opacity-60"
+                    class="h-11 shrink-0 rounded-full border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
                     @click="check"
                   >
                     {{ checking ? '检测中…' : '开始检测' }}
@@ -719,7 +719,7 @@ onBeforeUnmount(() => {
                           { name: 'Telegraph', target: result.telegraph },
                         ]"
                         :key="item.name"
-                        class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-line bg-canvas px-3 py-2.5"
+                        class="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-canvas px-3 py-2.5"
                       >
                         <div class="min-w-0">
                           <p class="text-sm font-medium">{{ item.name }}</p>
@@ -747,12 +747,12 @@ onBeforeUnmount(() => {
               <p class="mt-1 text-xs text-muted">按自然月统计图片出站流量，生成一致性快照并可下载或发到频道。</p>
 
               <div class="mt-3 space-y-3">
-                <div class="rounded-md border border-line bg-surface">
+                <div class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
                   <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3.5">
                     <h3 class="text-sm font-semibold">流量看护</h3>
                     <button
                       type="button"
-                      class="h-11 shrink-0 rounded-md border border-line px-3 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas"
+                      class="h-11 shrink-0 rounded-full border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
                       @click="loadTraffic"
                     >
                       刷新
@@ -763,15 +763,15 @@ onBeforeUnmount(() => {
                     <p v-else-if="traffic === null" class="text-xs text-muted">尚未读取。</p>
                     <template v-else>
                       <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                        <div class="rounded-md border border-line bg-canvas px-3 py-2.5">
+                        <div class="rounded-xl bg-canvas px-3 py-2.5">
                           <p class="text-xs text-muted">本月出站</p>
                           <p class="mt-0.5 text-sm font-medium tnum">{{ formatTrafficBytes(traffic.bytes_out) }}</p>
                         </div>
-                        <div class="rounded-md border border-line bg-canvas px-3 py-2.5">
+                        <div class="rounded-xl bg-canvas px-3 py-2.5">
                           <p class="text-xs text-muted">统计月份</p>
                           <p class="mt-0.5 text-sm font-medium tnum">{{ traffic.month }}</p>
                         </div>
-                        <div class="rounded-md border border-line bg-canvas px-3 py-2.5">
+                        <div class="rounded-xl bg-canvas px-3 py-2.5">
                           <p class="text-xs text-muted">状态</p>
                           <p
                             class="mt-0.5 text-sm font-medium"
@@ -786,14 +786,14 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
 
-                <div class="rounded-md border border-line bg-surface">
+                <div class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
                   <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3.5">
                     <h3 class="text-sm font-semibold">自动备份</h3>
                     <div class="flex shrink-0 items-center gap-2">
                       <button
                         type="button"
                         :disabled="backing"
-                        class="h-11 rounded-md border border-line px-3 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas disabled:opacity-60"
+                        class="h-11 rounded-full border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
                         @click="runBackup"
                       >
                         {{ backing ? '备份中…' : '立即备份' }}
@@ -801,7 +801,7 @@ onBeforeUnmount(() => {
                       <a
                         v-if="backup !== null && backup.latest !== null"
                         href="/api/backup/download"
-                        class="inline-flex h-11 items-center rounded-md border border-line px-3 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas"
+                        class="inline-flex h-11 items-center rounded-full border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
                       >
                         下载最近备份
                       </a>
@@ -837,7 +837,7 @@ onBeforeUnmount(() => {
           <button
             type="button"
             :disabled="saving"
-            class="h-11 shrink-0 rounded-md bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+            class="h-11 shrink-0 rounded-full bg-brand px-4 text-sm font-medium text-brand-ink shadow-[0_2px_0_0_#9e2b12] transition hover:bg-brand-strong motion-safe:active:translate-y-[2px] active:shadow-none disabled:opacity-60"
             @click="save"
           >
             {{ saving ? '保存中…' : '保存设置' }}

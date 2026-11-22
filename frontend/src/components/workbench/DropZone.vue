@@ -106,7 +106,7 @@ async function onDrop(event: DragEvent): Promise<void> {
 <template>
   <section
     v-if="props.compact"
-    class="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 rounded-md border border-dashed bg-surface px-4 py-3 transition"
+    class="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 rounded-2xl bg-surface px-4 py-3 shadow-[0_1px_0_0_rgba(27,26,23,0.05)] transition"
     :class="dragging ? 'border-brand bg-brand/5' : 'border-line'"
     @dragover.prevent="dragging = !props.disabled"
     @dragleave.prevent="dragging = false"
@@ -117,7 +117,7 @@ async function onDrop(event: DragEvent): Promise<void> {
       <button
         type="button"
         :disabled="props.disabled"
-        class="h-11 rounded border border-line px-3 text-xs font-medium transition hover:border-ink/25 hover:bg-canvas disabled:opacity-60"
+        class="h-11 rounded-full px-3 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
         @click="open(imageInput)"
       >
         选择图片
@@ -125,7 +125,7 @@ async function onDrop(event: DragEvent): Promise<void> {
       <button
         type="button"
         :disabled="props.disabled"
-        class="h-11 rounded border border-line px-3 text-xs font-medium transition hover:border-ink/25 hover:bg-canvas disabled:opacity-60"
+        class="h-11 rounded-full px-3 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
         @click="open(folderInput)"
       >
         选择文件夹
@@ -133,7 +133,7 @@ async function onDrop(event: DragEvent): Promise<void> {
       <button
         type="button"
         :disabled="props.disabled"
-        class="h-11 rounded border border-line px-3 text-xs font-medium transition hover:border-ink/25 hover:bg-canvas disabled:opacity-60"
+        class="h-11 rounded-full px-3 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
         @click="open(zipInput)"
       >
         选择 ZIP
@@ -146,13 +146,12 @@ async function onDrop(event: DragEvent): Promise<void> {
 
   <section
     v-else
-    class="viewfinder-corners rounded-lg border border-dashed bg-surface px-6 py-9 text-center transition"
+    class="rounded-2xl bg-surface px-6 py-12 text-center shadow-[0_1px_0_0_rgba(27,26,23,0.05),0_18px_40px_-32px_rgba(27,26,23,0.28)] transition"
     :class="dragging ? 'border-brand bg-brand/5' : 'border-line'"
     @dragover.prevent="dragging = !props.disabled"
     @dragleave.prevent="dragging = false"
     @drop.prevent="onDrop"
   >
-    <div class="sprocket mb-5 h-3" aria-hidden="true"></div>
     <div class="mx-auto flex h-11 w-11 items-center justify-center rounded-lg bg-canvas" aria-hidden="true">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-5 w-5 text-muted">
         <path d="M12 16V4m0 0L8 8m4-4l4 4" stroke-linecap="round" stroke-linejoin="round" />
@@ -166,7 +165,7 @@ async function onDrop(event: DragEvent): Promise<void> {
       <button
         type="button"
         :disabled="props.disabled"
-        class="h-11 rounded-md bg-brand px-4 text-sm font-medium text-brand-ink shadow-[0_2px_0_0_#9e2b12] transition hover:bg-brand-strong motion-safe:active:translate-y-[2px] active:shadow-none disabled:opacity-60"
+        class="h-11 rounded-full bg-brand px-5 text-sm font-medium text-brand-ink shadow-[0_2px_0_0_#9e2b12] transition hover:bg-brand-strong motion-safe:active:translate-y-[2px] active:shadow-none disabled:opacity-60"
         @click="open(zipInput)"
       >
         选择 ZIP
@@ -174,7 +173,7 @@ async function onDrop(event: DragEvent): Promise<void> {
       <button
         type="button"
         :disabled="props.disabled"
-        class="h-11 rounded-md border border-line px-4 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas disabled:opacity-60"
+        class="h-11 rounded-full px-4 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
         @click="open(folderInput)"
       >
         选择文件夹
@@ -182,7 +181,7 @@ async function onDrop(event: DragEvent): Promise<void> {
       <button
         type="button"
         :disabled="props.disabled"
-        class="h-11 rounded-md border border-line px-4 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas disabled:opacity-60"
+        class="h-11 rounded-full px-4 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
         @click="open(imageInput)"
       >
         选择图片

@@ -26,13 +26,17 @@ const limitText = computed(() =>
   >
     <div v-if="props.layout === 'stack'" class="flex flex-wrap items-center justify-center gap-2">
       <span class="text-xs text-muted">画质模式</span>
-      <div class="flex rounded-md border border-line p-0.5" role="group" aria-label="画质模式">
+      <div class="flex rounded-full bg-canvas p-1" role="group" aria-label="画质模式">
         <button
           v-for="option in options"
           :key="option.value"
           type="button"
-          class="h-11 rounded px-3 text-xs font-medium transition disabled:opacity-50"
-          :class="props.mode === option.value ? 'bg-accent text-white' : 'text-muted hover:bg-canvas'"
+          class="h-11 rounded-full px-3.5 text-xs font-medium transition disabled:opacity-50"
+          :class="
+            props.mode === option.value
+              ? 'bg-accent text-white shadow-[0_2px_0_0_#08544e]'
+              : 'text-muted hover:bg-surface hover:text-ink'
+          "
           :disabled="props.disabled"
           @click="emit('select', option.value)"
         >
@@ -58,8 +62,12 @@ const limitText = computed(() =>
           v-for="option in options"
           :key="option.value"
           type="button"
-          class="h-11 rounded px-3 text-xs font-medium transition disabled:opacity-50"
-          :class="props.mode === option.value ? 'bg-accent text-white' : 'text-muted hover:bg-canvas'"
+          class="h-11 rounded-full px-3.5 text-xs font-medium transition disabled:opacity-50"
+          :class="
+            props.mode === option.value
+              ? 'bg-accent text-white shadow-[0_2px_0_0_#08544e]'
+              : 'text-muted hover:bg-surface hover:text-ink'
+          "
           :disabled="props.disabled"
           @click="emit('select', option.value)"
         >

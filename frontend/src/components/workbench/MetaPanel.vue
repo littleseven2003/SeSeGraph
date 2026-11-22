@@ -63,7 +63,7 @@ function applyFromPackage(): void {
 </script>
 
 <template>
-  <section class="rounded-lg border border-line bg-surface p-4">
+  <section class="rounded-2xl bg-surface p-4 shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div>
         <h2 class="text-base font-semibold">元信息</h2>
@@ -71,7 +71,7 @@ function applyFromPackage(): void {
       </div>
 
       <div class="flex flex-wrap items-center gap-2">
-        <div class="flex rounded-md border border-line p-0.5" role="group" aria-label="包内信息解析模式">
+        <div class="flex rounded-full bg-canvas p-1" role="group" aria-label="包内信息解析模式">
           <button
             v-for="option in [
               { value: 'first-line', label: '首行标题' },
@@ -79,7 +79,7 @@ function applyFromPackage(): void {
             ]"
             :key="option.value"
             type="button"
-            class="h-7 rounded px-2 text-xs font-medium transition"
+            class="h-8 rounded-full px-2.5 text-xs font-medium transition"
             :class="parseMode === option.value ? 'bg-accent text-white' : 'text-muted hover:bg-canvas'"
             @click="parseMode = option.value as ParseMode"
           >
@@ -88,7 +88,7 @@ function applyFromPackage(): void {
         </div>
         <button
           type="button"
-          class="h-11 rounded-md border border-line px-3 text-xs font-medium transition hover:border-muted/40 hover:bg-canvas disabled:opacity-50"
+          class="h-11 rounded-full px-3.5 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-50"
           :disabled="props.disabled || !hasMetaText"
           :title="hasMetaText ? `从 ${props.metaSource || '包内文本'} 读取` : '压缩包内没有可用的说明文件'"
           @click="applyFromPackage"
@@ -110,7 +110,7 @@ function applyFromPackage(): void {
           type="text"
           maxlength="200"
           placeholder="例如：夏日海边写真"
-          class="mt-1 h-10 w-full rounded-md border border-line bg-surface px-3 text-sm outline-none transition focus:border-brand"
+          class="mt-1 h-11 w-full rounded-xl border border-line bg-surface px-3 text-sm outline-none transition focus:border-brand"
           :disabled="props.disabled"
           @input="draft = { ...draft, title: ($event.target as HTMLInputElement).value }"
         />
@@ -123,7 +123,7 @@ function applyFromPackage(): void {
           type="text"
           maxlength="100"
           placeholder="例如：SeSe"
-          class="mt-1 h-10 w-full rounded-md border border-line bg-surface px-3 text-sm outline-none transition focus:border-brand"
+          class="mt-1 h-11 w-full rounded-xl border border-line bg-surface px-3 text-sm outline-none transition focus:border-brand"
           :disabled="props.disabled"
           @input="draft = { ...draft, author: ($event.target as HTMLInputElement).value }"
         />
@@ -136,7 +136,7 @@ function applyFromPackage(): void {
           rows="3"
           maxlength="5000"
           placeholder="这组图片的说明，可留空"
-          class="mt-1 w-full resize-y rounded-md border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-brand"
+          class="mt-1 w-full resize-y rounded-xl border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-brand"
           :disabled="props.disabled"
           @input="draft = { ...draft, description: ($event.target as HTMLTextAreaElement).value }"
         />
@@ -145,7 +145,7 @@ function applyFromPackage(): void {
       <div class="lg:col-span-2">
         <span class="text-xs font-medium text-muted">标签</span>
         <div
-          class="mt-1 flex min-h-10 flex-wrap items-center gap-1.5 rounded-md border border-line bg-surface px-2 py-1.5"
+          class="mt-1 flex min-h-11 flex-wrap items-center gap-1.5 rounded-xl border border-line bg-surface px-2 py-1.5"
         >
           <span
             v-for="tag in draft.tags"
