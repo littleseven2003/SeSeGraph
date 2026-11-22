@@ -1,4 +1,4 @@
-import { computed, onBeforeUnmount, ref, unref, type Ref } from 'vue'
+import { computed, onBeforeUnmount, ref, unref, watch, type Ref } from 'vue'
 import { TOUCH_REVEAL_MS, shouldRevealOnTap, shouldShowBlur } from '../../utils/gallery'
 
 // 所有封面共用同一套遮罩规则：显式点按一次揭开当前封面，再点才执行动作。
@@ -35,6 +35,14 @@ export function useCoverReveal(blurred: Ref<boolean> | (() => boolean)) {
     clearTimer()
     revealed.value = false
   }
+
+  // 重新开启全局模糊时清掉临时解锁，避免旧的揭开状态被带回来。
+  watch(isBlurred, (value) => {
+    if (value) {
+      clearTimer()
+      revealed.value = false
+    }
+  })
 
   onBeforeUnmount(clearTimer)
 
