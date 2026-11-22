@@ -25,6 +25,7 @@ import { acceptedCount, initialStatuses, planUploads, type UploadStatus } from '
 import { DEFAULT_META_FILENAMES, unpackZip } from '../utils/zip.ts'
 import { fetchSettings } from '../api/settings.ts'
 import {
+  canLeaveResume,
   fallbackDefaults,
   loadWorkbenchInitialization,
   type WorkbenchDefaults,
@@ -469,7 +470,7 @@ function resetProgress(): void {
 
 // discardSnapshot 放弃上次任务的续传入口，允许直接开新任务。
 function discardSnapshot(): void {
-  if (discardBlocked(phase.value)) return
+  if (!canLeaveResume(ready.value, phase.value)) return
   const abandoned = snapshot.value?.postId ?? postId.value
   snapshot.value = null
   clearTask(storage)
@@ -486,6 +487,7 @@ function discardSnapshot(): void {
 }
 
 function clearAll(): void {
+  if (!ready.value) return
   releaseTiles(tiles.value)
   tiles.value = []
   coverId.value = ''
@@ -691,7 +693,7 @@ onBeforeUnmount(() => {
             <button
               type="button"
               class="h-9 rounded-md border border-line px-3 text-sm font-medium transition hover:border-muted/40 hover:bg-canvas disabled:opacity-50"
-              :disabled="discardBlocked(phase)"
+              :disabled="!canLeaveResume(ready, phase)"
               @click="discardSnapshot"
             >
               放弃此任务

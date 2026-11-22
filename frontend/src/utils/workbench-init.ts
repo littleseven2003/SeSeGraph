@@ -5,6 +5,7 @@ import type { UploadMode } from './image.ts'
 import type { SettingsView } from '../api/settings.ts'
 import type { ServerProgress } from '../api/posts.ts'
 import type { TaskSnapshot } from './task-store.ts'
+import { discardBlocked, type WorkbenchPhase } from './workbench.ts'
 
 /** WorkbenchDefaults 是导入与校验前必须确定的规则。 */
 export interface WorkbenchDefaults {
@@ -72,4 +73,13 @@ export async function loadWorkbenchInitialization(input: InitializationInput): P
   } catch {
     return { defaults, progress: null, resumeMode: null }
   }
+}
+
+/**
+ * canLeaveResume 报告现在能否放弃续传。
+ * 初始化完成前不能离开：此时进度还没回来，提前清掉快照会让稍后返回的旧任务重新占回工作台。
+ */
+export function canLeaveResume(ready: boolean, phase: WorkbenchPhase): boolean {
+  if (!ready) return false
+  return !discardBlocked(phase)
 }

@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  canLeaveResume,
   defaultsFromSettings,
   fallbackDefaults,
   loadWorkbenchInitialization,
@@ -109,4 +110,21 @@ test('空文件名与非法解析方式回落默认', () => {
   assert.deepEqual(defaults.metaNames, ['info.txt', 'meta.txt', 'readme.txt'])
   assert.equal(defaults.parseMode, 'first-line')
   assert.equal(defaults.defaultMode, 'photo')
+})
+
+test('初始化完成前不能放弃续传，旧任务不会复活', async () => {
+  const progressCall = deferred<ServerProgress>()
+  const initPromise = loadWorkbenchInitialization({
+    loadSettings: async () => settings(),
+    loadProgress: () => progressCall.promise,
+    snapshot,
+  })
+
+  // 进度还没回来时，放弃入口必须保持禁用，避免清掉快照后旧任务被回填。
+  assert.equal(canLeaveResume(false, 'queued'), false)
+  progressCall.resolve(progress('document'))
+  await initPromise
+  assert.equal(canLeaveResume(true, 'queued'), true)
+  // 上传进行中仍然禁止放弃。
+  assert.equal(canLeaveResume(true, 'uploading'), false)
 })
