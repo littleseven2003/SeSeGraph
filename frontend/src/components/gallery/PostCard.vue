@@ -86,7 +86,7 @@ const copyLabel = computed(() => {
 
 <template>
   <article
-    class="lift-on-hover group flex flex-col overflow-hidden rounded-md border border-line bg-surface transition duration-200 hover:-translate-y-0.5 hover:border-brand/30 hover:shadow-[0_10px_24px_-12px_rgba(208,66,35,0.18)]"
+    class="group flex flex-col overflow-hidden rounded-md border border-line bg-surface transition duration-200 motion-safe:hover:-translate-y-0.5 hover:border-brand/30 hover:shadow-[0_10px_24px_-12px_rgba(208,66,35,0.18)]"
     :class="showBlur ? 'is-blurred' : ''"
   >
     <button
@@ -100,7 +100,7 @@ const copyLabel = computed(() => {
         v-if="item.cover_url !== ''"
         :src="item.cover_url"
         :alt="item.title + ' 的封面'"
-        class="h-full w-full object-cover transition duration-200 group-hover:scale-[1.02]"
+        class="h-full w-full object-cover transition duration-200 motion-safe:group-hover:scale-[1.02]"
         loading="lazy"
       />
       <span v-else class="flex h-full w-full items-center justify-center text-muted" aria-hidden="true">
@@ -153,7 +153,7 @@ const copyLabel = computed(() => {
         <button
           v-if="shareUrl !== ''"
           type="button"
-          class="h-11 flex-1 rounded-md border border-brand/25 bg-brand-soft text-sm font-medium text-brand-strong transition hover:border-brand/45 hover:bg-brand-soft/70 active:scale-[0.98]"
+          class="h-11 flex-1 rounded-md border border-brand/25 bg-brand-soft text-sm font-medium text-brand-strong transition hover:border-brand/45 hover:bg-brand-soft/70 motion-safe:active:scale-[0.98]"
           @click="copyLink"
         >
           {{ copyLabel }}

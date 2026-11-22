@@ -284,7 +284,7 @@ onBeforeUnmount(() => {
           v-for="tag in tags"
           :key="tag.name"
           type="button"
-          class="inline-flex h-11 shrink-0 items-center rounded border px-3 text-xs font-medium transition active:scale-[0.97]"
+          class="inline-flex h-11 shrink-0 items-center rounded border px-3 text-xs font-medium transition motion-safe:active:scale-[0.97]"
           :class="
             selectedTags.includes(tag.name)
               ? 'border-accent bg-accent text-white'

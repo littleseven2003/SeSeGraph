@@ -58,11 +58,6 @@
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
-
-  /* 减少动效时不做位移与缩放，只保留颜色变化。 */
-  .lift-on-hover:hover {
-    transform: none !important;
-  }
 }
 
 /* 取景框直角标：四个 L 角用背景渐变画出来，不额外占用节点。 */
