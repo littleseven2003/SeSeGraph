@@ -234,9 +234,10 @@ test('触屏点按去模糊到期后恢复模糊', () => {
 test('封面悬停去模糊限定在支持悬停的设备且键盘绑定可见焦点', () => {
   const source = readFileSync(new URL('../src/components/gallery/PostCard.vue', import.meta.url), 'utf8')
   const media = source.indexOf('@media (hover: hover)')
-  const hover = source.indexOf('.is-blurred:hover img')
+  const hover = source.indexOf(".is-blurred:has([data-reveal='cover']:hover) img")
   assert.ok(media >= 0, '缺少 hover 能力查询')
   assert.ok(hover > media, '悬停规则必须写在 @media (hover: hover) 内')
+  assert.equal(source.includes('.is-blurred:hover img'), false, '悬停去模糊只认封面入口，整卡悬停不揭开')
   assert.ok(source.includes(".is-blurred:has([data-reveal='cover']:focus-visible) img"), '键盘去模糊只绑定封面入口的可见焦点')
   assert.ok(source.includes('data-reveal="cover"'), '封面按钮要标注去模糊入口，复制按钮不触发揭开')
   assert.equal(source.includes(':focus-within'), false, '不应再用 focus-within 触发去模糊')

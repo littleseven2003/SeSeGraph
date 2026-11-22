@@ -135,14 +135,14 @@ const copyLabel = computed(() => {
 
     <div class="flex min-w-0 flex-col">
       <p class="text-xs font-medium tracking-[0.16em] text-muted tnum">{{ meta }}</p>
-      <h2 class="mt-2 text-xl font-semibold leading-snug tracking-tight lg:text-2xl">
+      <h2 class="mt-2 break-words text-xl font-semibold leading-snug tracking-tight [overflow-wrap:anywhere] lg:text-2xl">
         {{ item.title }}
       </h2>
-      <div v-if="visibleTags.length > 0" class="mt-3 flex flex-wrap items-center gap-1.5">
+      <div v-if="visibleTags.length > 0" class="mt-3 flex min-w-0 flex-wrap items-center gap-1.5">
         <span
           v-for="tag in visibleTags"
           :key="tag"
-          class="rounded-full bg-canvas px-2.5 py-1 text-xs leading-none text-muted"
+          class="min-w-0 max-w-full break-words rounded-full bg-canvas px-2.5 py-1 text-xs leading-none text-muted [overflow-wrap:anywhere]"
           >#{{ tag }}</span
         >
         <span v-if="restTags > 0" class="text-xs leading-none text-muted">+{{ restTags }}</span>
@@ -226,7 +226,7 @@ const copyLabel = computed(() => {
     </button>
 
     <div class="mt-2.5 flex flex-col gap-1">
-      <p class="line-clamp-2 text-sm font-semibold leading-snug">{{ item.title }}</p>
+      <p class="line-clamp-2 break-words text-sm font-semibold leading-snug [overflow-wrap:anywhere]">{{ item.title }}</p>
 
       <div class="flex items-center gap-2">
         <p class="min-w-0 flex-1 truncate text-xs text-muted tnum">{{ meta }}</p>
@@ -264,11 +264,11 @@ const copyLabel = computed(() => {
         <span role="status" aria-live="polite" class="sr-only">{{ copyState === 'idle' ? '' : copyLabel }}</span>
       </div>
 
-      <div v-if="visibleTags.length > 0" class="flex flex-wrap items-center gap-1">
+      <div v-if="visibleTags.length > 0" class="flex min-w-0 flex-wrap items-center gap-1">
         <span
           v-for="tag in visibleTags"
           :key="tag"
-          class="rounded-full bg-canvas px-1.5 py-0.5 text-xs leading-relaxed text-muted"
+          class="min-w-0 max-w-full break-words rounded-full bg-canvas px-1.5 py-0.5 text-xs leading-relaxed text-muted [overflow-wrap:anywhere]"
           >#{{ tag }}</span
         >
         <span v-if="restTags > 0" class="px-1 py-0.5 text-xs leading-relaxed text-muted">+{{ restTags }}</span>
@@ -285,7 +285,7 @@ const copyLabel = computed(() => {
 
 /* 悬停去模糊只对支持悬停的设备生效，避免触屏保留点按后的悬停状态。 */
 @media (hover: hover) {
-  .is-blurred:hover img {
+  .is-blurred:has([data-reveal='cover']:hover) img {
     filter: none;
     transform: none;
   }
