@@ -273,3 +273,19 @@ test('卡片分享入口只在可分享时出现且复用整帖资格判断', ()
   assert.ok(source.includes('v-if="shareUrl !== \'\'"'), '仅在拿到分享链接时显示复制入口')
   assert.equal(source.includes('navigator.clipboard'), false, '复制走共用工具，不重复实现')
 })
+
+test('详情抽屉把复制入口放到正文并给出按钮级反馈', () => {
+  const source = readFileSync(new URL('../src/components/gallery/DetailDrawer.vue', import.meta.url), 'utf8')
+  assert.ok(source.includes("copy(shareUrl, '链接', 'link')"), '复制整帖链接要带上按钮级反馈标识')
+  assert.ok(source.includes("copiedAction === 'link' ? '已复制链接' : '复制链接'"), '复制成功后按钮文字立即反馈')
+  assert.equal(source.includes('<footer'), false, '复制入口不再固定在抽屉底部栏')
+  const action = source.indexOf('复制链接')
+  const pages = source.indexOf('分页链接')
+  assert.ok(action >= 0 && action < pages, '复制入口应排在分页链接等次级信息之前')
+})
+
+test('打开详情抽屉不产生新的图片请求', () => {
+  const source = readFileSync(new URL('../src/components/gallery/DetailDrawer.vue', import.meta.url), 'utf8')
+  assert.equal(source.includes('<img'), false, '抽屉不渲染图片，避免打开即回源取图')
+  assert.ok(source.includes('imageShareUrl'), '单图信息沿用列表已有的外链判断')
+})
