@@ -11,6 +11,12 @@ import {
   endpointText,
   ENV_MANAGED_HINT,
   hasPatch,
+  PROXY_MODES,
+  proxyCustomNeedsURL,
+  proxyModeLabel,
+  proxyURLHint,
+  proxyURLInvalid,
+  proxyURLText,
   saveFailureText,
   tokenPlaceholder,
 } from '../src/utils/settings.ts'
@@ -34,9 +40,27 @@ function view(overrides: Partial<SettingsView> = {}): SettingsView {
       api_base: '',
       api_base_source: 'env',
     },
+    proxy: {
+      mode: 'direct',
+      mode_source: 'default',
+      url_set: false,
+      url_source: 'none',
+      telegram_enabled: false,
+      telegraph_enabled: false,
+    },
     env_managed: [],
     ...overrides,
   }
+}
+
+const baseForm = {
+  token: '',
+  channelId: '@sese_channel',
+  authorName: 'SeSe',
+  proxyMode: 'direct',
+  proxyUrl: '',
+  proxyTelegram: false,
+  proxyTelegraph: false,
 }
 
 test('令牌占位文案区分已设置与未设置', () => {
@@ -82,9 +106,9 @@ test('自检结论汇总两种目标', () => {
 
 test('补丁只提交改动项', () => {
   const current = view()
-  assert.equal(hasPatch(changedPatch(current, { token: '', channelId: '@sese_channel', authorName: 'SeSe' })), false)
+  assert.equal(hasPatch(changedPatch(current, { ...baseForm })), false)
 
-  const patch = changedPatch(current, { token: '123:new', channelId: '@other_channel', authorName: 'SeSe' })
+  const patch = changedPatch(current, { ...baseForm, token: '123:new', channelId: '@other_channel' })
   assert.deepEqual(patch, { telegram: { token: '123:new', channel_id: '@other_channel' } })
   assert.equal(hasPatch(patch), true)
 })
@@ -101,8 +125,69 @@ test('环境变量托管字段不进入补丁', () => {
     },
     env_managed: ['telegram.token', 'telegram.channel_id'],
   })
-  const patch = changedPatch(current, { token: '123:new', channelId: '@other', authorName: 'SeSe2' })
+  const patch = changedPatch(current, { ...baseForm, token: '123:new', channelId: '@other', authorName: 'SeSe2' })
   assert.deepEqual(patch, { telegraph: { author_name: 'SeSe2' } })
+})
+
+test('代理配置只提交改动项', () => {
+  const current = view()
+  assert.equal(
+    hasPatch(changedPatch(current, { ...baseForm, proxyMode: 'direct', proxyTelegram: false })),
+    false,
+  )
+
+  const patch = changedPatch(current, {
+    ...baseForm,
+    proxyMode: 'custom',
+    proxyUrl: 'socks5://ops:pass@10.8.0.9:1080',
+    proxyTelegram: true,
+  })
+  assert.deepEqual(patch, {
+    proxy: {
+      mode: 'custom',
+      url: 'socks5://ops:pass@10.8.0.9:1080',
+      telegram_enabled: true,
+    },
+  })
+
+  // 已有配置的页面只改开关时不下发地址。
+  const saved = view({
+    proxy: {
+      mode: 'system',
+      mode_source: 'stored',
+      url_set: true,
+      url_source: 'stored',
+      telegram_enabled: false,
+      telegraph_enabled: false,
+    },
+  })
+  assert.deepEqual(
+    changedPatch(saved, { ...baseForm, proxyMode: 'system', proxyTelegraph: true }),
+    { proxy: { telegraph_enabled: true } },
+  )
+})
+
+test('代理地址校验与提示', () => {
+  assert.equal(proxyURLInvalid(''), false)
+  assert.equal(proxyURLInvalid('http://127.0.0.1:7890'), false)
+  assert.equal(proxyURLInvalid('https://user:pass@proxy.test:8443'), false)
+  assert.equal(proxyURLInvalid('socks5://127.0.0.1:1080'), false)
+  assert.equal(proxyURLInvalid('ftp://127.0.0.1:21'), true)
+  assert.equal(proxyURLInvalid('127.0.0.1:7890'), true)
+  assert.equal(proxyURLInvalid('http://a b'), true)
+
+  assert.equal(proxyURLHint(true, 'custom'), '已设置，留空不修改')
+  assert.equal(proxyURLHint(false, 'custom'), 'http://、https:// 或 socks5:// 地址')
+  assert.equal(proxyURLHint(false, 'direct'), '仅在自定义模式使用')
+  assert.equal(proxyURLText(false, 'none'), '未设置')
+  assert.equal(proxyURLText(true, 'stored'), '已保存在服务端，不回显')
+  assert.equal(proxyModeLabel('direct'), '直连')
+  assert.equal(proxyModeLabel('system'), '跟随系统环境变量')
+  assert.equal(proxyModeLabel('custom'), '自定义代理')
+  assert.equal(proxyCustomNeedsURL('custom', false, ''), true)
+  assert.equal(proxyCustomNeedsURL('custom', true, ''), false)
+  assert.equal(proxyCustomNeedsURL('custom', false, 'http://127.0.0.1:7890'), false)
+  assert.equal(proxyCustomNeedsURL('direct', false, ''), false)
 })
 
 test('频道标识格式校验', () => {

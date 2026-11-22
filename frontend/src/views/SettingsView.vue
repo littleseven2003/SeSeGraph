@@ -18,10 +18,17 @@ import {
   connectionTone,
   endpointText,
   ENV_MANAGED_HINT,
+  FIELD_PROXY_URL,
   FIELD_TELEGRAM_CHANNEL,
   FIELD_TELEGRAM_TOKEN,
   FIELD_TELEGRAPH_AUTHOR,
   hasPatch,
+  PROXY_MODES,
+  proxyCustomNeedsURL,
+  proxyModeLabel,
+  proxyURLHint,
+  proxyURLInvalid,
+  proxyURLText,
   saveFailureText,
   tokenPlaceholder,
 } from '../utils/settings.ts'
@@ -37,13 +44,25 @@ const checking = ref(false)
 const checkError = ref('')
 const result = ref<ConnectionResult | null>(null)
 
-const form = reactive({ token: '', channelId: '', authorName: '' })
+const form = reactive({
+  token: '',
+  channelId: '',
+  authorName: '',
+  proxyMode: 'direct',
+  proxyUrl: '',
+  proxyTelegram: false,
+  proxyTelegraph: false,
+})
 
 function applyView(next: SettingsView): void {
   view.value = next
   form.channelId = next.telegram.channel_id
   form.authorName = next.telegraph.author_name
   form.token = ''
+  form.proxyMode = next.proxy.mode
+  form.proxyUrl = ''
+  form.proxyTelegram = next.proxy.telegram_enabled
+  form.proxyTelegraph = next.proxy.telegraph_enabled
 }
 
 function managed(field: string): boolean {
@@ -95,6 +114,16 @@ async function save(): Promise<void> {
     fieldErrors.value = [FIELD_TELEGRAPH_AUTHOR]
     return
   }
+  if (patch.proxy?.url !== undefined && proxyURLInvalid(patch.proxy.url)) {
+    saveError.value = '代理地址需为 http://、https:// 或 socks5:// 格式'
+    fieldErrors.value = [FIELD_PROXY_URL]
+    return
+  }
+  if (proxyCustomNeedsURL(form.proxyMode, view.value.proxy.url_set, form.proxyUrl)) {
+    saveError.value = '自定义代理需要填写代理地址'
+    fieldErrors.value = [FIELD_PROXY_URL]
+    return
+  }
 
   saving.value = true
   try {
@@ -117,6 +146,21 @@ async function clearToken(): Promise<void> {
   try {
     applyView(await saveSettings({ telegram: { token: '' } }))
     feedback.value = '已清除保存的 Bot Token'
+  } catch (cause) {
+    saveError.value = failText(cause).message
+  } finally {
+    saving.value = false
+  }
+}
+
+async function clearProxy(): Promise<void> {
+  if (view.value === null || saving.value) return
+  saving.value = true
+  saveError.value = ''
+  feedback.value = ''
+  try {
+    applyView(await saveSettings({ proxy: { url: '' } }))
+    feedback.value = '已清除保存的代理地址'
   } catch (cause) {
     saveError.value = failText(cause).message
   } finally {
@@ -272,6 +316,90 @@ onMounted(() => {
                 <p class="mt-0.5 text-sm">{{ endpointText(view.telegraph.api_base_source) }}</p>
               </div>
             </div>
+          </div>
+        </section>
+
+        <section class="mt-5 rounded-lg border border-line bg-surface">
+          <div class="border-b border-line px-5 py-4">
+            <h2 class="text-sm font-semibold">网络代理</h2>
+            <p class="mt-1 text-xs text-muted">
+              分别控制两项上游是否经代理访问，保存后立即重建传输层。自定义地址可带账密，不会回显。
+            </p>
+          </div>
+          <div class="space-y-4 px-5 py-4">
+            <fieldset>
+              <legend class="text-xs font-medium text-muted">代理模式</legend>
+              <div class="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                <label
+                  v-for="option in PROXY_MODES"
+                  :key="option.value"
+                  class="flex cursor-pointer items-center gap-2 rounded-md border border-line bg-canvas px-3 py-2 text-sm transition"
+                  :class="form.proxyMode === option.value ? 'border-brand bg-surface' : ''"
+                >
+                  <input
+                    v-model="form.proxyMode"
+                    type="radio"
+                    name="proxy-mode"
+                    :value="option.value"
+                    :disabled="saving"
+                    class="h-4 w-4 accent-brand"
+                  />
+                  <span>{{ option.label }}</span>
+                </label>
+              </div>
+              <p class="mt-1 text-xs text-muted">当前生效：{{ proxyModeLabel(view.proxy.mode) }}</p>
+            </fieldset>
+
+            <label class="block">
+              <span class="text-xs font-medium text-muted">自定义代理地址</span>
+              <div class="mt-1 flex items-center gap-2">
+                <input
+                  v-model="form.proxyUrl"
+                  type="password"
+                  autocomplete="off"
+                  :disabled="saving"
+                  :placeholder="proxyURLHint(view.proxy.url_set, view.proxy.mode)"
+                  class="h-10 min-w-0 flex-1 rounded-md border border-line bg-canvas px-3 text-sm outline-none transition focus:border-brand focus:bg-surface disabled:opacity-60"
+                  :class="fieldErrors.includes(FIELD_PROXY_URL) ? 'border-danger' : ''"
+                />
+                <button
+                  v-if="view.proxy.url_set && view.proxy.mode !== 'custom'"
+                  type="button"
+                  :disabled="saving"
+                  class="h-10 shrink-0 rounded-md border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas disabled:opacity-60"
+                  @click="clearProxy"
+                >
+                  清除
+                </button>
+              </div>
+              <p class="mt-1 text-xs text-muted">
+                {{ proxyURLText(view.proxy.url_set, view.proxy.url_source) }}；切回直连后才能清除已保存的地址。
+              </p>
+            </label>
+
+            <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <label class="flex items-center gap-2 rounded-md border border-line bg-canvas px-3 py-2 text-sm">
+                <input
+                  v-model="form.proxyTelegram"
+                  type="checkbox"
+                  :disabled="saving || form.proxyMode === 'direct'"
+                  class="h-4 w-4 accent-brand"
+                />
+                <span>Telegram Bot API 走代理</span>
+              </label>
+              <label class="flex items-center gap-2 rounded-md border border-line bg-canvas px-3 py-2 text-sm">
+                <input
+                  v-model="form.proxyTelegraph"
+                  type="checkbox"
+                  :disabled="saving || form.proxyMode === 'direct'"
+                  class="h-4 w-4 accent-brand"
+                />
+                <span>Telegraph API 走代理</span>
+              </label>
+            </div>
+            <p class="text-xs text-muted">
+              直连模式忽略上面的开关；跟随系统模式读取进程环境变量 HTTP_PROXY / HTTPS_PROXY / ALL_PROXY。
+            </p>
           </div>
         </section>
 

@@ -8,6 +8,47 @@ export const ENV_MANAGED_HINT = '由环境变量提供，界面不可修改'
 export const FIELD_TELEGRAM_TOKEN = 'telegram.token'
 export const FIELD_TELEGRAM_CHANNEL = 'telegram.channel_id'
 export const FIELD_TELEGRAPH_AUTHOR = 'telegraph.author_name'
+export const FIELD_PROXY_URL = 'proxy.url'
+
+/** 代理模式选项，顺序即界面顺序。 */
+export const PROXY_MODES = [
+  { value: 'direct', label: '直连' },
+  { value: 'system', label: '跟随系统环境变量' },
+  { value: 'custom', label: '自定义代理' },
+] as const
+
+/** proxyModeLabel 返回代理模式的中文名，未知取值原样展示。 */
+export function proxyModeLabel(mode: string): string {
+  const found = PROXY_MODES.find((item) => item.value === mode)
+  return found === undefined ? mode : found.label
+}
+
+/** proxyURLHint 描述自定义代理地址的占位文案。 */
+export function proxyURLHint(urlSet: boolean, mode: string): string {
+  if (urlSet) return '已设置，留空不修改'
+  if (mode === 'custom') return 'http://、https:// 或 socks5:// 地址'
+  return '仅在自定义模式使用'
+}
+
+/** proxyURLInvalid 校验自定义代理地址的形态：协议、主机与可选账密。 */
+export function proxyURLInvalid(value: string): boolean {
+  const trimmed = value.trim()
+  if (trimmed === '') return false
+  if (/\s/.test(trimmed)) return true
+  return !/^(?:https?|socks5):\/\/[^/?#]+/i.test(trimmed)
+}
+
+/** proxyURLText 说明代理地址来源，地址本身一律不回显。 */
+export function proxyURLText(urlSet: boolean, source: string): string {
+  if (!urlSet) return '未设置'
+  if (source === 'stored') return '已保存在服务端，不回显'
+  return '已设置'
+}
+
+/** proxyCustomNeedsURL 判断切到自定义模式时是否还缺地址。 */
+export function proxyCustomNeedsURL(mode: string, urlSet: boolean, newURL: string): boolean {
+  return mode === 'custom' && !urlSet && newURL.trim() === ''
+}
 
 /** tokenPlaceholder 返回令牌输入框的占位文案。 */
 export function tokenPlaceholder(tokenSet: boolean): string {
@@ -71,14 +112,23 @@ export function connectionSummary(result: ConnectionResult): string {
   return '部分目标尚未配置'
 }
 
+/** SettingsForm 是设置页表单的取值。 */
+export interface SettingsForm {
+  token: string
+  channelId: string
+  authorName: string
+  proxyMode: string
+  proxyUrl: string
+  proxyTelegram: boolean
+  proxyTelegraph: boolean
+}
+
 /** changedPatch 只提交改动且非环境变量托管的字段。 */
-export function changedPatch(
-  view: SettingsView,
-  form: { token: string; channelId: string; authorName: string },
-): SettingsPatch {
+export function changedPatch(view: SettingsView, form: SettingsForm): SettingsPatch {
   const patch: SettingsPatch = {}
   const telegram: { token?: string; channel_id?: string } = {}
   const telegraph: { author_name?: string } = {}
+  const proxy: NonNullable<SettingsPatch['proxy']> = {}
 
   if (form.token !== '' && !view.env_managed.includes(FIELD_TELEGRAM_TOKEN)) {
     telegram.token = form.token
@@ -89,8 +139,21 @@ export function changedPatch(
   if (form.authorName !== view.telegraph.author_name && !view.env_managed.includes(FIELD_TELEGRAPH_AUTHOR)) {
     telegraph.author_name = form.authorName
   }
+  if (form.proxyMode !== view.proxy.mode) {
+    proxy.mode = form.proxyMode
+  }
+  if (form.proxyUrl !== '') {
+    proxy.url = form.proxyUrl
+  }
+  if (form.proxyTelegram !== view.proxy.telegram_enabled) {
+    proxy.telegram_enabled = form.proxyTelegram
+  }
+  if (form.proxyTelegraph !== view.proxy.telegraph_enabled) {
+    proxy.telegraph_enabled = form.proxyTelegraph
+  }
   if (Object.keys(telegram).length > 0) patch.telegram = telegram
   if (Object.keys(telegraph).length > 0) patch.telegraph = telegraph
+  if (Object.keys(proxy).length > 0) patch.proxy = proxy
   return patch
 }
 

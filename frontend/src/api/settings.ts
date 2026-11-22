@@ -18,16 +18,33 @@ export interface TelegraphSettings extends SettingsGroup {
   author_source: string
 }
 
+/** ProxySettings 描述代理配置：模式、地址是否已设置与两项上游的启用开关。 */
+export interface ProxySettings {
+  mode: string
+  mode_source: string
+  url_set: boolean
+  url_source: string
+  telegram_enabled: boolean
+  telegraph_enabled: boolean
+}
+
 export interface SettingsView {
   public_url: string
   telegram: TelegramSettings
   telegraph: TelegraphSettings
+  proxy: ProxySettings
   env_managed: string[]
 }
 
 export interface SettingsPatch {
   telegram?: { token?: string; channel_id?: string }
   telegraph?: { author_name?: string }
+  proxy?: {
+    mode?: string
+    url?: string
+    telegram_enabled?: boolean
+    telegraph_enabled?: boolean
+  }
 }
 
 export interface ConnectionTarget {
