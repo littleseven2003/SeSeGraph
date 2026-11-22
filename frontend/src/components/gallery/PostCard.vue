@@ -3,38 +3,19 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 import type { GalleryItem } from '../../api/gallery.ts'
 import { copyText } from '../../utils/clipboard.ts'
 import {
-  TOUCH_REVEAL_MS,
   formatPublishedAt,
   postShareUrl,
-  shouldRevealOnTap,
-  shouldShowBlur,
   statusLabel,
 } from '../../utils/gallery.ts'
+import { useCoverReveal } from './useCoverReveal.ts'
 
-const props = defineProps<{
-  item: GalleryItem
-  blurred: boolean
-  featured?: boolean
-}>()
-
+const props = defineProps<{ item: GalleryItem; blurred: boolean }>()
 const emit = defineEmits<{ open: [id: number] }>()
 
-// 防社死：第一次点按只揭开当前这张，再点一次才打开详情；悬停与键盘聚焦都不揭开。
-const revealed = ref(false)
-let revealTimer: ReturnType<typeof setTimeout> | undefined
-
-const showBlur = computed(() => shouldShowBlur(props.blurred, revealed.value))
+const { showBlur, activate, remask } = useCoverReveal(() => props.blurred)
 
 function onOpen(): void {
-  if (shouldRevealOnTap({ blurred: props.blurred, revealed: revealed.value })) {
-    revealed.value = true
-    if (revealTimer !== undefined) clearTimeout(revealTimer)
-    revealTimer = setTimeout(() => {
-      revealed.value = false
-    }, TOUCH_REVEAL_MS)
-    return
-  }
-  emit('open', props.item.id)
+  activate(() => emit('open', props.item.id))
 }
 
 // 分享链接只在已发布、公开且未撤回时可用；列表数据已带地址，无需额外请求。
@@ -52,7 +33,6 @@ async function copyLink(): Promise<void> {
 }
 
 onBeforeUnmount(() => {
-  if (revealTimer !== undefined) clearTimeout(revealTimer)
   if (copyTimer !== undefined) clearTimeout(copyTimer)
 })
 
@@ -61,7 +41,6 @@ const status = computed(() => statusLabel(props.item.status, props.item.publish_
 const chipClass = computed(() => {
   switch (status.value.tone) {
     case 'idle':
-      return 'border-warn/40 bg-warn-soft text-warn'
     case 'progress':
       return 'border-warn/40 bg-warn-soft text-warn'
     case 'error':
@@ -88,118 +67,8 @@ const copyLabel = computed(() => {
 </script>
 
 <template>
-  <!-- 精选横幅：列表首帖在桌面左右并排，手机上下排列，标题与操作区更舒展。 -->
-  <article
-    v-if="featured === true"
-    class="group grid gap-4 lg:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)] lg:items-center lg:gap-8"
-    :class="showBlur ? 'is-blurred' : ''"
-  >
-    <button
-      type="button"
-      class="relative block aspect-[16/10] w-full overflow-hidden rounded-2xl bg-canvas lg:aspect-[16/9] lg:max-h-[420px]"
-      :aria-label="`打开《${item.title}》详情`"
-      data-reveal="cover"
-      @click="onOpen"
-    >
-      <img
-        v-if="item.cover_url !== ''"
-        :src="item.cover_url"
-        :alt="item.title + ' 的封面'"
-        class="h-full w-full object-cover transition duration-300 motion-safe:group-hover:scale-[1.02]"
-        loading="lazy"
-      />
-      <span v-else class="flex h-full w-full items-center justify-center text-muted" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-10 w-10">
-          <rect x="3" y="4" width="18" height="16" rx="2" />
-          <path d="M3 15l5-4 4 3 3-2 6 4" stroke-linecap="round" stroke-linejoin="round" />
-          <circle cx="9" cy="9" r="1.5" />
-        </svg>
-      </span>
-      <span
-        class="absolute left-3 top-3 inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium leading-none"
-        :class="chipClass"
-      >
-        <span v-if="status.tone === 'ok'" class="h-1.5 w-1.5 rounded-full bg-[#34d399]" aria-hidden="true"></span>
-        {{ status.label }}
-      </span>
-      <span
-        class="absolute bottom-3 right-3 rounded-full bg-white/90 px-2 py-1 text-xs font-medium leading-none text-ink tnum"
-        >{{ item.image_count }}P</span
-      >
-      <span
-        v-if="showBlur"
-        class="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-center pb-3 opacity-0 transition group-hover:opacity-100"
-        aria-hidden="true"
-      >
-        <span class="inline-flex items-center gap-1.5 rounded-full bg-ink/80 px-3 py-1.5 text-xs font-medium leading-none text-white">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-3.5 w-3.5">
-            <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" stroke-linecap="round" stroke-linejoin="round" />
-            <circle cx="12" cy="12" r="3" />
-          </svg>
-          点击查看
-        </span>
-      </span>
-
-    </button>
-
-    <div class="flex min-w-0 flex-col">
-      <p class="text-xs font-medium tracking-[0.16em] text-muted tnum">{{ meta }}</p>
-      <h2 class="mt-2 break-words text-xl font-semibold leading-snug tracking-tight [overflow-wrap:anywhere] lg:text-2xl">
-        {{ item.title }}
-      </h2>
-      <div v-if="visibleTags.length > 0" class="mt-3 flex min-w-0 flex-wrap items-center gap-1.5">
-        <span
-          v-for="tag in visibleTags"
-          :key="tag"
-          class="min-w-0 max-w-full break-words rounded-full bg-canvas px-2.5 py-1 text-xs leading-none text-muted [overflow-wrap:anywhere]"
-          >#{{ tag }}</span
-        >
-        <span v-if="restTags > 0" class="text-xs leading-none text-muted">+{{ restTags }}</span>
-        <span class="text-xs leading-none text-muted tnum">共 {{ item.image_count }} 张</span>
-      </div>
-
-      <div class="mt-5 flex items-center gap-2.5">
-        <button
-          type="button"
-          class="h-11 rounded-full bg-ink px-5 text-sm font-medium text-brand-ink transition hover:bg-ink/90"
-          @click="onOpen"
-        >
-          打开图集
-        </button>
-        <button
-          v-if="shareUrl !== ''"
-          type="button"
-          class="inline-flex h-11 items-center gap-2 rounded-full border px-4 text-sm font-medium transition"
-          :class="
-            copyState === 'idle'
-              ? 'border-brand/25 bg-brand-soft text-brand-strong hover:border-brand/45'
-              : copyState === 'copied'
-                ? 'border-accent/30 bg-accent-soft text-accent'
-                : 'border-danger/30 bg-white text-danger'
-          "
-          :aria-label="copyLabel"
-          @click="copyLink"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4" aria-hidden="true">
-            <template v-if="copyState === 'idle'">
-              <rect x="9" y="9" width="11" height="11" rx="2" />
-              <path d="M15 5.5A2.5 2.5 0 0 0 12.5 3H6a2 2 0 0 0-2 2v7.5A2.5 2.5 0 0 0 6.5 15" stroke-linecap="round" />
-            </template>
-            <path v-else-if="copyState === 'copied'" d="M5 12.5l4.5 4.5L19 7" stroke-linecap="round" stroke-linejoin="round" />
-            <template v-else>
-              <path d="M12 8v5" stroke-linecap="round" />
-              <circle cx="12" cy="16.5" r="0.9" fill="currentColor" stroke="none" />
-            </template>
-          </svg>
-          {{ copyState === 'idle' ? '复制链接' : copyLabel }}
-        </button>
-        <span role="status" aria-live="polite" class="sr-only">{{ copyState === 'idle' ? '' : copyLabel }}</span>
-      </div>
-    </div>
-  </article>
-
-  <!-- 普通帖：封面即入口，底注只留标题、卷号与一颗复制按钮，避免重复的操作栏。 -->
-  <article v-else class="group flex flex-col" :class="showBlur ? 'is-blurred' : ''">
+  <article class="group flex flex-col" :class="showBlur ? 'is-blurred' : ''">
+    <div class="relative">
     <button
       type="button"
       class="relative block aspect-[4/3] w-full overflow-hidden rounded-2xl bg-canvas"
@@ -221,6 +90,9 @@ const copyLabel = computed(() => {
           <circle cx="9" cy="9" r="1.5" />
         </svg>
       </span>
+
+      <span class="absolute inset-0 bg-ink/5" aria-hidden="true"></span>
+
       <span
         class="absolute left-2 top-2 inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-xs font-medium leading-none"
         :class="chipClass"
@@ -232,9 +104,10 @@ const copyLabel = computed(() => {
         class="absolute bottom-2 right-2 rounded-full bg-white/90 px-2 py-1 text-xs font-medium leading-none text-ink tnum"
         >{{ item.image_count }}P</span
       >
+
       <span
         v-if="showBlur"
-        class="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-center pb-3 opacity-0 transition group-hover:opacity-100"
+        class="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-center pb-3"
         aria-hidden="true"
       >
         <span class="inline-flex items-center gap-1.5 rounded-full bg-ink/80 px-3 py-1.5 text-xs font-medium leading-none text-white">
@@ -247,6 +120,20 @@ const copyLabel = computed(() => {
       </span>
 
     </button>
+
+    <button
+      v-if="!showBlur && props.blurred"
+      type="button"
+      class="absolute bottom-2 left-2 inline-flex h-9 items-center gap-1 rounded-full bg-white/90 px-2.5 text-xs font-medium leading-none text-ink transition hover:bg-white"
+      @click="remask"
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-3.5 w-3.5" aria-hidden="true">
+        <path d="M3 12s3.5-6.5 9-6.5S21 12 21 12s-3.5 6.5-9 6.5S3 12 3 12Z" stroke-linecap="round" stroke-linejoin="round" />
+        <path d="M4 20L20 4" stroke-linecap="round" />
+      </svg>
+      重新遮罩
+    </button>
+    </div>
 
     <div class="mt-2.5 flex flex-col gap-1">
       <p class="line-clamp-2 break-words text-sm font-semibold leading-snug [overflow-wrap:anywhere]">{{ item.title }}</p>
@@ -271,17 +158,17 @@ const copyLabel = computed(() => {
                   : 'border-danger/30 bg-white text-danger'
             "
           >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4" aria-hidden="true">
-            <template v-if="copyState === 'idle'">
-              <rect x="9" y="9" width="11" height="11" rx="2" />
-              <path d="M15 5.5A2.5 2.5 0 0 0 12.5 3H6a2 2 0 0 0-2 2v7.5A2.5 2.5 0 0 0 6.5 15" stroke-linecap="round" />
-            </template>
-            <path v-else-if="copyState === 'copied'" d="M5 12.5l4.5 4.5L19 7" stroke-linecap="round" stroke-linejoin="round" />
-            <template v-else>
-              <path d="M12 8v5" stroke-linecap="round" />
-              <circle cx="12" cy="16.5" r="0.9" fill="currentColor" stroke="none" />
-            </template>
-          </svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4" aria-hidden="true">
+              <template v-if="copyState === 'idle'">
+                <rect x="9" y="9" width="11" height="11" rx="2" />
+                <path d="M15 5.5A2.5 2.5 0 0 0 12.5 3H6a2 2 0 0 0-2 2v7.5A2.5 2.5 0 0 0 6.5 15" stroke-linecap="round" />
+              </template>
+              <path v-else-if="copyState === 'copied'" d="M5 12.5l4.5 4.5L19 7" stroke-linecap="round" stroke-linejoin="round" />
+              <template v-else>
+                <path d="M12 8v5" stroke-linecap="round" />
+                <circle cx="12" cy="16.5" r="0.9" fill="currentColor" stroke="none" />
+              </template>
+            </svg>
           </span>
         </button>
         <span role="status" aria-live="polite" class="sr-only">{{ copyState === 'idle' ? '' : copyLabel }}</span>
@@ -302,12 +189,11 @@ const copyLabel = computed(() => {
 
 <style scoped>
 .is-blurred img {
-  filter: blur(16px);
+  filter: blur(18px);
   transform: scale(1.06);
 }
 
 /* 悬停与键盘聚焦都不揭开，只有显式点按一次才去模糊。 */
-
 @media (prefers-reduced-motion: reduce) {
   .is-blurred img {
     transition: none;
