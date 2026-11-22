@@ -97,7 +97,7 @@ function moveBy(index: number, delta: number): void {
           >封面</span
         >
         <span
-          class="absolute bottom-2 left-2 rounded px-1.5 py-0.5 text-[11px] font-medium"
+          class="absolute bottom-2 left-2 rounded px-1.5 py-0.5 text-xs font-medium"
           :class="STATUS_CLASS[statusOf(item.sortOrder)]"
           >{{ STATUS_TEXT[statusOf(item.sortOrder)] }}</span
         >
@@ -105,7 +105,7 @@ function moveBy(index: number, delta: number): void {
 
       <div class="px-2 py-2">
         <p class="truncate text-xs font-medium" :title="item.name">{{ item.name }}</p>
-        <p class="tnum mt-0.5 text-[11px] text-muted">{{ formatBytes(item.size) }}</p>
+        <p class="tnum mt-0.5 text-xs text-muted">{{ formatBytes(item.size) }}</p>
       </div>
 
       <div class="flex items-center justify-between gap-1 border-t border-line px-1.5 py-1.5">
