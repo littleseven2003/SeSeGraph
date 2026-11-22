@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ApiError } from '../api/client.ts'
 import {
   fetchBackupStatus,
@@ -271,6 +271,18 @@ async function check(): Promise<void> {
 
 onMounted(() => {
   void load()
+})
+
+// 设置读取完成、分组渲染出来之后才能观察锚点，否则一开始找不到节点。
+watch(view, async (next) => {
+  if (next === null) return
+  await nextTick()
+  observeSections()
+})
+
+// observeSections 让左侧目录跟随滚动定位；设置未加载时直接跳过。
+function observeSections(): void {
+  sectionObserver?.disconnect()
   const targets = SETTING_NAV.map((item) => document.getElementById(item.id)).filter(
     (node): node is HTMLElement => node !== null,
   )
@@ -285,10 +297,16 @@ onMounted(() => {
     { rootMargin: '-96px 0px -55% 0px', threshold: [0.1, 0.4] },
   )
   targets.forEach((target) => sectionObserver?.observe(target))
-})
+}
+
+// selectSection 让点按立即更新色点，不依赖滚动观察的下一帧。
+function selectSection(id: string): void {
+  activeSection.value = id
+}
 
 onBeforeUnmount(() => {
   sectionObserver?.disconnect()
+  sectionObserver = undefined
 })
 </script>
 
@@ -324,7 +342,9 @@ onBeforeUnmount(() => {
           v-for="item in SETTING_NAV"
           :key="item.id"
           :href="'#' + item.id"
-          class="inline-flex h-11 shrink-0 items-center rounded border border-line px-3 text-xs font-medium text-muted transition hover:border-ink/25 hover:text-ink"
+          class="inline-flex h-11 shrink-0 items-center rounded border px-3 text-xs font-medium transition hover:border-ink/25 hover:text-ink"
+          :class="activeSection === item.id ? 'border-accent bg-accent-soft text-accent' : 'border-line text-muted'"
+          @click="selectSection(item.id)"
         >
           {{ item.label }}
         </a>
@@ -339,6 +359,7 @@ onBeforeUnmount(() => {
             <a
               :href="'#' + item.id"
               class="flex items-center gap-2 rounded-md px-3 py-2 text-sm transition hover:bg-canvas hover:text-ink"
+              @click="selectSection(item.id)"
               :class="activeSection === item.id ? 'text-ink' : 'text-muted'"
             >
               <span
