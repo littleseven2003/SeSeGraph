@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -46,6 +47,10 @@ func (f *fakeProvider) Upload(_ context.Context, req storage.UploadRequest) (sto
 	return storage.UploadResult{Provider: "fake", FileID: fmt.Sprintf("file-%d", call), MessageID: int64(call)}, nil
 }
 
+func (f *fakeProvider) OpenStream(context.Context, string) (storage.Stream, error) {
+	return storage.Stream{Body: io.NopCloser(strings.NewReader(""))}, nil
+}
+
 func (f *fakeProvider) callCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -53,6 +58,24 @@ func (f *fakeProvider) callCount() int {
 }
 
 // testClock 提供可推进的时钟，让间隔与退避断言稳定可复现。
+// snapshotFake 在首次上传时触发回调，用于模拟上传途中发生的配置切换。
+type snapshotFake struct {
+	inner    *fakeProvider
+	onUpload func()
+	once     sync.Once
+}
+
+func (s *snapshotFake) Name() string { return s.inner.Name() }
+
+func (s *snapshotFake) Upload(ctx context.Context, req storage.UploadRequest) (storage.UploadResult, error) {
+	if s.onUpload != nil {
+		s.once.Do(s.onUpload)
+	}
+	return s.inner.Upload(ctx, req)
+}
+
+func (s *snapshotFake) Snapshot() (storage.StreamProvider, bool) { return s.inner, true }
+
 type testClock struct {
 	mu        sync.Mutex
 	now       time.Time
@@ -470,5 +493,30 @@ func TestProcessOnceWaitsWhileProviderNotReady(t *testing.T) {
 	}
 	if e.provider.callCount() != 0 {
 		t.Errorf("上传次数 = %d，期望 0", e.provider.callCount())
+	}
+}
+
+// TestProcessUsesSingleProviderForWholePost 验证一帖在途上传固定使用同一份配置：
+// 上传途中切换提供方，后续图片仍走开始时的那一份。
+func TestProcessUsesSingleProviderForWholePost(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.queuedPost(t, 2, "photo")
+
+	original := e.provider
+	other := &fakeProvider{}
+	wrapper := &snapshotFake{inner: original, onUpload: func() {
+		e.worker.provider = other
+	}}
+	e.worker.provider = wrapper
+
+	if _, err := e.worker.ProcessOnce(ctx); err != nil {
+		t.Fatalf("处理失败: %v", err)
+	}
+	if original.callCount() != 2 {
+		t.Errorf("原提供方上传次数 = %d，期望 2", original.callCount())
+	}
+	if other.callCount() != 0 {
+		t.Errorf("切换后的提供方上传次数 = %d，期望 0", other.callCount())
 	}
 }

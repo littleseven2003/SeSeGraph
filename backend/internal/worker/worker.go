@@ -159,9 +159,14 @@ func (w *Worker) ProcessOnce(ctx context.Context) (bool, error) {
 }
 
 // Process 逐张上传帖子中的图片，全部完成后把帖子置为已完成。
+// 一帖全程固定使用同一份提供方，避免上传途中配置热切换导致同一帖分散到不同图床。
 func (w *Worker) Process(ctx context.Context, postID int64) error {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	provider := w.provider
+	if fixed, ok := w.fixedProvider(); ok {
+		provider = fixed
 	}
 	post, err := w.repo.Get(ctx, postID)
 	if err != nil {
@@ -178,7 +183,7 @@ func (w *Worker) Process(ctx context.Context, postID int64) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := w.uploadImage(ctx, post, image); err != nil {
+		if err := w.uploadImage(ctx, provider, post, image); err != nil {
 			w.finish(ctx, postID, posts.StatusFailed, "上传图片失败")
 			return errors.New("上传图片失败")
 		}
@@ -201,8 +206,17 @@ func (w *Worker) Process(ctx context.Context, postID int64) error {
 	return nil
 }
 
+// fixedProvider 在提供方支持快照时取一份固定视图，保证整帖使用同一配置。
+func (w *Worker) fixedProvider() (storage.Provider, bool) {
+	snapshotter, ok := w.provider.(storage.Snapshotter)
+	if !ok {
+		return nil, false
+	}
+	return snapshotter.Snapshot()
+}
+
 // uploadImage 上传单张图片。遇到限流按返回的等待时长退避重试，其余错误直接记为失败。
-func (w *Worker) uploadImage(ctx context.Context, post *posts.Post, image posts.Image) error {
+func (w *Worker) uploadImage(ctx context.Context, provider storage.Provider, post *posts.Post, image posts.Image) error {
 	path := filepath.Join(w.dataDir, filepath.FromSlash(image.TempFilePath))
 
 	for attempt := 1; ; attempt++ {
@@ -215,7 +229,7 @@ func (w *Worker) uploadImage(ctx context.Context, post *posts.Post, image posts.
 			_ = w.repo.MarkImageFailed(ctx, image.ID, "读取临时文件失败")
 			return errors.New("读取临时文件失败")
 		}
-		result, uploadErr := w.provider.Upload(ctx, storage.UploadRequest{
+		result, uploadErr := provider.Upload(ctx, storage.UploadRequest{
 			FileName: filepath.Base(path),
 			MIMEType: image.MimeType,
 			Size:     image.FileSize,
@@ -225,7 +239,7 @@ func (w *Worker) uploadImage(ctx context.Context, post *posts.Post, image posts.
 		_ = file.Close()
 
 		if uploadErr == nil {
-			if err := w.repo.MarkImageStored(ctx, image.ID, result.FileID, result.MessageID, w.provider.Name()); err != nil {
+			if err := w.repo.MarkImageStored(ctx, image.ID, result.FileID, result.MessageID, provider.Name()); err != nil {
 				return err
 			}
 			_ = os.Remove(path)

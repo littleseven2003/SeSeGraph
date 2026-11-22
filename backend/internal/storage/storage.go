@@ -71,6 +71,12 @@ type Stream struct {
 	Size        int64
 }
 
+// Snapshotter 是提供方的可选接口：返回一份固定视图，
+// 让一次任务或一次请求在配置热切换期间仍使用同一份图床配置。
+type Snapshotter interface {
+	Snapshot() (StreamProvider, bool)
+}
+
 // StreamProvider 是在上传之外提供流式读取的图床接口，供图片网关按远端标识转发。
 type StreamProvider interface {
 	Provider

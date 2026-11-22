@@ -60,6 +60,19 @@ func (s *Switcher) current() (*Telegram, error) {
 	return s.provider, nil
 }
 
+// Snapshot 返回当前提供方的固定视图，调用方可在一段流程内复用同一份配置。
+func (s *Switcher) Snapshot() (StreamProvider, bool) {
+	if s == nil {
+		return nil, false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.provider == nil {
+		return nil, false
+	}
+	return s.provider, true
+}
+
 // Upload 按当前提供方上传单张图片。
 func (s *Switcher) Upload(ctx context.Context, req UploadRequest) (UploadResult, error) {
 	provider, err := s.current()
