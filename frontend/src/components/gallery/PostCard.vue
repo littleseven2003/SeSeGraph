@@ -82,6 +82,7 @@ const copyLabel = computed(() => {
       type="button"
       class="relative block aspect-[4/3] w-full overflow-hidden bg-canvas"
       :aria-label="`打开《${item.title}》详情`"
+      data-reveal="cover"
       @click="onOpen"
     >
       <img
@@ -163,7 +164,7 @@ const copyLabel = computed(() => {
 }
 
 /* 键盘去模糊只认焦点可见状态：鼠标点按会聚焦按钮，用 focus-within 会让模糊失效。 */
-.is-blurred:has(button:focus-visible) img {
+.is-blurred:has([data-reveal='cover']:focus-visible) img {
   filter: none;
   transform: none;
 }
