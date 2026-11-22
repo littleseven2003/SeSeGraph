@@ -25,6 +25,11 @@ import { acceptedCount, initialStatuses, planUploads, type UploadStatus } from '
 import { DEFAULT_META_FILENAMES, unpackZip } from '../utils/zip.ts'
 import { fetchSettings } from '../api/settings.ts'
 import {
+  fallbackDefaults,
+  loadWorkbenchInitialization,
+  type WorkbenchDefaults,
+} from '../utils/workbench-init.ts'
+import {
   appendSelection,
   assignSortOrders,
   createId,
@@ -51,6 +56,9 @@ const mode = ref<UploadMode>('photo')
 // 设置页保存的说明文件名与解析方式；读取失败时沿用内置默认值。
 const metaNames = ref<string[]>([...DEFAULT_META_FILENAMES])
 const metaParseMode = ref<'first-line' | 'key-value'>('first-line')
+// rules 是本次工作台使用的默认规则；ready 之前文件入口保持关闭。
+const rules = ref<WorkbenchDefaults>(fallbackDefaults())
+const ready = ref(false)
 let modeTouched = false
 const tiles = ref<WorkbenchTile[]>([])
 const coverId = ref('')
@@ -119,50 +127,55 @@ const phaseText = computed(() => {
 })
 
 onMounted(() => {
-  void loadSettingsDefaults()
-  const saved = loadTask(storage)
-  if (!saved) return
-  snapshot.value = saved
-  void hydrate(saved)
+  void bootstrap()
 })
 
-// loadSettingsDefaults 读取设置页保存的发帖默认值，失败时保持内置默认。
-async function loadSettingsDefaults(): Promise<void> {
-  try {
-    const view = await fetchSettings()
-    if (view.meta.filenames.length > 0) metaNames.value = view.meta.filenames
-    metaParseMode.value = view.meta.parse_mode === 'key-value' ? 'key-value' : 'first-line'
-    // 只在用户还没手动切换、也没有续传任务时应用默认画质。
-    if (!modeTouched && snapshot.value === null && !locked.value) {
-      mode.value = view.upload.default_mode === 'document' ? 'document' : 'photo'
-    }
-  } catch {
-    // 默认值读取失败不影响发帖，保留内置默认。
+// bootstrap 先把设置与续传进度读完再开放文件入口，
+// 避免用户先拖入 ZIP 或先重选原图时用到还没确定的规则。
+async function bootstrap(): Promise<void> {
+  const saved = loadTask(storage)
+  if (saved) snapshot.value = saved
+  const init = await loadWorkbenchInitialization({
+    loadSettings: fetchSettings,
+    loadProgress: fetchProgress,
+    snapshot: saved,
+  })
+  rules.value = init.defaults
+  metaNames.value = init.defaults.metaNames
+  metaParseMode.value = init.defaults.parseMode
+  if (init.resumeMode !== null) {
+    mode.value = init.resumeMode
+    modeTouched = true
+  } else if (!modeTouched) {
+    mode.value = init.defaults.defaultMode
   }
-}
-
-// hydrate 按快照读取服务端进度，刷新后可直接查看进度并重试。
-async function hydrate(saved: TaskSnapshot): Promise<void> {
-  try {
-    const progress = await fetchProgress(saved.postId)
-    postId.value = saved.postId
-    // 续传沿用原任务画质：全局默认可能已改，文件大小校验必须按原模式进行。
-    if (progress.upload_mode === 'document' || progress.upload_mode === 'photo') {
-      mode.value = progress.upload_mode
-      modeTouched = true
-    }
-    applyServerProgress(progress)
-    phase.value = progress.status === 'uploading' ? 'idle' : progress.status === 'failed' ? 'failed' : 'queued'
-    if (isActiveStatus(progress.status)) {
-      startPolling(saved.postId)
-    }
-    if (progress.status === 'completed') {
-      message.value = `任务 #${saved.postId} 已存图完成`
-    }
-  } catch {
-    // 任务不存在（例如数据目录被清空）时丢弃快照，避免挡住新任务。
+  if (saved && init.progress !== null) {
+    hydrate(saved, init.progress)
+  } else if (saved) {
+    // 续传任务已不存在（例如数据目录被清空）时丢弃快照。
     clearTask(storage)
     snapshot.value = null
+    resetToDefaultMode()
+  }
+  ready.value = true
+}
+
+// resetToDefaultMode 回到本次设置的默认画质，用于退出续传或重新开始。
+function resetToDefaultMode(): void {
+  mode.value = rules.value.defaultMode
+  modeTouched = false
+}
+
+// hydrate 用已读取的服务端进度恢复界面状态，避免重复请求。
+function hydrate(saved: TaskSnapshot, progress: ServerProgress): void {
+  postId.value = saved.postId
+  applyServerProgress(progress)
+  phase.value = progress.status === 'uploading' ? 'idle' : progress.status === 'failed' ? 'failed' : 'queued'
+  if (isActiveStatus(progress.status)) {
+    startPolling(saved.postId)
+  }
+  if (progress.status === 'completed') {
+    message.value = `任务 #${saved.postId} 已存图完成`
   }
 }
 
@@ -465,6 +478,7 @@ function discardSnapshot(): void {
   phase.value = 'idle'
   statuses.value = {}
   serverProgress.value = null
+  resetToDefaultMode()
   message.value =
     tiles.value.length === 0
       ? '已放弃上次任务，可以重新选择图片'
@@ -483,6 +497,7 @@ function clearAll(): void {
   draft.value = { title: '', description: '', tags: [], author: '' }
   snapshot.value = null
   resetProgress()
+  resetToDefaultMode()
 }
 
 // 建任务：已存在任务或上次未完成任务时复用，避免重复建帖。
@@ -700,7 +715,7 @@ onBeforeUnmount(() => {
             type="button"
             class="h-8 rounded px-2.5 text-xs font-medium transition disabled:opacity-50"
             :class="mode === option.value ? 'bg-brand text-brand-ink' : 'text-muted hover:bg-canvas'"
-            :disabled="locked"
+            :disabled="!ready || locked"
             @click="setMode(option.value as UploadMode)"
           >
             {{ option.label }}
@@ -708,9 +723,10 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <DropZone :disabled="working || locked" @zip="onZip" @images="onImages" @error="pushError" />
+      <DropZone :disabled="!ready || working || locked" @zip="onZip" @images="onImages" @error="pushError" />
 
-      <div v-if="working" class="mt-3 text-sm text-muted">正在解压压缩包…</div>
+      <div v-if="!ready" class="mt-3 text-sm text-muted">正在读取设置与续传信息…</div>
+      <div v-else-if="working" class="mt-3 text-sm text-muted">正在解压压缩包…</div>
 
       <template v-if="tiles.length > 0">
         <div class="mt-5 flex flex-wrap items-end justify-between gap-3">
