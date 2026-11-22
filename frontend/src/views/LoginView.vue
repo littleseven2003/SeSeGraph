@@ -90,7 +90,7 @@ async function submit(): Promise<void> {
         <button
           type="submit"
           :disabled="pending || username === '' || password === ''"
-          class="mt-5 h-11 w-full rounded-md bg-brand text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:cursor-not-allowed disabled:opacity-60"
+          class="mt-5 h-11 w-full rounded-md bg-brand text-sm font-medium text-brand-ink shadow-[0_2px_0_0_#9e2b12] transition hover:bg-brand-strong motion-safe:active:translate-y-[2px] active:shadow-none disabled:cursor-not-allowed disabled:bg-line disabled:text-muted disabled:shadow-none"
         >
           {{ pending ? '正在登录…' : '登录' }}
         </button>
