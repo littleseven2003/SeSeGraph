@@ -142,7 +142,15 @@ const copyLabel = computed(() => {
     </div>
 
     <div class="mt-2 flex flex-col gap-0.5">
-      <p class="line-clamp-2 break-words text-[13px] font-semibold leading-snug [overflow-wrap:anywhere]">{{ item.title }}</p>
+      <p class="line-clamp-2 break-words text-[13px] font-semibold leading-snug [overflow-wrap:anywhere]">
+        <button
+          type="button"
+          class="text-left underline-offset-4 transition hover:text-brand-strong hover:underline focus-visible:underline"
+          @click="emit('open', item.id)"
+        >
+          {{ item.title }}
+        </button>
+      </p>
 
       <div class="flex items-center gap-1">
         <p class="min-w-0 flex-1 truncate text-xs text-muted tnum">

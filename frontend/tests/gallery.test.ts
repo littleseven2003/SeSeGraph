@@ -274,6 +274,20 @@ test('鼠标离开封面立即回遮，遮罩切换不做渐变', () => {
   assert.equal(/:hover\) img/.test(card), false)
 })
 
+test('卡片标题用原生按钮打开详情且不揭开封面', () => {
+  const card = readFileSync(new URL('../src/components/gallery/PostCard.vue', import.meta.url), 'utf8')
+  const start = card.indexOf('<p class="line-clamp-2')
+  const block = card.slice(start, start + 420)
+  assert.ok(block.includes('<button'), '标题是原生按钮，Enter 与 Space 都能触发')
+  assert.ok(block.includes('@click="emit(\'open\', item.id)"'), '点击直接打开详情')
+  assert.equal(block.includes('activate'), false, '标题不揭开封面')
+  assert.ok(block.includes('line-clamp-2'), '保留两行截断')
+  assert.ok(block.includes('focus-visible:underline'), '键盘聚焦可见')
+
+  const drawer = readFileSync(new URL('../src/components/gallery/DetailDrawer.vue', import.meta.url), 'utf8')
+  assert.ok(drawer.includes('previousFocus'), '关闭后焦点归还触发元素')
+})
+
 test('主页布局偏好默认画廊并持久化', () => {
   const store = new Map<string, string>()
   const storage = {
