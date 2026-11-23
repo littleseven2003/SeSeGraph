@@ -21,8 +21,11 @@ bin/
 /backend/internal/web/assets/*
 !/backend/internal/web/assets/.keep
 
-# 本地预览夹具（含虚构配置与演示数据，不入库也不进镜像）
+# 本地预览夹具与样屏（含虚构配置与演示数据，不入库也不进镜像）
 frontend/src/dev/
+frontend/auth-*.html
+frontend/drawer-*.html
+frontend/workbench-*.html
 
 # 本地测试与个人配置（可能含凭据、个人域名或频道信息）
 .local/

@@ -16,6 +16,10 @@ README.md
 CHANGELOG.md
 LICENSE
 frontend/src/dev
+# 本地 HTML 样屏只留在工作区，不进入构建上下文
+frontend/auth-*.html
+frontend/drawer-*.html
+frontend/workbench-*.html
 # 本地临时素材与个人样屏，不入镜像
 .local
 .local/
