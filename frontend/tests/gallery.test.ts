@@ -288,6 +288,15 @@ test('卡片标题用原生按钮打开详情且不揭开封面', () => {
   assert.ok(drawer.includes('previousFocus'), '关闭后焦点归还触发元素')
 })
 
+test('焦点区不再有手动暂停控件，保留悬停与聚焦暂停', () => {
+  const source = readFileSync(new URL('../src/components/gallery/FocusCarousel.vue', import.meta.url), 'utf8')
+  assert.equal(source.includes('manualPaused'), false, '手动暂停状态已清除')
+  assert.equal(source.includes('暂停自动切换'), false, '暂停按钮已移除')
+  assert.ok(source.includes('hoverPaused'), '悬停暂停保留')
+  assert.ok(source.includes('focusPaused'), '区内焦点暂停保留')
+  assert.ok(source.includes('reducedMotion'), '减少动效规则保留')
+})
+
 test('主页布局偏好默认画廊并持久化', () => {
   const store = new Map<string, string>()
   const storage = {

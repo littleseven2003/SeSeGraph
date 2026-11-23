@@ -12,10 +12,9 @@ const emit = defineEmits<{ open: [id: number] }>()
 const AUTO_MS = 5500
 const index = ref(0)
 // 三种暂停原因各自独立：手动按钮、悬停、区内焦点，再加上封面已解锁。
-const manualPaused = ref(false)
 const hoverPaused = ref(false)
 const focusPaused = ref(false)
-const paused = computed(() => manualPaused.value || hoverPaused.value || focusPaused.value)
+const paused = computed(() => hoverPaused.value || focusPaused.value)
 let timer: ReturnType<typeof setInterval> | undefined
 
 const current = computed<GalleryItem | null>(() => props.items[index.value] ?? null)
@@ -202,16 +201,6 @@ onBeforeUnmount(() => {
                 点击查看
               </span>
             </span>
-          </button>
-
-          <button
-            type="button"
-            class="absolute right-3 top-3 inline-flex h-8 items-center rounded-full bg-white/85 px-2.5 text-xs font-medium leading-none text-ink backdrop-blur transition hover:bg-white"
-            :aria-label="manualPaused ? '继续自动切换' : '暂停自动切换'"
-            :aria-pressed="manualPaused"
-            @click="manualPaused = !manualPaused"
-          >
-            {{ manualPaused ? '继续' : '暂停' }}
           </button>
 
           <button
