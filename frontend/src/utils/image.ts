@@ -11,6 +11,7 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   png: 'image/png',
   webp: 'image/webp',
   gif: 'image/gif',
+  mp4: 'video/mp4',
 }
 
 // 单张图片上限，与后端 LimitForMode 对齐。

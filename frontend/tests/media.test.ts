@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { mimeForName } from '../src/utils/image.ts'
 import {
   COMPRESS_MAX_DIMENSION_SUM,
   MAX_VIDEO_BYTES,
@@ -68,4 +69,9 @@ test('压缩汇总与体积对比文案', () => {
   assert.match(summary, /→/)
   assert.equal(compressionSummary([]), '')
   assert.match(sizeCompare(18_400_000, 6_200_000), /^17\.5 MB → 5\.9 MB$/)
+})
+
+test('mimeForName 覆盖 MP4', () => {
+  assert.equal(mimeForName('clip.mp4'), 'video/mp4')
+  assert.equal(mimeForName('photo.jpg'), 'image/jpeg')
 })
