@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -27,6 +29,9 @@ type fakeFileAPI struct {
 	getFileBody   string
 	body          []byte
 	contentType   string
+	// rangeMode 控制下载接口对 Range 的处理：empty 忽略、honor 返回 206、bad 返回错位区间。
+	rangeMode string
+	lastRange string
 }
 
 func newFakeFileAPI(t *testing.T) *fakeFileAPI {
@@ -65,6 +70,27 @@ func (f *fakeFileAPI) handle(w http.ResponseWriter, r *http.Request) {
 	f.downloadCalls++
 	if f.failDownload || (f.failPath != "" && strings.HasSuffix(r.URL.Path, f.failPath)) {
 		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	f.lastRange = r.Header.Get("Range")
+	if f.rangeMode == "honor" {
+		start, end, ok := parseRangeForTest(r.Header.Get("Range"), int64(len(f.body)))
+		if !ok {
+			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		w.Header().Set("Content-Type", f.contentType)
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(f.body)))
+		w.Header().Set("Content-Length", strconv.FormatInt(end-start+1, 10))
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(f.body[start : end+1])
+		return
+	}
+	if f.rangeMode == "bad" {
+		w.Header().Set("Content-Type", f.contentType)
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes 0-%d/%d", len(f.body)-1, len(f.body)+5))
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(f.body)
 		return
 	}
 	w.Header().Set("Content-Type", f.contentType)
@@ -437,5 +463,104 @@ func TestOpenStreamInfersImageTypeFromPath(t *testing.T) {
 	_ = html.Body.Close()
 	if html.ContentType != "text/html" {
 		t.Errorf("Content-Type = %q，期望保留上游的 text/html", html.ContentType)
+	}
+}
+
+// parseRangeForTest 解析测试用到的单区间请求。
+func parseRangeForTest(header string, size int64) (int64, int64, bool) {
+	if !strings.HasPrefix(header, "bytes=") {
+		return 0, 0, false
+	}
+	spec := strings.TrimPrefix(header, "bytes=")
+	startText, endText, found := strings.Cut(spec, "-")
+	if !found {
+		return 0, 0, false
+	}
+	start, err := strconv.ParseInt(startText, 10, 64)
+	if err != nil || start < 0 || start >= size {
+		return 0, 0, false
+	}
+	end := size - 1
+	if endText != "" {
+		parsed, parseErr := strconv.ParseInt(endText, 10, 64)
+		if parseErr != nil || parsed < start {
+			return 0, 0, false
+		}
+		if parsed < end {
+			end = parsed
+		}
+	}
+	return start, end, true
+}
+
+func TestOpenStreamRangeHonorsUpstream206(t *testing.T) {
+	api := newFakeFileAPI(t)
+	api.body = []byte("0123456789")
+	api.rangeMode = "honor"
+	provider := newDownloadProvider(t, api, nil)
+
+	stream, err := provider.OpenStreamRange(context.Background(), "file-1", ByteRange{Start: 2, Length: 4})
+	if err != nil {
+		t.Fatalf("区间读取失败: %v", err)
+	}
+	defer func() { _ = stream.Body.Close() }()
+	got, err := io.ReadAll(stream.Body)
+	if err != nil {
+		t.Fatalf("读取失败: %v", err)
+	}
+	if string(got) != "2345" || stream.Start != 2 || stream.End != 5 || stream.Size != 10 {
+		t.Errorf("区间结果不符: body=%q start=%d end=%d size=%d", got, stream.Start, stream.End, stream.Size)
+	}
+}
+
+func TestOpenStreamRangeRejectsMismatched206(t *testing.T) {
+	api := newFakeFileAPI(t)
+	api.body = []byte("0123456789")
+	api.rangeMode = "bad"
+	provider := newDownloadProvider(t, api, nil)
+
+	if _, err := provider.OpenStreamRange(context.Background(), "file-1", ByteRange{Start: 0, Length: 2}); !errors.Is(err, ErrUpstream) {
+		t.Fatalf("错位区间错误 = %v，期望 ErrUpstream", err)
+	}
+}
+
+func TestOpenStreamRangeFallsBackWhenUpstreamIgnoresRange(t *testing.T) {
+	api := newFakeFileAPI(t)
+	api.body = []byte("0123456789")
+	provider := newDownloadProvider(t, api, nil)
+
+	stream, err := provider.OpenStreamRange(context.Background(), "file-1", ByteRange{Start: 3, Length: 4})
+	if err != nil {
+		t.Fatalf("回退读取失败: %v", err)
+	}
+	defer func() { _ = stream.Body.Close() }()
+	got, _ := io.ReadAll(stream.Body)
+	if string(got) != "3456" {
+		t.Errorf("回退正文 = %q，期望跳过前缀并限长", got)
+	}
+	if stream.Start != -1 || stream.End != -1 {
+		t.Errorf("回退响应应标记为整段: start=%d end=%d", stream.Start, stream.End)
+	}
+}
+
+func TestOpenStreamRangeRefreshesPathOn404(t *testing.T) {
+	api := newFakeFileAPI(t)
+	api.body = []byte("0123456789")
+	api.rangeMode = "honor"
+	api.failPath = "missing.jpg"
+	provider := newDownloadProvider(t, api, nil)
+	provider.cache.set("file-1", pathEntry{path: "stale/missing.jpg", size: int64(len(api.body)), expires: time.Now().Add(time.Hour)}, time.Now())
+
+	stream, err := provider.OpenStreamRange(context.Background(), "file-1", ByteRange{Start: 1, Length: 2})
+	if err != nil {
+		t.Fatalf("刷新路径后读取失败: %v", err)
+	}
+	defer func() { _ = stream.Body.Close() }()
+	got, _ := io.ReadAll(stream.Body)
+	if string(got) != "12" {
+		t.Errorf("刷新后正文 = %q", got)
+	}
+	if getCalls, downloadCalls := api.counts(); getCalls != 1 || downloadCalls != 2 {
+		t.Errorf("调用次数 = getFile %d / download %d，期望 1 / 2", getCalls, downloadCalls)
 	}
 }

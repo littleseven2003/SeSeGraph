@@ -188,7 +188,7 @@ func (t *Telegram) OpenStream(ctx context.Context, fileID string) (Stream, error
 	if response.ContentLength > 0 {
 		size = response.ContentLength
 	}
-	return Stream{Body: response.Body, ContentType: contentType, Size: size}, nil
+	return Stream{Body: response.Body, ContentType: contentType, Size: size, Start: -1, End: -1}, nil
 }
 
 // Size 返回远端文件大小，供网关解析 Range 请求。
@@ -260,11 +260,31 @@ func (t *Telegram) OpenStreamRange(ctx context.Context, fileID string, r ByteRan
 
 	switch response.StatusCode {
 	case http.StatusPartialContent:
+		start, end, total, ok := parseContentRange(response.Header.Get("Content-Range"))
+		if !ok {
+			_ = response.Body.Close()
+			return Stream{}, ErrUpstream
+		}
+		// 上游区间必须落在请求起点，且总长与 getFile 一致，否则拒绝而不是写出错位的 206。
+		if start != r.Start || total != size || end < start || end >= size {
+			_ = response.Body.Close()
+			return Stream{}, ErrUpstream
+		}
+		length := end - start + 1
+		if response.ContentLength > 0 && response.ContentLength != length {
+			_ = response.Body.Close()
+			return Stream{}, ErrUpstream
+		}
+		return Stream{Body: response.Body, ContentType: streamContentType(response, path), Size: total, Start: start, End: end}, nil
 	case http.StatusOK:
-		// 上游忽略 Range：总长可信且在视频上限内时跳过前缀，否则交给调用方整段返回。
+		// 上游忽略 Range：总长必须可信且不超过视频上限，长度也要与 getFile 一致。
 		if size <= 0 || size > MaxVideoBytes {
 			_ = response.Body.Close()
 			return Stream{}, ErrRangeUnsupported
+		}
+		if response.ContentLength > 0 && response.ContentLength != size {
+			_ = response.Body.Close()
+			return Stream{}, ErrUpstream
 		}
 		if r.Start > 0 {
 			if _, err := io.CopyN(io.Discard, response.Body, r.Start); err != nil {
@@ -279,13 +299,43 @@ func (t *Telegram) OpenStreamRange(ctx context.Context, fileID string, r ByteRan
 				io.Closer
 			}{io.LimitReader(response.Body, r.Length), response.Body}
 		}
-		return Stream{Body: body, ContentType: streamContentType(response, path), Size: size}, nil
+		// 整段回退仍标记为整段响应，网关据此写 200。
+		return Stream{Body: body, ContentType: streamContentType(response, path), Size: size, Start: -1, End: -1}, nil
 	default:
 		_ = response.Body.Close()
 		return Stream{}, ErrUpstream
 	}
+}
 
-	return Stream{Body: response.Body, ContentType: streamContentType(response, path), Size: size}, nil
+// parseContentRange 解析 bytes start-end/total，缺字段或不合法时返回 false。
+func parseContentRange(value string) (start, end, total int64, ok bool) {
+	value = strings.TrimSpace(value)
+	if !strings.HasPrefix(strings.ToLower(value), "bytes ") {
+		return 0, 0, 0, false
+	}
+	spec := strings.TrimSpace(value[len("bytes "):])
+	rangePart, totalPart, found := strings.Cut(spec, "/")
+	if !found {
+		return 0, 0, 0, false
+	}
+	startText, endText, found := strings.Cut(rangePart, "-")
+	if !found {
+		return 0, 0, 0, false
+	}
+	var err error
+	if start, err = strconv.ParseInt(strings.TrimSpace(startText), 10, 64); err != nil {
+		return 0, 0, 0, false
+	}
+	if end, err = strconv.ParseInt(strings.TrimSpace(endText), 10, 64); err != nil {
+		return 0, 0, 0, false
+	}
+	if total, err = strconv.ParseInt(strings.TrimSpace(totalPart), 10, 64); err != nil {
+		return 0, 0, 0, false
+	}
+	if start < 0 || end < start || total <= end {
+		return 0, 0, 0, false
+	}
+	return start, end, total, true
 }
 
 // streamContentType 解析下载响应的内容类型，必要时按文件扩展名补全。

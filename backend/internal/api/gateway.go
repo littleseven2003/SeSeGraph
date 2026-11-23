@@ -223,27 +223,60 @@ func (g *imageGateway) handle(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
+	// 每个请求固定一份图床视图，避免热切换期间 Size 与取流落到不同实例。
+	streams := g.streams
+	if snapshotter, ok := g.streams.(storage.Snapshotter); ok {
+		if fixed, ready := snapshotter.Snapshot(); ready {
+			streams = fixed
+		}
+	}
+
+	// 区间读取只对 MP4 生效，已有图片保持整段响应，不改旧行为。
+	video := strings.EqualFold(image.MIMEType, posts.MimeVideoMP4)
 	var requested storage.ByteRange
+	var total int64
 	ranged := false
-	if header := strings.TrimSpace(c.Request.Header.Get("Range")); header != "" {
-		if ranger, ok := g.streams.(storage.RangeStreamer); ok {
-			if size, sizeErr := ranger.Size(ctx, image.RemoteFileID); sizeErr == nil {
-				parsed, verdict := parseByteRange(header, size)
-				switch verdict {
-				case rangeUnsatisfiable:
-					c.Header("Accept-Ranges", "bytes")
-					c.Header("Content-Range", "bytes */"+strconv.FormatInt(size, 10))
-					c.Header("Cache-Control", "no-store")
-					c.Status(http.StatusRequestedRangeNotSatisfiable)
-					return
-				case rangeUsable:
-					requested, ranged = parsed, true
+	if video {
+		if header := strings.TrimSpace(c.Request.Header.Get("Range")); header != "" {
+			if ranger, ok := streams.(storage.RangeStreamer); ok {
+				if size, sizeErr := ranger.Size(ctx, image.RemoteFileID); sizeErr == nil {
+					total = size
+					parsed, verdict := parseByteRange(header, size)
+					switch verdict {
+					case rangeUnsatisfiable:
+						c.Header("Accept-Ranges", "bytes")
+						c.Header("Content-Range", "bytes */"+strconv.FormatInt(size, 10))
+						c.Header("Cache-Control", "no-store")
+						c.Status(http.StatusRequestedRangeNotSatisfiable)
+						return
+					case rangeUsable:
+						requested, ranged = parsed, true
+					}
 				}
 			}
 		}
 	}
 
-	stream, partial, err := g.openStream(ctx, image.RemoteFileID, requested, ranged)
+	// HEAD 只探元数据与响应头：不回源取正文，也就不需要为上游忽略 Range 而读前缀。
+	if ranged && c.Request.Method == http.MethodHead {
+		end := requested.Start + requested.Length - 1
+		if total > 0 && end >= total {
+			end = total - 1
+		}
+		length := end - requested.Start + 1
+		c.Header("Content-Type", image.MIMEType)
+		c.Header("Cache-Control", imageCacheControl)
+		c.Header("Content-Disposition", "inline")
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("Accept-Ranges", "bytes")
+		c.Header("Content-Range", "bytes "+strconv.FormatInt(requested.Start, 10)+"-"+
+			strconv.FormatInt(end, 10)+"/"+strconv.FormatInt(total, 10))
+		c.Header("Content-Length", strconv.FormatInt(length, 10))
+		c.Status(http.StatusPartialContent)
+		return
+	}
+
+	stream, partial, err := g.openStream(streams, ctx, image.RemoteFileID, requested, ranged)
 	switch {
 	case errors.Is(err, storage.ErrFileUnavailable):
 		notFound(c)
@@ -280,13 +313,9 @@ func (g *imageGateway) handle(c *gin.Context) {
 	c.Header("X-Content-Type-Options", "nosniff")
 	c.Header("Accept-Ranges", "bytes")
 	if partial {
-		length := requested.Length
-		if stream.Size > 0 && requested.Start+length > stream.Size {
-			length = stream.Size - requested.Start
-		}
-		end := requested.Start + length - 1
-		c.Header("Content-Range", "bytes "+strconv.FormatInt(requested.Start, 10)+"-"+
-			strconv.FormatInt(end, 10)+"/"+strconv.FormatInt(stream.Size, 10))
+		length := stream.End - stream.Start + 1
+		c.Header("Content-Range", "bytes "+strconv.FormatInt(stream.Start, 10)+"-"+
+			strconv.FormatInt(stream.End, 10)+"/"+strconv.FormatInt(stream.Size, 10))
 		c.Header("Content-Length", strconv.FormatInt(length, 10))
 		c.Status(http.StatusPartialContent)
 	} else if stream.Size > 0 {
@@ -313,15 +342,23 @@ func (g *imageGateway) handle(c *gin.Context) {
 }
 
 // openStream 按是否请求区间打开上游流；上游不支持区间时退回整段响应。
-func (g *imageGateway) openStream(ctx context.Context, fileID string, r storage.ByteRange, ranged bool) (storage.Stream, bool, error) {
+func (g *imageGateway) openStream(provider storage.StreamProvider, ctx context.Context, fileID string, r storage.ByteRange, ranged bool) (storage.Stream, bool, error) {
 	if !ranged {
-		stream, err := g.streams.OpenStream(ctx, fileID)
+		stream, err := provider.OpenStream(ctx, fileID)
 		return stream, false, err
 	}
-	ranger := g.streams.(storage.RangeStreamer)
+	ranger, ok := provider.(storage.RangeStreamer)
+	if !ok {
+		stream, err := provider.OpenStream(ctx, fileID)
+		return stream, false, err
+	}
 	stream, err := ranger.OpenStreamRange(ctx, fileID, r)
 	if errors.Is(err, storage.ErrRangeUnsupported) {
-		stream, err = g.streams.OpenStream(ctx, fileID)
+		stream, err = provider.OpenStream(ctx, fileID)
+		return stream, false, err
+	}
+	// 上游没有按区间返回时退回整段，避免按请求范围写出错误的 206。
+	if err != nil || stream.Start < 0 {
 		return stream, false, err
 	}
 	return stream, true, err

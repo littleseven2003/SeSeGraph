@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -747,6 +749,8 @@ func (p *rangeProvider) OpenStreamRange(_ context.Context, _ string, r storage.B
 		Body:        io.NopCloser(bytes.NewReader(p.body[start:end])),
 		ContentType: "video/mp4",
 		Size:        int64(len(p.body)),
+		Start:       start,
+		End:         end - 1,
 	}, nil
 }
 
@@ -770,6 +774,79 @@ func openRange(t *testing.T, method, url, header string) (*http.Response, []byte
 		t.Fatalf("读取响应失败: %v", err)
 	}
 	return response, body
+}
+
+// newSwitcherProvider 用真实 Switcher 包一个指向测试文件服务的提供方，
+// 验证生产入口的固定快照与区间能力，而不是靠测试替身直接满足接口。
+func newSwitcherProvider(t *testing.T, body []byte) storage.StreamProvider {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/getFile") {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok":     true,
+				"result": map[string]any{"file_path": "videos/clip.mp4", "file_size": len(body)},
+			})
+			return
+		}
+		header := r.Header.Get("Range")
+		if strings.HasPrefix(header, "bytes=") {
+			spec := strings.TrimPrefix(header, "bytes=")
+			startText, endText, _ := strings.Cut(spec, "-")
+			start, _ := strconv.Atoi(startText)
+			end := len(body) - 1
+			if endText != "" {
+				if parsed, err := strconv.Atoi(endText); err == nil && parsed < end {
+					end = parsed
+				}
+			}
+			w.Header().Set("Content-Type", "video/mp4")
+			w.Header().Set("Content-Range", "bytes "+strconv.Itoa(start)+"-"+strconv.Itoa(end)+"/"+strconv.Itoa(len(body)))
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write(body[start : end+1])
+			return
+		}
+		w.Header().Set("Content-Type", "video/mp4")
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(server.Close)
+	provider, err := storage.NewTelegram(storage.TelegramConfig{
+		Token: "123:synthetic", ChatID: "-100123", APIBase: server.URL,
+	})
+	if err != nil {
+		t.Fatalf("创建提供方失败: %v", err)
+	}
+	switcher := storage.NewSwitcher()
+	switcher.Swap(provider)
+	return switcher
+}
+
+func TestGatewayRangeThroughSwitcher(t *testing.T) {
+	body := []byte("0123456789")
+	env := newGatewayEnv(t, 4, newSwitcherProvider(t, body))
+	code := env.publishPost(t, "", "video/mp4", "photo", true, false)
+
+	response, got := openRange(t, http.MethodGet, env.server.URL+"/i/"+code, "bytes=1-3")
+	if response.StatusCode != http.StatusPartialContent {
+		t.Fatalf("状态码 = %d，期望 206", response.StatusCode)
+	}
+	if response.Header.Get("Content-Range") != "bytes 1-3/10" || string(got) != "123" {
+		t.Errorf("区间响应 = %q / %q", response.Header.Get("Content-Range"), got)
+	}
+}
+
+func TestGatewayIgnoresRangeForImages(t *testing.T) {
+	body := []byte("0123456789")
+	provider := &rangeProvider{fakeStreamProvider: &fakeStreamProvider{}, size: int64(len(body)), body: body}
+	env := newGatewayEnv(t, 4, provider)
+	code := env.publishPost(t, "", "image/jpeg", "photo", true, false)
+
+	response, got := openRange(t, http.MethodGet, env.server.URL+"/i/"+code, "bytes=0-3")
+	if response.StatusCode != http.StatusOK || string(got) != "0123456789" {
+		t.Errorf("图片不应走区间: 状态 %d 正文 %q", response.StatusCode, got)
+	}
+	if response.Header.Get("Content-Range") != "" {
+		t.Error("图片响应不应带 Content-Range")
+	}
 }
 
 func TestGatewayServesByteRanges(t *testing.T) {

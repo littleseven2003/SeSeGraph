@@ -73,6 +73,9 @@ type Stream struct {
 	Body        io.ReadCloser
 	ContentType string
 	Size        int64
+	// Start 与 End 是本次响应在文件中的实际字节范围（含端点）；整段响应时为 -1。
+	Start int64
+	End   int64
 }
 
 // Snapshotter 是提供方的可选接口：返回一份固定视图，

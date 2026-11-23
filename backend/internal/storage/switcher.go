@@ -102,6 +102,24 @@ func (s *Switcher) OpenStream(ctx context.Context, fileID string) (Stream, error
 	return provider.OpenStream(ctx, fileID)
 }
 
+// Size 按当前提供方读取远端文件大小。
+func (s *Switcher) Size(ctx context.Context, fileID string) (int64, error) {
+	provider, err := s.current()
+	if err != nil {
+		return 0, err
+	}
+	return provider.Size(ctx, fileID)
+}
+
+// OpenStreamRange 按当前提供方开启区间读取。
+func (s *Switcher) OpenStreamRange(ctx context.Context, fileID string, r ByteRange) (Stream, error) {
+	provider, err := s.current()
+	if err != nil {
+		return Stream{}, err
+	}
+	return provider.OpenStreamRange(ctx, fileID, r)
+}
+
 // SendMessage 按当前提供方发送一条纯文本消息，未配置时返回 ErrNotConfigured。
 func (s *Switcher) SendMessage(ctx context.Context, text string) error {
 	provider, err := s.current()

@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -369,7 +370,7 @@ func (t *Telegram) streamBody(req UploadRequest, field string, limit int64) (*io
 				return
 			}
 		}
-		part, err := form.CreateFormFile(field, req.FileName)
+		part, err := form.CreatePart(uploadPartHeader(field, req))
 		if err != nil {
 			writeErr = err
 			return
@@ -385,6 +386,27 @@ func (t *Telegram) streamBody(req UploadRequest, field string, limit int64) (*io
 	}()
 
 	return reader, contentType, done
+}
+
+// uploadPartHeader 显式声明文件名与内容类型：视频补齐 .mp4，
+// 避免临时文件的 .part 后缀让上游按 octet-stream 处理。
+func uploadPartHeader(field string, req UploadRequest) textproto.MIMEHeader {
+	name := filepath.Base(req.FileName)
+	if req.Mode == ModeVideo && strings.ToLower(filepath.Ext(name)) != ".mp4" {
+		name = strings.TrimSuffix(name, filepath.Ext(name)) + ".mp4"
+	}
+	contentType := strings.TrimSpace(req.MIMEType)
+	if contentType == "" {
+		if req.Mode == ModeVideo {
+			contentType = "video/mp4"
+		} else {
+			contentType = "application/octet-stream"
+		}
+	}
+	header := textproto.MIMEHeader{}
+	header.Set("Content-Disposition", fmt.Sprintf(`form-data; name=%q; filename=%q`, field, name))
+	header.Set("Content-Type", contentType)
+	return header
 }
 
 type apiResponse struct {
