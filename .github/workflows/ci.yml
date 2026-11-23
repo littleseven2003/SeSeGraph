@@ -1,0 +1,138 @@
+name: CI
+
+# 候选验证：分支推送与合并请求都跑测试、四平台交叉编译和双架构镜像构建。
+on:
+  push:
+    branches:
+      - main
+      - dev
+      - 'feat/**'
+      - 'fix/**'
+      - 'refactor/**'
+      - 'docs/**'
+      - 'chore/**'
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: 测试与类型检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: 安装前端依赖
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: 前端单元测试
+        working-directory: frontend
+        run: pnpm test
+
+      - name: 前端类型检查
+        working-directory: frontend
+        run: pnpm exec vue-tsc --noEmit
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: backend/go.sum
+
+      - name: 后端静态检查
+        working-directory: backend
+        run: go vet ./...
+
+      - name: 后端单元测试
+        working-directory: backend
+        run: go test ./...
+
+  cross:
+    name: 四平台交叉编译
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: backend/go.sum
+
+      - name: 构建前端并交叉编译
+        run: make cross VERSION=ci COMMIT="${GITHUB_SHA::7}"
+
+      - name: 校验产物
+        run: ls -l bin/sesegraph-linux-amd64 bin/sesegraph-linux-arm64 bin/sesegraph-darwin-arm64 bin/sesegraph-windows-amd64.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cross-binaries
+          path: bin/sesegraph-*
+          retention-days: 3
+
+  image:
+    name: 双架构镜像构建
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 双架构构建（不推送）
+        run: |
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --build-arg VERSION=ci \
+            --build-arg COMMIT="${GITHUB_SHA::7}" \
+            -t sesegraph:ci .
+
+      - name: 构建本机架构镜像
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --build-arg VERSION=ci \
+            --build-arg COMMIT="${GITHUB_SHA::7}" \
+            -t sesegraph:ci --load .
+
+      - name: 运行容器并检查健康接口
+        run: |
+          docker run -d --name sesegraph-ci -p 18080:8080 -e DATA_DIR=/app/data sesegraph:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18080/api/health > /tmp/health.json; then break; fi
+            sleep 1
+          done
+          cat /tmp/health.json
+          grep -q '"status":"ok"' /tmp/health.json
+          grep -q '"version":"ci"' /tmp/health.json
+          grep -q "\"commit\":\"${GITHUB_SHA::7}\"" /tmp/health.json
+          docker rm -f sesegraph-ci
