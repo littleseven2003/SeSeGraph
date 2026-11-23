@@ -12,7 +12,7 @@ export const PHOTO_COMPRESS_THRESHOLD = PHOTO_LIMIT_BYTES
 export const MEDIA_IMPORT_MAX_BYTES = 50000000
 // 压缩输入的安全上限：避免把整块内存交给超大原图。
 export const COMPRESS_MAX_INPUT_BYTES = 50 * 1000 * 1000
-export const COMPRESS_MAX_INPUT_PIXELS = 40000000
+export const COMPRESS_MAX_INPUT_PIXELS = 100000000
 // 压缩产物的宽高之和与长宽比上限。
 export const COMPRESS_MAX_DIMENSION_SUM = 10000
 export const COMPRESS_MAX_ASPECT = 20
@@ -81,24 +81,62 @@ export interface CompressResult {
   toSize: number
 }
 
-// 动图判定：GIF 按扩展名，WebP/PNG 检查动画标记，避免把动效静默压成静态图。
+// 动图判定：GIF 按扩展名；PNG 遍历块找 acTL；WebP 看 VP8X 动画位或 ANIM/ANMF 块。
+// 不读整图、也不按任意字节子串猜测，避免静态图里的 tEXt 文本被误判。
 export async function isAnimatedImage(blob: Blob, name: string): Promise<boolean> {
   if (extensionOf(name) === 'gif') return true
-  // 只在前 1MiB 内按块标记判断，避免把普通文本里的同名字串误判成动图。
-  const bytes = new Uint8Array(await blob.slice(0, 1024 * 1024).arrayBuffer())
-  if (hasBytes(bytes, [0x52, 0x49, 0x46, 0x46]) && hasBytes(bytes, [0x57, 0x45, 0x42, 0x50])) {
-    return hasBytes(bytes, [0x41, 0x4e, 0x49, 0x4d]) || hasBytes(bytes, [0x41, 0x4e, 0x4d, 0x46])
+  const head = await readBytes(blob, 0, 16)
+  if (head.length >= 8 && head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47) {
+    return pngHasAnimation(blob)
   }
-  // PNG 的动画控制块 acTL 必须位于 IHDR 之后。
-  return hasBytes(bytes, [0x61, 0x63, 0x54, 0x4c])
+  if (head.length >= 12 && fourCC(head, 0) === 'RIFF' && fourCC(head, 8) === 'WEBP') {
+    return webpHasAnimation(blob)
+  }
+  return false
 }
 
-function hasBytes(bytes: Uint8Array, pattern: number[]): boolean {
-  outer: for (let index = 0; index + pattern.length <= bytes.length; index += 1) {
-    for (let offset = 0; offset < pattern.length; offset += 1) {
-      if (bytes[index + offset] !== pattern[offset]) continue outer
+async function readBytes(blob: Blob, start: number, end: number): Promise<Uint8Array> {
+  if (end <= start) return new Uint8Array(0)
+  return new Uint8Array(await blob.slice(start, end).arrayBuffer())
+}
+
+function fourCC(bytes: Uint8Array, offset: number): string {
+  return String.fromCharCode(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3])
+}
+
+function uint32(bytes: Uint8Array, offset: number): number {
+  return (bytes[offset] << 24 | bytes[offset + 1] << 16 | bytes[offset + 2] << 8 | bytes[offset + 3]) >>> 0
+}
+
+// pngHasAnimation 从文件头开始按块长度遍历，遇到 IDAT/IEND 即停止。
+async function pngHasAnimation(blob: Blob): Promise<boolean> {
+  let offset = 8
+  while (offset + 8 <= blob.size) {
+    const header = await readBytes(blob, offset, offset + 8)
+    if (header.length < 8) return false
+    const length = uint32(header, 0)
+    const type = fourCC(header, 4)
+    if (type === 'acTL') return true
+    if (type === 'IDAT' || type === 'IEND') return false
+    offset += 12 + length
+  }
+  return false
+}
+
+// webpHasAnimation 解析 RIFF 块：VP8X 的动画位或 ANIM/ANMF 块都表示动图。
+async function webpHasAnimation(blob: Blob): Promise<boolean> {
+  let offset = 12
+  while (offset + 8 <= blob.size) {
+    const header = await readBytes(blob, offset, offset + 8)
+    if (header.length < 8) return false
+    const type = fourCC(header, 0)
+    const length = header[4] | header[5] << 8 | header[6] << 16 | header[7] << 24
+    if (type === 'ANIM' || type === 'ANMF') return true
+    if (type === 'VP8X' && length > 0) {
+      const flag = await readBytes(blob, offset + 8, offset + 9)
+      if (flag.length > 0 && (flag[0] & 0x02) !== 0) return true
     }
-    return true
+    offset += 8 + length + (length % 2)
   }
   return false
 }
@@ -170,7 +208,7 @@ export async function compressImage(blob: Blob, target = COMPRESS_TARGET_BYTES):
   const sourceHeight = 'height' in bitmap ? bitmap.height : 0
   try {
     if (sourceWidth * sourceHeight > COMPRESS_MAX_INPUT_PIXELS) {
-      throw new Error('原图像素超过 4000 万，请先用其他工具缩放')
+      throw new Error('原图像素超过 1 亿，请先用其他工具缩放')
     }
     const base = fitScale(sourceWidth, sourceHeight)
     if (!base) {

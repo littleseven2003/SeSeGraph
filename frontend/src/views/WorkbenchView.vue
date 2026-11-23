@@ -218,6 +218,9 @@ function resetToDefaultMode(): void {
 // hydrate 用已读取的服务端进度恢复界面状态，避免重复请求。
 function hydrate(saved: TaskSnapshot, progress: ServerProgress): void {
   postId.value = saved.postId
+  // 开放导入前恢复该任务的压缩策略；画质模式以服务端记录为准。
+  if (typeof saved.autoCompress === 'boolean') autoCompress.value = saved.autoCompress
+  if (progress.upload_mode === 'photo' || progress.upload_mode === 'document') mode.value = progress.upload_mode
   applyServerProgress(progress)
   phase.value = progress.status === 'uploading' ? 'idle' : progress.status === 'failed' ? 'failed' : 'queued'
   if (isActiveStatus(progress.status)) {

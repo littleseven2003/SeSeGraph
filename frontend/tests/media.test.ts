@@ -4,6 +4,7 @@ import { mimeForName } from '../src/utils/image.ts'
 import {
   COMPRESS_MAX_DIMENSION_SUM,
   evaluateMedia,
+  isAnimatedImage,
   MAX_VIDEO_BYTES,
   checkImportFile,
   checkMediaFile,
@@ -153,4 +154,45 @@ test('十进制边界与动图角标文案', () => {
   assert.equal(evaluateMedia({ kind: 'image', size: 10_000_001, compressed: false, animated: true, animatedKind: 'other' }, 'photo', false).label, '动图超限')
   assert.equal(evaluateMedia({ kind: 'image', size: 10_000_001, compressed: false }, 'photo', false).label, '超 10MB')
   assert.equal(evaluateMedia({ kind: 'image', size: 20_000_001, compressed: false }, 'document', false).label, '超 20MB')
+})
+
+function pngChunk(type: string, data: Uint8Array): Uint8Array {
+  const chunk = new Uint8Array(12 + data.length)
+  const length = data.length
+  chunk[0] = (length >>> 24) & 0xff
+  chunk[1] = (length >>> 16) & 0xff
+  chunk[2] = (length >>> 8) & 0xff
+  chunk[3] = length & 0xff
+  for (let i = 0; i < 4; i += 1) chunk[4 + i] = type.charCodeAt(i)
+  chunk.set(data, 8)
+  return chunk
+}
+
+function pngOf(...chunks: Uint8Array[]): Blob {
+  const signature = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+  return new Blob([signature, ...chunks] as BlobPart[], { type: 'image/png' })
+}
+
+test('PNG 动图按块判定，不误读 tEXt 文本', async () => {
+  const textual = new TextEncoder().encode('acTL 只是正文里的字样')
+  const staticPng = pngOf(pngChunk('IHDR', new Uint8Array(13)), pngChunk('tEXt', textual), pngChunk('IDAT', new Uint8Array(4)))
+  assert.equal(await isAnimatedImage(staticPng, 'a.png'), false)
+
+  const bigText = new Uint8Array(1_100_000)
+  const apng = pngOf(pngChunk('IHDR', new Uint8Array(13)), pngChunk('tEXt', bigText), pngChunk('acTL', new Uint8Array(8)), pngChunk('IDAT', new Uint8Array(4)))
+  assert.equal(await isAnimatedImage(apng, 'b.png'), true)
+})
+
+test('WebP 按 VP8X 动画位判定', async () => {
+  const build = (flag: number): Blob => {
+    const riff = new Uint8Array(12)
+    riff.set([0x52, 0x49, 0x46, 0x46], 0)
+    riff.set([0x57, 0x45, 0x42, 0x50], 8)
+    const chunk = new Uint8Array(9)
+    chunk.set([0x56, 0x50, 0x38, 0x58, 1, 0, 0, 0, flag], 0)
+    return new Blob([riff, chunk] as BlobPart[], { type: 'image/webp' })
+  }
+  assert.equal(await isAnimatedImage(build(0x02), 'a.webp'), true)
+  assert.equal(await isAnimatedImage(build(0x00), 'b.webp'), false)
+  assert.equal(await isAnimatedImage(new Blob([new Uint8Array(1)]), 'c.gif'), true)
 })
