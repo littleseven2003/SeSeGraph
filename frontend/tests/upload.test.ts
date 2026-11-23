@@ -79,3 +79,17 @@ test('初始状态与已收录数量', () => {
   assert.equal(states[2], 'pending')
   assert.equal(acceptedCount(states), 1)
 })
+
+test('第 6 项失败后继续只补未完成项', () => {
+  const images = Array.from({ length: 8 }, (_, index) => ({
+    sort_order: index + 1,
+    status: index < 5 ? 'stored' : index === 5 ? 'failed' : 'pending',
+  }))
+  const planned = planUploads(progress('failed', images, 8), 8)
+  assert.ok('plan' in planned)
+  assert.deepEqual(
+    planned.plan.pending.map((item) => item.sortOrder),
+    [6, 7, 8],
+  )
+  assert.equal(planned.plan.skipped, 5)
+})
