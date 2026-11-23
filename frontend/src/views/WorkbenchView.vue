@@ -753,6 +753,8 @@ function resetProgress(): void {
 
 // discardSnapshot 放弃上次任务的续传入口，允许直接开新任务。
 function discardSnapshot(): void {
+  // 压缩/上传进行中不能清任务，否则会丢掉正在使用的策略与快照。
+  if (submitBlocked({ busy: busy.value, submitting: submitting.value })) return
   if (!canLeaveResume(ready.value, phase.value)) return
   const abandoned = snapshot.value?.postId ?? postId.value
   snapshot.value = null
@@ -837,7 +839,8 @@ async function ensureTask(): Promise<number | null> {
 // 发布：建任务 → 按服务端进度补传 → 提交入队，快照保留以便刷新后查看与重试。
 async function publish(): Promise<void> {
   // 提交锁覆盖压缩与上传整段：双击、换模式、排序都不能插进来。
-  if (submitBlocked({ busy: busy.value, submitting: submitting.value })) return
+  // 压缩/上传进行中、正在追加文件或解包 ZIP 时都不接受新的提交。
+  if (submitBlocked({ busy: busy.value, submitting: submitting.value }) || working.value) return
   message.value = ''
   if (tiles.value.length === 0) {
     pushError('请先选择图片或视频')
@@ -859,21 +862,23 @@ async function publish(): Promise<void> {
   }
 
   submitting.value = true
-  const frozen = freezeSubmitStrategy(mode.value, autoCompress.value)
-  const frozenMode = frozen.mode
-  const frozenCompress = frozen.autoCompress
-  let compressionProblem = ''
   try {
-    compressionProblem = await compressForSubmit(frozenMode, frozenCompress)
-  } finally {
-    if (compressionProblem !== '') submitting.value = false
-  }
-  if (compressionProblem !== '') {
-    pushError(compressionProblem)
-    return
-  }
+    const frozen = freezeSubmitStrategy(mode.value, autoCompress.value)
+    const compressionProblem = await compressForSubmit(frozen.mode, frozen.autoCompress)
+    if (compressionProblem !== '') {
+      pushError(compressionProblem)
+      return
+    }
 
-  phase.value = 'creating'
+    phase.value = 'creating'
+    await runUpload()
+  } finally {
+    submitting.value = false
+  }
+}
+
+// runUpload 建任务并按服务端进度补传；由 publish 在提交锁内调用。
+async function runUpload(): Promise<void> {
   try {
     const id = await ensureTask()
     if (id === null) {
@@ -934,8 +939,6 @@ async function publish(): Promise<void> {
   } catch (error) {
     phase.value = 'idle'
     pushError(error instanceof ApiError ? error.message : '发布失败，请稍后重试')
-  } finally {
-    submitting.value = false
   }
 }
 
@@ -1011,7 +1014,7 @@ onBeforeUnmount(() => {
           <button
             type="button"
             class="h-11 rounded-full px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-50"
-            :disabled="!canLeaveResume(ready, phase)"
+            :disabled="!canLeaveResume(ready, phase) || busy || working"
             @click="discardSnapshot"
           >
             放弃此任务
@@ -1130,7 +1133,8 @@ onBeforeUnmount(() => {
                   <button
                     v-else-if="phase === 'failed' || phase === 'queued'"
                     type="button"
-                    class="h-11 w-full rounded-full px-3 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
+                    class="h-11 w-full rounded-full px-3 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-50"
+                    :disabled="busy || working"
                     @click="discardSnapshot"
                   >
                     重新开始
@@ -1161,7 +1165,8 @@ onBeforeUnmount(() => {
             <button
               v-else-if="phase === 'failed' || phase === 'queued'"
               type="button"
-              class="h-11 shrink-0 rounded-full px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
+              class="h-11 shrink-0 rounded-full px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-50"
+              :disabled="busy || working"
               @click="discardSnapshot"
             >
               重新开始
