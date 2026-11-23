@@ -2,11 +2,13 @@ package api
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
@@ -21,8 +23,52 @@ var allowedMediaTypes = map[string]bool{
 	"video/mp4":  true,
 }
 
+// DefaultUploadConcurrency 是单实例同时接收上传的默认上限。
+// 前端每轮只开两路，这里留出多标签页与重试的余量，同时守住临时目录与内存。
+const DefaultUploadConcurrency = 3
+
+// uploadLimiter 限制同时接收的上传请求数，满额后短暂排队，超时才拒绝。
+type uploadLimiter struct {
+	slots chan struct{}
+	wait  time.Duration
+}
+
+// newUploadLimiter 创建上传限流器，参数非正时使用默认值。
+func newUploadLimiter(concurrency int, wait time.Duration) *uploadLimiter {
+	if concurrency <= 0 {
+		concurrency = DefaultUploadConcurrency
+	}
+	if wait <= 0 {
+		wait = 15 * time.Second
+	}
+	return &uploadLimiter{slots: make(chan struct{}, concurrency), wait: wait}
+}
+
+// acquire 在等待上限内获取一个上传名额；客户端断开或超时返回 false。
+// 调用方必须在读请求体之前获取名额，避免超大请求在排队时占用连接缓冲区。
+func (l *uploadLimiter) acquire(ctx context.Context) bool {
+	select {
+	case l.slots <- struct{}{}:
+		return true
+	default:
+	}
+	timer := time.NewTimer(l.wait)
+	defer timer.Stop()
+	select {
+	case l.slots <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return false
+	}
+}
+
+// release 归还上传名额。
+func (l *uploadLimiter) release() { <-l.slots }
+
 // uploadImageHandler 把单张图片流式写入临时目录，并记录上传状态。
-func uploadImageHandler(deps Deps) gin.HandlerFunc {
+func uploadImageHandler(deps Deps, limiter *uploadLimiter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		postID, parseErr := strconv.ParseInt(c.Param("id"), 10, 64)
 		if parseErr != nil || postID <= 0 {
@@ -52,6 +98,19 @@ func uploadImageHandler(deps Deps) gin.HandlerFunc {
 		if sortOrder < 1 || sortOrder > post.ImageCount {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "序号超出声明的图片数量"})
 			return
+		}
+
+		// 名额满时在这里短暂排队；真正读请求体之前必须拿到名额。
+		if limiter != nil {
+			if !limiter.acquire(c.Request.Context()) {
+				if c.Request.Context().Err() != nil {
+					return
+				}
+				c.Header("Retry-After", "1")
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "上传请求过多，请稍后重试"})
+				return
+			}
+			defer limiter.release()
 		}
 
 		reader := bufio.NewReader(c.Request.Body)

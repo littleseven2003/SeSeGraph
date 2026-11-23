@@ -33,11 +33,15 @@ import {
   FIELD_TELEGRAM_CHANNEL,
   FIELD_TELEGRAM_TOKEN,
   FIELD_TELEGRAPH_AUTHOR,
+  FIELD_TELEGRAPH_PATH_MODE,
   FIELD_TELEGRAPH_TOKEN,
+  FIELD_UPLOAD_MODE,
   credentialErrors,
   credentialFieldError,
   hasCredentialErrors,
   hasPatch,
+  PATH_MODES,
+  UPLOAD_MODES,
   PROXY_MODES,
   proxyCustomNeedsURL,
   proxyModeLabel,
@@ -116,6 +120,8 @@ const form = reactive({
   token: '',
   channelId: '',
   authorName: '',
+  pathMode: 'title',
+  defaultMode: 'photo',
   proxyMode: 'direct',
   proxyUrl: '',
   proxyTelegram: false,
@@ -128,6 +134,8 @@ function applyView(next: SettingsView): void {
   view.value = next
   form.channelId = next.telegram.channel_id
   form.authorName = next.telegraph.author_name
+  form.pathMode = next.telegraph.path_mode
+  form.defaultMode = next.upload.default_mode
   form.token = ''
   form.proxyMode = next.proxy.mode
   form.proxyUrl = ''
@@ -643,6 +651,32 @@ onBeforeUnmount(() => {
                       </p>
                     </label>
 
+                    <fieldset>
+                      <legend class="text-xs font-medium text-muted">链接生成方式</legend>
+                      <div class="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <label
+                          v-for="option in PATH_MODES"
+                          :key="option.value"
+                          class="flex min-h-11 cursor-pointer items-center gap-2.5 rounded-xl border border-line bg-canvas px-3 py-2.5 text-sm transition hover:border-ink/25 focus-within:border-ink"
+                          :class="form.pathMode === option.value ? 'border-accent bg-accent-soft' : ''"
+                        >
+                          <input
+                            v-model="form.pathMode"
+                            type="radio"
+                            name="path-mode"
+                            :value="option.value"
+                            :disabled="saving || managed(FIELD_TELEGRAPH_PATH_MODE)"
+                            class="h-6 w-6 shrink-0 accent-accent"
+                          />
+                          <span>{{ option.label }}</span>
+                        </label>
+                      </div>
+                      <p class="mt-1 text-xs text-muted">
+                        只影响之后发起的发布，页面仍显示原标题；已发布页面链接不会改变。
+                      </p>
+                      <p v-if="managed(FIELD_TELEGRAPH_PATH_MODE)" class="mt-1 text-xs text-muted">{{ ENV_MANAGED_HINT }}</p>
+                    </fieldset>
+
                     <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div class="rounded-xl bg-canvas px-3 py-2.5">
                         <p class="text-xs text-muted">访问令牌</p>
@@ -800,14 +834,29 @@ onBeforeUnmount(() => {
                       <option value="key-value">键值匹配</option>
                     </select>
                   </div>
-                  <div>
-                    <span class="block text-xs font-medium text-muted">默认画质</span>
-                    <p class="mt-1 text-sm">
-                      {{ view.upload.default_mode === 'document' ? 'document（原图）' : 'photo（省流量）' }}
-                      <span v-if="view.upload.mode_source === 'env'" class="ml-1 text-xs text-muted">{{ ENV_MANAGED_HINT }}</span>
-                    </p>
+                  <fieldset>
+                    <legend class="text-xs font-medium text-muted">默认画质</legend>
+                    <div class="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <label
+                        v-for="option in UPLOAD_MODES"
+                        :key="option.value"
+                        class="flex min-h-11 cursor-pointer items-center gap-2.5 rounded-xl border border-line bg-canvas px-3 py-2.5 text-sm transition hover:border-ink/25 focus-within:border-ink"
+                        :class="form.defaultMode === option.value ? 'border-accent bg-accent-soft' : ''"
+                      >
+                        <input
+                          v-model="form.defaultMode"
+                          type="radio"
+                          name="default-mode"
+                          :value="option.value"
+                          :disabled="saving || managed(FIELD_UPLOAD_MODE)"
+                          class="h-6 w-6 shrink-0 accent-accent"
+                        />
+                        <span>{{ option.label }}</span>
+                      </label>
+                    </div>
+                    <p v-if="managed(FIELD_UPLOAD_MODE)" class="mt-1 text-xs text-muted">{{ ENV_MANAGED_HINT }}</p>
                     <p class="mt-1 text-xs text-muted">新任务默认使用该画质，单帖仍可在工作台覆盖；续传沿用原任务的画质。</p>
-                  </div>
+                  </fieldset>
                 </div>
               </div>
             </section>

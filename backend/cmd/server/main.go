@@ -240,31 +240,32 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	}
 
 	router := api.NewRouter(api.Deps{
-		Version:          version,
-		Commit:           commit,
-		Auth:             authService,
-		Sessions:         auth.NewSessions(secret, auth.DefaultSessionTTL, isHTTPS(cfg.PublicURL)),
-		SetupToken:       readSetupToken(lookupEnv),
-		WebFS:            assets,
-		DataDir:          cfg.DataDir,
-		Posts:            repository,
-		Streams:          switcher,
-		Telegraph:        telegraphManager,
-		PublicURL:        cfg.PublicURL,
-		RSSEnabled:       envEnabled(lookupEnv, "RSS_ENABLED"),
-		Editor:           editor,
-		Settings:         resolver,
-		Reload:           reloadSettings,
-		PrepareProvider:  prepareProvider,
-		CommitProvider:   commitProvider,
-		SettingsLock:     settingsLock,
-		ImageConcurrency: readImageConcurrency(lookupEnv),
-		ImageQueueDepth:  readImageQueueDepth(lookupEnv),
-		ImageQueueWait:   readImageQueueWait(lookupEnv),
-		Traffic:          trafficMeter,
-		Backup:           backupManager,
-		BackupSchedule:   backupSchedule,
-		Views:            viewsService,
+		Version:           version,
+		Commit:            commit,
+		Auth:              authService,
+		Sessions:          auth.NewSessions(secret, auth.DefaultSessionTTL, isHTTPS(cfg.PublicURL)),
+		SetupToken:        readSetupToken(lookupEnv),
+		WebFS:             assets,
+		DataDir:           cfg.DataDir,
+		Posts:             repository,
+		Streams:           switcher,
+		Telegraph:         telegraphManager,
+		PublicURL:         cfg.PublicURL,
+		RSSEnabled:        envEnabled(lookupEnv, "RSS_ENABLED"),
+		Editor:            editor,
+		Settings:          resolver,
+		Reload:            reloadSettings,
+		PrepareProvider:   prepareProvider,
+		CommitProvider:    commitProvider,
+		SettingsLock:      settingsLock,
+		ImageConcurrency:  readImageConcurrency(lookupEnv),
+		ImageQueueDepth:   readImageQueueDepth(lookupEnv),
+		ImageQueueWait:    readImageQueueWait(lookupEnv),
+		UploadConcurrency: readUploadConcurrency(lookupEnv),
+		Traffic:           trafficMeter,
+		Backup:            backupManager,
+		BackupSchedule:    backupSchedule,
+		Views:             viewsService,
 	})
 
 	stopWorker := startUploadQueue(ctx, repository, cfg.DataDir, switcher, gate, lookupEnv)
@@ -591,6 +592,22 @@ func readImageConcurrency(lookupEnv func(string) (string, bool)) int {
 	}
 	if value > 100 {
 		return 100
+	}
+	return value
+}
+
+// readUploadConcurrency 读取同时接收上传的上限，未配置时使用默认值。
+func readUploadConcurrency(lookupEnv func(string) (string, bool)) int {
+	raw, ok := lookupEnv("UPLOAD_CONCURRENCY")
+	if !ok {
+		return api.DefaultUploadConcurrency
+	}
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || value <= 0 {
+		return api.DefaultUploadConcurrency
+	}
+	if value > 10 {
+		return 10
 	}
 	return value
 }

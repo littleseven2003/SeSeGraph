@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
 )
@@ -334,4 +335,49 @@ func TestUploadVideoRejectsDisguisedContent(t *testing.T) {
 	if rec.Code != http.StatusUnsupportedMediaType {
 		t.Errorf("伪装内容状态码 = %d，期望 415", rec.Code)
 	}
+}
+
+// TestUploadLimiterBoundsConcurrency 验证上传名额有上限，超时返回失败，归还后可继续。
+func TestUploadLimiterBoundsConcurrency(t *testing.T) {
+	limiter := newUploadLimiter(2, 80*time.Millisecond)
+	ctx := context.Background()
+
+	if !limiter.acquire(ctx) || !limiter.acquire(ctx) {
+		t.Fatal("前两个请求应拿到名额")
+	}
+	started := time.Now()
+	if limiter.acquire(ctx) {
+		t.Fatal("满额时不应拿到第三个名额")
+	}
+	if elapsed := time.Since(started); elapsed < 60*time.Millisecond {
+		t.Errorf("等待耗时 %v，应接近设定的 80ms", elapsed)
+	}
+
+	limiter.release()
+	if !limiter.acquire(ctx) {
+		t.Fatal("归还后应能再次拿到名额")
+	}
+	limiter.release()
+	limiter.release()
+}
+
+// TestUploadLimiterCancelWhileWaiting 验证排队期间取消立即返回。
+func TestUploadLimiterCancelWhileWaiting(t *testing.T) {
+	limiter := newUploadLimiter(1, 2*time.Second)
+	limiter.acquire(context.Background())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan bool, 1)
+	go func() { done <- limiter.acquire(ctx) }()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	select {
+	case acquired := <-done:
+		if acquired {
+			t.Error("取消后不应获得名额")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("取消后排队未退出")
+	}
+	limiter.release()
 }

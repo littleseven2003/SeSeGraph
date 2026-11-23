@@ -20,6 +20,8 @@ export const FIELD_PROXY_URL = 'proxy.url'
 export const FIELD_PROXY_MODE = 'proxy.mode'
 export const FIELD_PROXY_TELEGRAM = 'proxy.telegram'
 export const FIELD_PROXY_TELEGRAPH = 'proxy.telegraph'
+export const FIELD_TELEGRAPH_PATH_MODE = 'telegraph.path_mode'
+export const FIELD_UPLOAD_MODE = 'post.upload_mode'
 
 /** 代理模式选项，顺序即界面顺序。 */
 export const PROXY_MODES = [
@@ -27,6 +29,30 @@ export const PROXY_MODES = [
   { value: 'system', label: '跟随系统环境变量' },
   { value: 'custom', label: '自定义代理' },
 ] as const
+
+/** 链接生成方式选项，顺序即界面顺序。 */
+export const PATH_MODES = [
+  { value: 'title', label: '按标题生成' },
+  { value: 'slug', label: '自动生成无中文链接' },
+] as const
+
+/** 默认画质选项，文案与工作台、详情页保持一致。 */
+export const UPLOAD_MODES = [
+  { value: 'photo', label: 'photo 省流量' },
+  { value: 'document', label: 'document 原图' },
+] as const
+
+/** pathModeLabel 返回链接生成方式的中文名，未知取值原样展示。 */
+export function pathModeLabel(mode: string): string {
+  const found = PATH_MODES.find((item) => item.value === mode)
+  return found === undefined ? mode : found.label
+}
+
+/** uploadModeLabel 返回画质模式的中文名，未知取值原样展示。 */
+export function uploadModeLabel(mode: string): string {
+  const found = UPLOAD_MODES.find((item) => item.value === mode)
+  return found === undefined ? mode : found.label
+}
 
 /** proxyModeLabel 返回代理模式的中文名，未知取值原样展示。 */
 export function proxyModeLabel(mode: string): string {
@@ -128,6 +154,8 @@ export interface SettingsForm {
   token: string
   channelId: string
   authorName: string
+  pathMode: string
+  defaultMode: string
   proxyMode: string
   proxyUrl: string
   proxyTelegram: boolean
@@ -148,7 +176,7 @@ export function splitMetaFilenames(raw: string): string[] {
 export function changedPatch(view: SettingsView, form: SettingsForm): SettingsPatch {
   const patch: SettingsPatch = {}
   const telegram: { token?: string; channel_id?: string } = {}
-  const telegraph: { author_name?: string } = {}
+  const telegraph: { author_name?: string; path_mode?: string } = {}
   const proxy: NonNullable<SettingsPatch['proxy']> = {}
 
   if (form.token !== '' && !view.env_managed.includes(FIELD_TELEGRAM_TOKEN)) {
@@ -159,6 +187,9 @@ export function changedPatch(view: SettingsView, form: SettingsForm): SettingsPa
   }
   if (form.authorName !== view.telegraph.author_name && !view.env_managed.includes(FIELD_TELEGRAPH_AUTHOR)) {
     telegraph.author_name = form.authorName
+  }
+  if (form.pathMode !== view.telegraph.path_mode && !view.env_managed.includes(FIELD_TELEGRAPH_PATH_MODE)) {
+    telegraph.path_mode = form.pathMode
   }
   if (form.proxyMode !== view.proxy.mode) {
     proxy.mode = form.proxyMode
@@ -178,6 +209,9 @@ export function changedPatch(view: SettingsView, form: SettingsForm): SettingsPa
   }
   if (form.metaParseMode !== view.meta.parse_mode) {
     meta.parse_mode = form.metaParseMode
+  }
+  if (form.defaultMode !== view.upload.default_mode && !view.env_managed.includes(FIELD_UPLOAD_MODE)) {
+    patch.upload = { mode: form.defaultMode }
   }
   if (Object.keys(telegram).length > 0) patch.telegram = telegram
   if (Object.keys(telegraph).length > 0) patch.telegraph = telegraph

@@ -18,6 +18,43 @@ export type PlanResult = { plan: UploadPlan } | { error: string }
 // 服务端已收录的状态：uploaded 表示已落盘，stored 表示已进频道。
 const DONE_STATUSES = new Set(['uploaded', 'stored'])
 
+// UPLOAD_CONCURRENCY 是每轮同时上传的图片数。
+// 跨境单流带宽有限，两路能明显缩短总耗时，又不会把低配实例或临时目录压满。
+export const UPLOAD_CONCURRENCY = 2
+
+// UploadPoolFailure 记录首个失败的队列位置与原因，后续项不再派发。
+export interface UploadPoolFailure {
+  index: number
+  error: unknown
+}
+
+// runUploadPool 以受控并发执行上传队列：首个失败后停止派发新项，
+// 已在途的请求自然收尾，返回失败位置供界面提示与续传定位。
+export async function runUploadPool<T>(
+  items: readonly T[],
+  limit: number,
+  task: (item: T, index: number) => Promise<void>,
+): Promise<UploadPoolFailure | null> {
+  const width = Math.max(1, Math.min(limit, items.length))
+  let cursor = 0
+  let failure: UploadPoolFailure | null = null
+  const worker = async (): Promise<void> => {
+    while (failure === null) {
+      const index = cursor
+      cursor += 1
+      if (index >= items.length) return
+      try {
+        await task(items[index], index)
+      } catch (error) {
+        if (failure === null) failure = { index, error }
+        return
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: width }, () => worker()))
+  return failure
+}
+
 // planUploads 按序号对齐本地文件与服务端记录，只补传缺失的图片。
 // 本地数量与服务端声明不一致时直接报错，避免错位覆盖。
 export function planUploads(progress: ServerProgress, localCount: number): PlanResult {

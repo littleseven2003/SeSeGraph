@@ -16,6 +16,8 @@ export interface TelegramSettings extends SettingsGroup {
 export interface TelegraphSettings extends SettingsGroup {
   author_name: string
   author_source: string
+  path_mode: string
+  path_mode_source: string
 }
 
 /** ProxySettings 描述代理配置：模式、地址是否已设置与两项上游的启用开关。 */
@@ -53,13 +55,14 @@ export interface SettingsView {
 
 export interface SettingsPatch {
   telegram?: { token?: string; channel_id?: string }
-  telegraph?: { author_name?: string }
+  telegraph?: { author_name?: string; path_mode?: string }
   proxy?: {
     mode?: string
     url?: string
     telegram_enabled?: boolean
     telegraph_enabled?: boolean
   }
+  upload?: { mode?: string }
   meta?: {
     filenames?: string[]
     parse_mode?: string

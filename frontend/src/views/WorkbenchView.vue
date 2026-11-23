@@ -48,7 +48,7 @@ import {
   type StorageLike,
   type TaskSnapshot,
 } from '../utils/task-store.ts'
-import { acceptedCount, initialStatuses, planUploads, type UploadStatus } from '../utils/upload.ts'
+import { acceptedCount, initialStatuses, planUploads, type UploadStatus, runUploadPool, UPLOAD_CONCURRENCY } from '../utils/upload.ts'
 import { DEFAULT_META_FILENAMES, unpackZip } from '../utils/zip.ts'
 import { fetchSettings } from '../api/settings.ts'
 import {
@@ -907,19 +907,23 @@ async function runUpload(): Promise<void> {
     phase.value = 'uploading'
     // 用开始上传时的列表生成队列，中途任何列表变化都不会影响已排定的请求。
     const queue = planUploadQueue(tiles.value.slice(), planned.plan.pending)
-    for (const item of queue) {
+    // 受控并发：首错停止派发，已在途的请求收尾，全部成功才提交入队。
+    const failure = await runUploadPool(queue, UPLOAD_CONCURRENCY, async (item) => {
       statuses.value = { ...statuses.value, [item.sortOrder]: 'uploading' }
       try {
         await uploadImage(id, item.sortOrder, item.tile.blob, item.tile.mime)
         statuses.value = { ...statuses.value, [item.sortOrder]: 'uploaded' }
       } catch (error) {
         statuses.value = { ...statuses.value, [item.sortOrder]: 'failed' }
-        phase.value = 'failed'
-        const position = queue.findIndex((entry) => entry.sortOrder === item.sortOrder) + 1
-        const reason = error instanceof ApiError ? error.message : '网络中断或超时'
-        pushError(`第 ${position}/${queue.length} 项 ${item.tile.name} 上传失败：${reason}；已停止本轮，点「继续上传」只补未完成的项`)
-        return
+        throw error
       }
+    })
+    if (failure !== null) {
+      phase.value = 'failed'
+      const item = queue[failure.index]
+      const reason = failure.error instanceof ApiError ? failure.error.message : '网络中断或超时'
+      pushError(`第 ${failure.index + 1}/${queue.length} 项 ${item.tile.name} 上传失败：${reason}；已停止本轮，点「继续上传」只补未完成的项`)
+      return
     }
 
     const committed = await commitPost(id)

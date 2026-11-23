@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { acceptedCount, initialStatuses, planUploads } from '../src/utils/upload.ts'
+import { acceptedCount, initialStatuses, planUploads, runUploadPool, UPLOAD_CONCURRENCY } from '../src/utils/upload.ts'
 import type { ServerProgress } from '../src/api/posts.ts'
 
 function progress(status: string, images: { sort_order: number; status: string }[], imageCount = 3): ServerProgress {
@@ -92,4 +92,58 @@ test('第 6 项失败后继续只补未完成项', () => {
     [6, 7, 8],
   )
   assert.equal(planned.plan.skipped, 5)
+})
+
+test('每轮最多两路并发', async () => {
+  let active = 0
+  let peak = 0
+  const done: number[] = []
+  const failure = await runUploadPool([0, 1, 2, 3, 4, 5], UPLOAD_CONCURRENCY, async (item) => {
+    active += 1
+    peak = Math.max(peak, active)
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    active -= 1
+    done.push(item)
+  })
+  assert.equal(failure, null)
+  assert.equal(peak, 2)
+  assert.deepEqual(done.slice().sort((a, b) => a - b), [0, 1, 2, 3, 4, 5])
+})
+
+test('首错停止派发，已在途请求收尾', async () => {
+  const started: number[] = []
+  const finished: number[] = []
+  const failure = await runUploadPool([0, 1, 2, 3, 4], 2, async (item) => {
+    started.push(item)
+    if (item === 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1))
+      throw new Error('第 2 项失败')
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    finished.push(item)
+  })
+  assert.notEqual(failure, null)
+  assert.equal(failure?.index, 1)
+  assert.deepEqual(started.slice().sort((a, b) => a - b), [0, 1])
+  assert.deepEqual(finished, [0])
+})
+
+test('队列长度小于并发上限时按实际数量执行', async () => {
+  let peak = 0
+  let active = 0
+  const failure = await runUploadPool(['a'], 2, async () => {
+    active += 1
+    peak = Math.max(peak, active)
+    await new Promise((resolve) => setTimeout(resolve, 1))
+    active -= 1
+  })
+  assert.equal(failure, null)
+  assert.equal(peak, 1)
+})
+
+test('空队列直接返回成功', async () => {
+  const failure = await runUploadPool([], UPLOAD_CONCURRENCY, async () => {
+    throw new Error('不应执行')
+  })
+  assert.equal(failure, null)
 })

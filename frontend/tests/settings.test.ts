@@ -14,6 +14,8 @@ import {
   ENV_MANAGED_HINT,
   formatTrafficBytes,
   hasPatch,
+  PATH_MODES,
+  pathModeLabel,
   PROXY_MODES,
   proxyCustomNeedsURL,
   proxyModeLabel,
@@ -25,6 +27,8 @@ import {
   trafficState,
   trafficStateText,
   trafficSummary,
+  UPLOAD_MODES,
+  uploadModeLabel,
 } from '../src/utils/settings.ts'
 
 function view(overrides: Partial<SettingsView> = {}): SettingsView {
@@ -45,6 +49,8 @@ function view(overrides: Partial<SettingsView> = {}): SettingsView {
       author_source: 'stored',
       api_base: '',
       api_base_source: 'env',
+      path_mode: 'title',
+      path_mode_source: 'default',
     },
     proxy: {
       mode: 'direct',
@@ -74,6 +80,8 @@ const baseForm = {
   token: '',
   channelId: '@sese_channel',
   authorName: 'SeSe',
+  pathMode: 'title',
+  defaultMode: 'photo',
   proxyMode: 'direct',
   proxyUrl: '',
   proxyTelegram: false,
@@ -266,4 +274,22 @@ test('备份状态文案', () => {
     latest: { name: 'sesegraph-20261122-030000.zip', size: 2 * 1024 * 1024, created_at: '2026-11-22T03:00:00Z' },
   })
   assert.match(text, /sesegraph-20261122-030000\.zip · 2\.00 MB · /)
+})
+
+test('链接生成方式与默认画质进入补丁', () => {
+  const current = view()
+  const patch = changedPatch(current, { ...baseForm, pathMode: 'slug', defaultMode: 'document' })
+  assert.deepEqual(patch, { telegraph: { path_mode: 'slug' }, upload: { mode: 'document' } })
+  assert.equal(pathModeLabel('slug'), '自动生成无中文链接')
+  assert.equal(pathModeLabel('title'), '按标题生成')
+  assert.equal(uploadModeLabel('photo'), 'photo 省流量')
+  assert.equal(uploadModeLabel('document'), 'document 原图')
+  assert.equal(PATH_MODES.length, 2)
+  assert.equal(UPLOAD_MODES.length, 2)
+})
+
+test('链接生成方式与默认画质受环境变量托管时不提交', () => {
+  const current = view({ env_managed: ['telegraph.path_mode', 'post.upload_mode'] })
+  const patch = changedPatch(current, { ...baseForm, pathMode: 'slug', defaultMode: 'document' })
+  assert.equal(hasPatch(patch), false)
 })

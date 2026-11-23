@@ -43,6 +43,10 @@ type Deps struct {
 	ImageQueueDepth int
 	// ImageQueueWait 是单个请求排队等待的最长时间，非正时使用默认值。
 	ImageQueueWait time.Duration
+	// UploadConcurrency 是同时接收上传的上限，非正时使用默认值。
+	UploadConcurrency int
+	// UploadQueueWait 是上传满额后的最长排队时间，非正时使用默认值。
+	UploadQueueWait time.Duration
 	// Traffic 统计图片出站流量并按月度上限熔断，未装配时不计流量。
 	Traffic *traffic.Recorder
 	// Backup 生成并管理 SQLite 热备，未装配时备份接口不可用。
@@ -116,6 +120,9 @@ func NewRouter(deps Deps) *gin.Engine {
 	router.GET("/rss.xml", rssHandler(deps))
 	router.HEAD("/rss.xml", rssHandler(deps))
 
+	// 上传限流与图片网关相互独立：前者约束写请求，后者约束出站取流。
+	uploads := newUploadLimiter(deps.UploadConcurrency, deps.UploadQueueWait)
+
 	admin := router.Group("/api", RequireAuth(deps.Sessions, deps.Auth))
 	admin.GET("/posts", listPostsHandler(deps))
 	admin.GET("/posts/:id", postDetailHandler(deps))
@@ -127,7 +134,7 @@ func NewRouter(deps Deps) *gin.Engine {
 	admin.GET("/tags", tagsHandler(deps))
 	admin.GET("/thumbs/:filename", thumbHandler(deps))
 	admin.POST("/posts", limitBody(maxCreatePostBodyBytes), createPostHandler(deps))
-	admin.POST("/posts/:id/images", uploadImageHandler(deps))
+	admin.POST("/posts/:id/images", uploadImageHandler(deps, uploads))
 	admin.POST("/posts/:id/commit", commitPostHandler(deps))
 	admin.GET("/settings", settingsHandler(deps))
 	admin.PUT("/settings", limitBody(maxSettingsBodyBytes), updateSettingsHandler(deps))
