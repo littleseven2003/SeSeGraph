@@ -1,164 +1,158 @@
-# SeSeGraph（SeSe图册）
+<p align="center">
+  <img src="docs/assets/readme-banner.svg" alt="SeSeGraph" width="960" />
+</p>
 
-面向个人单管理员的轻量级图集发布与画廊管理系统。本地打包上传图片，自动托管到 Telegram 私有频道，由内置流式网关对外提供图片访问，同时自动排版生成 telegra.ph 分享帖子，并在本地维护带封面缩略图的可视化图库。
+<p align="center">
+  轻量自托管的 Telegram 私有图床与 Telegraph 图册工作台<br />
+  单二进制约 14MB · 空闲内存 &lt; 30MB · 纯 Go 零 CGO
+</p>
 
-项目为个人开源作品，遵循 AGPL-3.0 协议发布。
+<p align="center">
+  <a href="https://github.com/littleseven2003/SeSeGraph/releases/latest"><img src="https://img.shields.io/badge/Release-v1.1.0-D04223?style=flat-square" alt="Release" /></a>
+  <a href="https://github.com/littleseven2003/SeSeGraph/pkgs/container/sesegraph"><img src="https://img.shields.io/badge/Docker-ghcr.io-0D7A72?style=flat-square" alt="Docker" /></a>
+  <img src="https://img.shields.io/badge/Go-1.22-1B1A17?style=flat-square" alt="Go 1.22" />
+  <img src="https://img.shields.io/badge/Vue-3-1B1A17?style=flat-square" alt="Vue 3" />
+  <img src="https://img.shields.io/badge/License-AGPL--3.0-7A7469?style=flat-square" alt="AGPL-3.0" />
+</p>
 
-## 当前状态
+<p align="center">
+  <a href="#界面预览">界面预览</a> ·
+  <a href="#核心特性">核心特性</a> ·
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#配置说明">配置说明</a> ·
+  <a href="#升级与备份">升级与备份</a>
+</p>
 
-`v1.0.0` 交付完整可用版本：从浏览器选图到 Telegram 私有频道存图、Telegraph 发布、画廊浏览，到设置页在线维护、代理热切换、流量看护、自动备份与帖子删除均已落地。
+<p align="center">
+  <img src="docs/screenshots/gallery-desktop.webp" alt="画廊首页：焦点轮播与多列图集" width="960" />
+</p>
 
-1. 在发帖工作台拖入 ZIP、文件夹或多张图片，浏览器端完成解压、过滤与自然排序，可拖拽重排、剔除单张、点选封面。
-2. 包内存在设置页配置的说明文件（默认 `info.txt` / `meta.txt` / `readme.txt`）时按「首行标题」或「键值匹配」预填标题、说明与标签，缺失文件时静默留空。
-3. 点击发布后先提交元数据与 400px WebP 封面创建任务，再逐张上传图片；中途关闭网页或断网后重新选择同一批文件即可按原序号补传缺失图片。
-4. 后台队列按可配间隔逐张推送至私有频道，拿到远端文件标识后立即删除临时文件，页面显示「存图完成」；刷新页面仍可查看进度并重试失败图片。
-5. 存图完成后在进度面板点「发布到 Telegraph」，后台逐页创建 `telegra.ph` 页面并补齐互链，完成后列出分享链接。
-6. 发布时同时开启该帖的公开标记，访客通过 `GET /i/{short_code}` 流式取图；未发布的帖子（含升级前已存图的任务）保持私有。
-7. 在详情抽屉里可在线编辑标题、说明与作者，也可一键撤回单帖；撤回后短码在源站立即 404，重新开启沿用原有公开授权，已缓存的副本可能仍显示一段时间。
-8. 首页画廊以封面卡片浏览全部任务，支持关键词与多标签组合筛选、分页，详情抽屉查看图文清单并复制分享链接；列表按创建时间倒序，卡片展示首次发布时间。
-9. 设置页可维护 Telegram / Telegraph 凭据、代理与说明文件规则，并行自检连通性；月度流量预警与熔断、每日自动备份、帖子删除都可以在线完成。
+浏览器里解包 ZIP、拖拽排序、选封面，图片存进你自己的 Telegram 私有频道，说明页发到 Telegraph，访客只拿到短码直链。整站一个二进制、一套 SQLite，跑在 512MB 的 VPS 上也不喘。
 
-设置页可在线维护令牌、频道、作者名、代理、说明文件规则、默认画质与连通性自检；流量看护、自动备份与帖子删除都已内置，表格中不再有「开发中」条目。
+## 核心特性
 
-管理接口统一要求登录会话。删除接口 `DELETE /api/posts/{id}` 删除帖子、图片与标签关联并清理封面与临时目录；上传、排队或发布进行中返回 409，任务失败后可正常删除，删除后短码立即 404。
+- **浏览器端整备**：拖入 ZIP、文件夹或多张图片即可解压、过滤、自然排序，支持拖拽重排、逐张剔除与点选封面，元信息可从包内说明文件预填。
+- **私有图床**：后台按可配间隔逐张推送到 Telegram 私有频道，拿到远端标识后立刻删除临时文件；断网或关页后用同一批文件重选即可按序号续传。
+- **Telegraph 图册**：一键把整帖发成多页 Telegraph 页面并自动互链，记录页面路径与浏览量；单帖可在线改标题、说明与作者。
+- **防社死遮罩**：默认把封面糊住，点一下才揭开，鼠标移开立刻重新遮住；触屏与键盘用短时揭开，适合放在公共场合翻自己的图集。
+- **短码图片网关**：`/i/{short_code}` 流式直通上游，不落盘、不带凭据；支持并发上限、按月流量看护与超限熔断。
+- **轻量运维**：单一二进制内嵌前端，SQLite 自动迁移；内置每日自动备份、在线设置与连通性自检，512MB VPS 可跑。
 
-撤回接口 `PATCH /api/posts/{id}/toggle` 的请求体为 `{"disabled": true}` 或 `{"disabled": false}`，表示要写入的目标状态而不是翻转：重复提交同一目标状态结果不变，因此网络超时后重试不会把已撤回的图片重新公开。该请求体上限 256 字节，缺字段返回 400。
+## 界面预览
 
-## 功能特性
+| 图集详情（含浏览量） | 发布工作台 |
+| :---: | :---: |
+| ![图集详情](docs/screenshots/gallery-detail.webp) | ![发布工作台](docs/screenshots/workbench.webp) |
+| 遮罩、精确浏览量、刷新与分享都在同一抽屉里 | 拖入图片即可排序、选封面并预填元信息 |
 
-| 模块 | 说明 | 状态 |
-| :--- | :--- | :--- |
-| 单管理员鉴权 | 首次启动初始化管理员账号，密码以 bcrypt 哈希存储，HttpOnly Cookie 鉴权 | 已完成 |
-| 发帖工作台 | ZIP / 文件夹 / 多图拖入，浏览器端解压、自然排序、拖拽排序、点选封面，可中断续传 | 已完成 |
-| 浏览器端缩略图 | Canvas 压缩为宽 400px 的 WebP 封面图，服务器零解码压力 | 已完成 |
-| 元信息自动读取 | 设置页可配置说明文件候选名（默认 `info.txt` / `meta.txt` / `readme.txt`）与默认解析方式，命中后预填标题、说明与标签，缺省不报错 | 已完成 |
-| 异步上传队列 | 持久队列逐张推送 Telegram 私有频道，共享发送间隔与 429 `retry_after` 退避，支持重启恢复、进度查询与失败重试 | 已完成 |
-| Telegraph 发布 | 管理员确认后逐页创建 `telegra.ph` 帖子，超过 56 KiB 自动分篇并互链，失败重试复用已建页面 | 已完成 |
-| 设置与自检 | 设置页维护令牌、频道与作者名，环境变量托管项只读，保存后图床热切换；并行连通性自检返回状态与耗时，令牌不回显 | 已完成 |
-| 画廊与检索 | 封面卡片、关键词搜索、多标签组合筛选、分页、详情抽屉与分享复制，列表按创建时间倒序、展示首次发布时间 | 已完成 |
-| 防社死模糊 | 全局模糊开关，状态存于 `localStorage`，悬停或键盘聚焦临时去模糊，触屏点按临时去模糊 | 已完成 |
-| 图片网关 | `GET /i/{short_code}` 流式反代，仅转发显式公开的帖子，短码随机高熵，隔离凭据与远端文件标识 | 已完成 |
-| 流量看护 | 按自然月统计图片出站流量，达到阈值经 Bot 提醒，超过上限后网关返回 503；后台可查看当月用量 | 已完成 |
-| 单帖熔断 | 单帖撤回后短码立即 404 且不再请求 Telegram，重新开启秒级恢复；已缓存的副本可能仍显示 | 已完成 |
-| 代理配置 | 直连 / 跟随系统环境变量 / 自定义 HTTP、HTTPS、SOCKS5，可分别对 Telegram 与 Telegraph 启用，保存后重建传输层；自定义地址含账密但不回显 | 已完成 |
-| 自动备份 | 每日定时 `VACUUM INTO` 热备并打包 zip（可选含封面），仅发送到私有会话，公开或无法确认时只留本地；支持手动触发与本地下载 | 已完成 |
-| 帖子删除 | 鉴权后删除帖子与关联记录，进行中的任务返回 409；删除后短码立即 404 | 已完成 |
-| 存储抽象 | `StorageProvider` 接口与 Telegram 提供方（`sendPhoto` / `sendDocument`） | 已完成 |
+| 设置与流量看护 | 移动端画廊 |
+| :---: | :---: |
+| ![设置页](docs/screenshots/settings.webp) | ![移动端画廊](docs/screenshots/mobile-gallery.webp) |
+| 连通性自检、月度流量与自动备份 | 390px 双列布局，标签与视图切换同行 |
 
-## 架构
+## 快速开始
 
-- **后端**：Go 1.22+ 与 Gin，编译为单一静态二进制文件（`CGO_ENABLED=0`）。
-- **数据库**：SQLite，纯 Go 驱动 `modernc.org/sqlite`，开启 WAL 与 `busy_timeout=5000`。
-- **前端**：Vue 3 + Vite + TypeScript + Tailwind CSS，构建产物经 `go:embed` 嵌入二进制。
-- **浏览器端解包**：`fflate` 解压与 Canvas 缩略图，服务器不承担解码与解压。
-- **图片出口**：`io.Copy` 流式直通，不整包进内存；并发信号量限流。
+三种形态任选其一，数据目录里只有 SQLite 与临时文件，备份即复制该目录。
 
-目标运行环境为 1 核 / 512MB–1GB 内存的低配 VPS，空闲常驻内存控制在 30MB 以内。
-
-## 部署方式
-
-三种形态共用同一套命令行参数与环境变量配置（`--addr` / `LISTEN_ADDR`、`--data` / `DATA_DIR`、`--public-url` / `PUBLIC_URL`）。
-
-1. **直接部署（原生单二进制）**：`make build` 生成 `bin/sesegraph`，`make cross` 交叉编译 `linux/amd64`、`linux/arm64`、`darwin/arm64`、`windows/amd64`。把二进制放到 `/opt/sesegraph`，按 `deploy/sesegraph.service` 装成 systemd 服务：数据目录由 `StateDirectory=sesegraph` 自动创建为 `/var/lib/sesegraph`，无需手工建目录或授权；再用 `deploy/nginx.conf.example` 或 `deploy/Caddyfile.example` 接入已有反向代理。
-2. **单容器 Docker**：先建好数据目录并交给容器内的 uid 1000，再启动：
-   ```bash
-   mkdir -p data && sudo chown -R 1000:1000 data
-   docker build -t sesegraph:local .
-   docker run -d --name sesegraph -p 8080:8080 -v "$PWD/data:/app/data" sesegraph:local
-   ```
-   镜像基于 Alpine，内置 `HEALTHCHECK`（`/api/health`），默认监听 `8080`、数据目录 `/app/data`，容器内以 uid 1000 运行。
-3. **Docker Compose**：`cp .env.example .env` 填好 `DOMAIN` 与 `ADMIN_PASSWORD`，然后 `docker compose up -d`。`docker-compose.yml` 编排应用与 Caddy：`init` 服务先建好 `./data` 并授权给 uid 1000，应用只在内部网络暴露 `8080`，Caddy 映射 `80/443` 并按 `DOMAIN` 自动签发与续期证书。只想用 Compose 启动应用、接入已有反向代理时改用
-   `docker compose -f docker-compose.standalone.yml up -d`（只监听 `127.0.0.1:8080`）。Compose 里的 Caddy 未开启访问日志，避免 `X-Setup-Token` 这类自定义请求头被写入日志。
-
-## Telegram 与 Telegraph 配置
-
-图床依赖一个 Bot 与一个私有频道：
-
-1. 通过 [@BotFather](https://t.me/BotFather) 创建 Bot，取得 Bot Token。
-2. 新建私有频道，将该 Bot 添加为频道管理员并授予发布权限。
-3. 将频道 ID 与 Token 填入进程环境变量（见 `.env.example`），也可以登录后在 `/settings` 页面保存，保存后图床立即切换。
-4. 确认 Bot 能访问 Telegram API 且对频道有发布权限。
-
-相关环境变量：`TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHANNEL_ID`、`UPLOAD_INTERVAL_MS`（发送间隔，默认 1500 毫秒）、`TELEGRAM_API_BASE`（可选，接入自建反代或本地联调）、`UPLOAD_MODE`（新任务默认画质，`photo` 或 `document`，单帖仍可覆盖，续传沿用原任务）。
-
-## 流量看护与自动备份
-
-`/settings` 的「流量看护」显示当月出站流量、请求次数与阈值状态；「自动备份」可立即生成一份备份并下载最近一份。
-
-相关环境变量：
-
-- `TRAFFIC_ALERT_GB`：月度预警阈值（GB），首次越过后通过 Bot 发一条提醒，同月只提醒一次；提醒没送达时不算已提醒，由后台协程在重试间隔到达后补发，不依赖新的图片请求；`0` 表示不提醒。
-- `TRAFFIC_LIMIT_GB`：月度硬上限（GB），累计出站达到后图片网关直接返回 `503`，不再向上游取流；`0` 表示不熔断。计费按 `io.Copy` 实际写出的字节逐块累加，因此并发传输期间也能及时熔断，正在传输的连接照常完成。
-- `BACKUP_ENABLED`：是否启用每日定时备份，默认关闭。
-- `BACKUP_CRON`：定时表达式，只支持每天固定时刻（默认 `0 3 * * *`）。
-- `BACKUP_CHANNEL_ID`：备份发送目标频道；留空时使用图床频道。
-- `BACKUP_INCLUDE_THUMBS`：是否把封面缩略图一起打包，默认包含，设为 `false` 只备份数据库。
-
-备份保存在数据目录的 `backups/` 下，默认保留最近 7 份；`VACUUM INTO` 生成的一致性快照只在打包期间存在，结束即删除。zip 先写临时文件，完整关闭后才改名为最终备份，下载接口不会读到半份文件；发送成功与否都执行保留策略。
-
-备份包含数据库里的 Bot 与 Telegraph 凭据，因此发送前会读取目标会话属性：只有私聊或有私密频道/群（无公开用户名和公开别名）才会推送；目标为公开频道或无法确认时只保留本地备份，接口以 `warning` 说明原因。校验与发送固定使用同一份图床配置，校验期间保存设置切换频道也不会把备份发到新目标。
-
-网络受限的环境可在 `/settings` 的「网络代理」中配置：
-
-- `direct`：直连，不使用代理；
-- `system`：跟随进程环境变量 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`（容器里挂载这些变量即可）；
-- `custom`：自定义 `http://`、`https://` 或 `socks5://` 地址，可带账密。
-
-Telegram 与 Telegraph 可以分别启用代理。保存后立即重建传输层，上传队列、图片网关、发布队列与连通性自检都使用新配置；自定义地址只报告是否已设置，响应与日志不出现地址取值。自定义模式下地址不能清空，需要清除时先切回直连。
-
-这四项也可以由环境变量提供：`PROXY_MODE`、`PROXY_URL`、`PROXY_FOR_TELEGRAM`、`PROXY_FOR_TELEGRAPH`（`true` / `false`）。环境变量优先于设置页，托管后在界面只读。
-
-Telegraph 发布需要一个访问令牌，二选一：
-
-- 通过环境变量提供 `TELEGRAPH_ACCESS_TOKEN`（可选 `TELEGRAPH_AUTHOR_NAME`、`TELEGRAPH_API_BASE`）；
-- 登录后调用 `POST /api/settings/telegraph/create-account`，由服务端申请账户并落库，令牌不回显；重复或并发调用复用已有账户。
-
-发布要求 `PUBLIC_URL` 是结构完整的 HTTPS 地址，不能包含查询串、片段或内嵌凭据，图片链接由它拼接。图片网关的并发上限由 `PROXY_CONCURRENCY` 控制，默认 25，满额立即返回 503。
-
-隐私边界：Bot Token 与 Telegraph 令牌只报告是否已设置，任何接口、日志与页面都不回显取值；Telegram 原始下载地址与远端文件标识只在服务端使用，短码与原始地址彻底隔离。频道 ID 属于部署者自己的配置，会在登录后的设置页展示以便核对，但不会出现在公开页面或图片响应里。备份 zip 含数据库中的凭据，因此只允许发送到私有会话。
-
-## 开发
+### Docker Compose（推荐，自带 HTTPS）
 
 ```bash
-# 完整构建：安装前端依赖、构建前端并把产物嵌入后端，生成单一可执行文件（约 14MB）
-make build VERSION=v1.0.0
-
-# 运行后端测试
-make test
-
-# 前端单元测试与类型检查（工作台解包、排序、续传等纯逻辑）
-cd frontend && pnpm test && pnpm typecheck
-
-# 四个目标平台交叉编译（linux/amd64、linux/arm64、darwin/arm64、windows/amd64），产物在 bin/ 下
-make cross VERSION=v1.0.0
+mkdir -p /opt/sesegraph && cd /opt/sesegraph
+curl -fsSLO https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.1.0/docker-compose.yml
+mkdir -p deploy && curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.1.0/deploy/Caddyfile -o deploy/Caddyfile
+curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.1.0/.env.example -o .env
+# 至少填写 DOMAIN、ADMIN_USERNAME、ADMIN_PASSWORD
+$EDITOR .env
+docker compose up -d
 ```
 
-首次启动前按 `.env.example` 准备配置；若希望用网页完成首次初始化，需先设置 `ADMIN_SETUP_TOKEN`，也可以直接用 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 通过环境变量建号。
+应用镜像从 `ghcr.io/littleseven2003/sesegraph` 拉取，`SESEGRAPH_VERSION` 固定版本、`SESEGRAPH_IMAGE` 可换成自定义地址。宿主机数据目录是 `/opt/sesegraph/data`，Caddy 的证书与配置保存在命名卷里。
 
-只改前端时可以并行跑开发服务器，`/api` 会代理到本机 `8080`：
+### 单容器 Docker
 
 ```bash
-cd backend && go run ./cmd/server --addr 127.0.0.1:8080 --data ./data
-cd frontend && pnpm dev
+mkdir -p /opt/sesegraph/data && sudo chown 1000:1000 /opt/sesegraph/data
+docker run -d --name sesegraph --restart unless-stopped \
+  -p 127.0.0.1:8080:8080 \
+  -v /opt/sesegraph/data:/app/data \
+  -e PUBLIC_URL=https://gallery.example.com \
+  -e ADMIN_USERNAME=admin -e ADMIN_PASSWORD='换成你的密码' \
+  ghcr.io/littleseven2003/sesegraph:v1.1.0
 ```
 
-环境要求：Go 1.22+、Node.js 22.12+（Vite 8 要求）、pnpm 10+、Git。前端构建产物经 `go:embed` 嵌入二进制，直接部署只需交付单个可执行文件。
+反向代理指向 `http://127.0.0.1:8080`，并关闭响应缓冲（图片网关是流式输出）。`deploy/nginx.conf.example` 与 `deploy/Caddyfile.example` 可直接参考。
 
-## 目录结构
+### 原生单二进制
 
-```text
-backend/     Go 服务（API、鉴权、配置、数据库、帖子仓储、存储提供方、上传队列、图片网关、Telegraph 发布器、前端内嵌）
-frontend/    Vue 3 前端（初始化与登录、图集首页、发帖工作台及工具函数）
-deploy/      systemd 服务模板与反向代理配置示例
-Makefile     构建、交叉编译与测试入口
-Dockerfile   单容器镜像
-docker-compose.yml / Caddyfile   Compose 一键部署
+```bash
+install -d /opt/sesegraph /etc/sesegraph /var/lib/sesegraph
+curl -fsSL -o /opt/sesegraph/sesegraph \
+  https://github.com/littleseven2003/SeSeGraph/releases/download/v1.1.0/sesegraph-v1.1.0-linux-amd64
+chmod +x /opt/sesegraph/sesegraph
+cp deploy/sesegraph.service /etc/systemd/system/sesegraph.service
+install -m 600 .env /etc/sesegraph/sesegraph.env
+useradd --system --home /opt/sesegraph --shell /usr/sbin/nologin sesegraph || true
+systemctl daemon-reload && systemctl enable --now sesegraph
 ```
+
+数据库与上传临时文件在 `/var/lib/sesegraph`，升级时只替换二进制再 `systemctl restart sesegraph`。四个平台的产物与 `SHA256SUMS` 都在 Release 页。
+
+## 配置说明
+
+| 变量 | 必填 | 说明 |
+| --- | :---: | --- |
+| `PUBLIC_URL` | 是 | 对外 HTTPS 地址，用于拼图片外链与分享文案，不能带查询串或凭据 |
+| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | 首次 | 仅首次初始化使用，之后以数据库中的哈希为准 |
+| `TELEGRAM_BOT_TOKEN` | 是 | 图床 Bot，需对目标私密频道有发送权限 |
+| `TELEGRAM_CHANNEL_ID` | 是 | 私密频道标识，形如 `-100…`，或使用 `@channel` |
+| `TELEGRAPH_ACCESS_TOKEN` | 是 | Telegraph 账户令牌，也可在设置页申请后写入 |
+| `TELEGRAPH_AUTHOR_NAME` | 否 | 发布页面显示的作者名 |
+| `LISTEN_ADDR` / `DATA_DIR` | 否 | 监听地址与数据目录，容器内默认 `:8080` 与 `/app/data` |
+| `UPLOAD_MODE` | 否 | `photo` 省流量或 `document` 原图 |
+| `PROXY_CONCURRENCY` | 否 | 图片网关并发上限，满额立即返回 503，不排队 |
+| `VIEWS_SYNC_MINUTES` | 否 | 浏览量同步间隔，默认 30 分钟 |
+| `VIEWS_COOLDOWN_SECONDS` | 否 | 详情页手动刷新的冷却，默认 60 秒 |
+
+<details>
+<summary>代理、流量看护与自动备份</summary>
+
+| 变量 | 说明 |
+| --- | --- |
+| `PROXY_MODE` | `direct` 直连、`system` 跟随 `HTTP(S)_PROXY`、`custom` 使用 `PROXY_URL` |
+| `PROXY_FOR_TELEGRAM` / `PROXY_FOR_TELEGRAPH` | 分别控制两项上游是否走代理 |
+| `TRAFFIC_ALERT_GB` | 当月出站达到该值经 Bot 提醒一次，0 表示关闭 |
+| `TRAFFIC_LIMIT_GB` | 当月出站上限，达到后图片网关返回 503 并停止取流 |
+| `BACKUP_ENABLED` / `BACKUP_CRON` | 每日定时备份，默认 `0 3 * * *` |
+| `BACKUP_CHANNEL_ID` / `BACKUP_INCLUDE_THUMBS` | 备份可发送到频道，可选是否包含封面缩略图 |
+
+</details>
+
+## 技术架构
+
+- **后端**：Go 1.22 + Gin，`modernc.org/sqlite` 纯 Go 驱动（零 CGO），SQLite 以 WAL 加单连接串行访问，数据库结构版本随启动自动迁移。
+- **前端**：Vue 3 + TypeScript + Tailwind，构建产物通过 `go:embed` 打进二进制，部署时只有一个可执行文件。
+- **存储**：图片经 Telegram Bot API 存入私有频道；对外只暴露短码网关，流式转发并限制并发与月度流量。
+- **发布**：Telegraph 页面按图片数自动分篇并互链；浏览量由后台低频同步到本地缓存，接口只读缓存。
+
+## 本地开发
+
+```bash
+make build          # 构建前端并生成 bin/sesegraph
+make test           # 后端测试
+make typecheck      # 前端类型检查与单测
+make cross          # 四个平台交叉编译
+```
+
+前端单独开发时 `cd frontend && pnpm dev`；需要重新嵌入页面时执行 `make frontend`。本地从源码构建镜像：`docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build`。
 
 ## 版本与变更
 
-版本遵循 SemVer 2.0.0，变更记录见 [CHANGELOG.md](CHANGELOG.md)。
+版本历史见 [CHANGELOG.md](CHANGELOG.md)，当前正式版 `v1.1.0`。发布由标签触发：`v*` 标签会产出四平台二进制、`SHA256SUMS` 与 `ghcr.io/littleseven2003/sesegraph` 的双架构镜像。
+
+## 升级与备份
+
+从 `v1.0.0` 升级时数据库会自动迁移到结构版本 8（新增浏览量缓存字段），无需手工执行 SQL；升级前建议先停服务并复制整个数据目录，或使用设置页的「立即备份」生成快照。Compose 部署的更新方式是 `docker compose pull sesegraph && docker compose up -d sesegraph`，命名卷与 `/opt/sesegraph/data` 都会保留。
 
 ## 许可
 
-本项目以 GNU Affero General Public License v3.0 发布，全文见 [LICENSE](LICENSE)。
+[AGPL-3.0](LICENSE)
