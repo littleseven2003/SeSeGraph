@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { formatBytes } from '../../utils/image.ts'
+import { formatDuration } from '../../utils/media.ts'
 import type { UploadStatus } from '../../utils/upload.ts'
 import type { WorkbenchTile } from '../../utils/workbench.ts'
 
@@ -34,6 +35,7 @@ const emit = defineEmits<{
   (event: 'select-cover', id: string): void
   (event: 'remove', id: string): void
   (event: 'move', payload: { from: number; to: number }): void
+  (event: 'preview', id: string): void
 }>()
 
 const dragIndex = ref(-1)
@@ -87,7 +89,14 @@ function moveBy(index: number, delta: number): void {
       @dragend="onDragEnd"
     >
       <div class="relative aspect-[4/3] overflow-hidden bg-canvas">
-        <img :src="item.previewUrl" :alt="item.name" class="h-full w-full object-cover" loading="lazy" />
+        <img
+          :src="item.previewUrl"
+          :alt="item.name"
+          class="h-full w-full object-cover"
+          :class="item.kind === 'video' ? 'cursor-pointer' : ''"
+          loading="lazy"
+          @click="item.kind === 'video' ? emit('preview', item.id) : undefined"
+        />
         <span class="tnum absolute left-2 top-2 rounded bg-ink/70 px-1.5 py-0.5 text-xs font-medium text-white">{{
           index + 1
         }}</span>
@@ -95,6 +104,11 @@ function moveBy(index: number, delta: number): void {
           v-if="item.id === props.coverId"
           class="absolute right-2 top-2 rounded bg-brand px-1.5 py-0.5 text-xs font-medium text-brand-ink"
           >封面</span
+        >
+        <span
+          v-if="item.kind === 'video'"
+          class="tnum absolute bottom-2 right-2 rounded bg-ink/75 px-1.5 py-0.5 text-[11px] font-medium text-white"
+          >{{ item.duration ? `▶ ${formatDuration(item.duration)}` : '▶ MP4' }}</span
         >
         <span
           class="absolute bottom-2 left-2 rounded px-1.5 py-0.5 text-xs font-medium"
@@ -105,7 +119,15 @@ function moveBy(index: number, delta: number): void {
 
       <div class="px-2 py-2">
         <p class="truncate text-xs font-medium" :title="item.name">{{ item.name }}</p>
-        <p class="tnum mt-0.5 text-xs text-muted">{{ formatBytes(item.size) }}</p>
+        <p class="tnum mt-0.5 text-xs text-muted">
+          <template v-if="item.compressedFrom">
+            {{ formatBytes(item.compressedFrom) }} → {{ formatBytes(item.size) }}
+            <span class="ml-1 rounded bg-accent-soft px-1.5 py-0.5 text-[11px] font-medium text-accent">已压缩</span>
+          </template>
+          <template v-else>
+            {{ formatBytes(item.size) }}<span v-if="item.kind === 'video' && item.duration"> · {{ formatDuration(item.duration) }}</span>
+          </template>
+        </p>
       </div>
 
       <div class="flex items-center justify-between gap-1 border-t border-line px-1.5 py-1.5">

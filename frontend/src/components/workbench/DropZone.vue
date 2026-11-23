@@ -120,7 +120,7 @@ async function onDrop(event: DragEvent): Promise<void> {
         class="h-11 rounded-full bg-canvas px-3 text-xs font-medium text-muted transition hover:bg-line/50 hover:text-ink disabled:opacity-60"
         @click="open(imageInput)"
       >
-        选择图片
+        选择图片 / 视频
       </button>
       <button
         type="button"
@@ -141,7 +141,7 @@ async function onDrop(event: DragEvent): Promise<void> {
     </div>
     <input ref="zipInput" type="file" accept=".zip,application/zip" class="hidden" @change="takeZip" />
     <input ref="folderInput" type="file" multiple class="hidden" @change="takeImages" />
-    <input ref="imageInput" type="file" accept="image/*" multiple class="hidden" @change="takeImages" />
+    <input ref="imageInput" type="file" accept="image/*,video/mp4,.mp4" multiple class="hidden" @change="takeImages" />
   </section>
 
   <section
@@ -158,7 +158,7 @@ async function onDrop(event: DragEvent): Promise<void> {
         <path d="M4 15v3a2 2 0 002 2h12a2 2 0 002-2v-3" stroke-linecap="round" />
       </svg>
     </div>
-    <p class="mt-3 text-sm font-medium">把 ZIP、文件夹或多张图片拖到这里</p>
+    <p class="mt-3 text-sm font-medium">把 ZIP、文件夹、图片或 MP4 短视频拖到这里</p>
     <p class="mt-1 text-xs text-muted">拖入 ZIP、整个文件夹或一组图片，在浏览器本地完成排序与压图，不占服务器算力</p>
 
     <div class="mt-4 flex flex-wrap items-center justify-center gap-2">
@@ -184,7 +184,7 @@ async function onDrop(event: DragEvent): Promise<void> {
         class="h-11 rounded-full bg-canvas px-4 text-sm font-medium text-muted transition hover:bg-line/50 hover:text-ink disabled:opacity-60"
         @click="open(imageInput)"
       >
-        选择图片
+        选择图片 / 视频
       </button>
     </div>
 
@@ -194,6 +194,6 @@ async function onDrop(event: DragEvent): Promise<void> {
 
     <input ref="zipInput" type="file" accept=".zip,application/zip" class="hidden" @change="takeZip" />
     <input ref="folderInput" type="file" multiple class="hidden" @change="takeImages" />
-    <input ref="imageInput" type="file" accept="image/*" multiple class="hidden" @change="takeImages" />
+    <input ref="imageInput" type="file" accept="image/*,video/mp4,.mp4" multiple class="hidden" @change="takeImages" />
   </section>
 </template>

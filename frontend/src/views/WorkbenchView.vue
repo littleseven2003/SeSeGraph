@@ -8,7 +8,16 @@ import ProgressPanel from '../components/workbench/ProgressPanel.vue'
 import { commitPost, createPost, fetchProgress, publishPost, retryPost, uploadImage, type ServerProgress } from '../api/posts.ts'
 import { ApiError } from '../api/client.ts'
 import { makeCover } from '../utils/cover.ts'
-import { MAX_IMAGE_COUNT, baseName, checkFile, formatBytes, limitForMode, mimeForName, type UploadMode } from '../utils/image.ts'
+import { MAX_IMAGE_COUNT, baseName, formatBytes, isVideoName, limitForMode, mimeForName, type UploadMode } from '../utils/image.ts'
+import {
+  checkMediaFile,
+  compressImage,
+  compressionSummary,
+  extractVideoMeta,
+  isAnimatedImage,
+  needsCompression,
+  type CompressResult,
+} from '../utils/media.ts'
 import { prefillFromMeta, type PostMeta } from '../utils/meta.ts'
 import { sortByNaturalName } from '../utils/natural.ts'
 import { isActiveStatus, publishActive } from '../utils/progress.ts'
@@ -81,6 +90,23 @@ const retrying = ref(false)
 const publishing = ref(false)
 const pollIntervalMs = 2000
 let pollTimer: number | undefined
+// 视频预览：只在点击时创建对象 URL，关闭后立刻释放。
+const previewTile = ref<WorkbenchTile | null>(null)
+const previewUrl = ref('')
+
+function openPreview(id: string): void {
+  const tile = tiles.value.find((item) => item.id === id)
+  if (!tile || tile.kind !== 'video') return
+  closePreview()
+  previewTile.value = tile
+  previewUrl.value = URL.createObjectURL(tile.blob)
+}
+
+function closePreview(): void {
+  if (previewUrl.value !== '') URL.revokeObjectURL(previewUrl.value)
+  previewUrl.value = ''
+  previewTile.value = null
+}
 
 const imageCount = computed(() => tiles.value.length)
 const totalSize = computed(() => totalBytes(tiles.value))
@@ -93,12 +119,12 @@ const resuming = computed(() => {
   if (postId.value > 0) {
     const current = snapshot.value
     if (!current) return true
-    const local: SnapshotFile[] = tiles.value.map((tile) => ({ name: tile.name, size: tile.size }))
+    const local: SnapshotFile[] = snapshotFiles()
     return !('error' in matchSnapshotFiles(current.files, local))
   }
   const saved = snapshot.value
   if (!saved || tiles.value.length === 0) return false
-  const local: SnapshotFile[] = tiles.value.map((tile) => ({ name: tile.name, size: tile.size }))
+  const local: SnapshotFile[] = snapshotFiles()
   return !('error' in matchSnapshotFiles(saved.files, local))
 })
 // 续传时沿用旧任务元数据，文件与任务不匹配时解锁，允许重新选择或放弃。
@@ -125,7 +151,12 @@ const phaseText = computed(() => {
   }
 })
 
+function onPreviewKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') closePreview()
+}
+
 onMounted(() => {
+  window.addEventListener('keydown', onPreviewKeydown)
   void bootstrap()
 })
 
@@ -182,16 +213,93 @@ function pushError(text: string): void {
   message.value = text
 }
 
-function addTile(name: string, blob: Blob, size: number): WorkbenchTile {
+// 附加字段用于视频与压缩结果，缺省时按普通图片处理。
+interface TileExtra {
+  kind?: 'image' | 'video'
+  duration?: number
+  sourceSize?: number
+  compressedFrom?: number
+  mime?: string
+  posterBlob?: Blob
+}
+
+function addTile(name: string, blob: Blob, size: number, extra: TileExtra = {}): WorkbenchTile {
   return {
     id: createId(),
     name,
     size,
-    mime: mimeForName(name),
+    mime: extra.mime ?? mimeForName(name),
     blob,
     sortOrder: 0,
-    previewUrl: URL.createObjectURL(blob),
+    previewUrl: URL.createObjectURL(extra.posterBlob ?? blob),
+    kind: extra.kind,
+    duration: extra.duration,
+    sourceSize: extra.sourceSize,
+    compressedFrom: extra.compressedFrom,
+    posterBlob: extra.posterBlob,
   }
+}
+
+// prepareTiles 统一处理文件、文件夹与 ZIP 导入：读视频首帧、压缩超大静态图。
+async function prepareTiles(entries: { name: string; blob: Blob }[]): Promise<WorkbenchTile[]> {
+  const prepared: WorkbenchTile[] = []
+  const compressed: CompressResult[] = []
+  const problems: string[] = []
+  const oversized = entries.filter((entry) => needsCompression(mode.value, entry.name, entry.blob.size))
+  let done = 0
+  for (const entry of entries) {
+    const label = baseName(entry.name)
+    if (isVideoName(entry.name)) {
+      const meta = await extractVideoMeta(entry.blob).catch(() => null)
+      if (meta === null) problems.push(`${label} 首帧读取失败，已按占位加入`)
+      prepared.push(
+        addTile(label, entry.blob, entry.blob.size, {
+          kind: 'video',
+          duration: meta?.duration ?? 0,
+          sourceSize: entry.blob.size,
+          posterBlob: meta?.poster ?? undefined,
+        }),
+      )
+      continue
+    }
+    if (needsCompression(mode.value, entry.name, entry.blob.size)) {
+      if (await isAnimatedImage(entry.blob, entry.name)) {
+        problems.push(
+          `${label} (${formatBytes(entry.blob.size)}) 为动图，photo 模式上限 10MB 且不自动压缩动图，请切换为 document 模式`,
+        )
+        continue
+      }
+      done += 1
+      message.value = `正在压缩超大图片（${done} / ${oversized.length}）：${label} (${formatBytes(entry.blob.size)})…`
+      try {
+        const result = await compressImage(entry.blob)
+        compressed.push(result)
+        prepared.push(
+          addTile(label, result.blob, result.toSize, {
+            sourceSize: entry.blob.size,
+            compressedFrom: result.fromSize,
+            mime: result.blob.type || 'image/webp',
+          }),
+        )
+      } catch (error) {
+        problems.push(`${label} 压缩失败：${error instanceof Error ? error.message : '请重试'}`)
+      }
+      continue
+    }
+    prepared.push(addTile(label, entry.blob, entry.blob.size))
+  }
+  if (compressed.length > 0) {
+    problems.unshift(compressionSummary(compressed))
+  }
+  if (problems.length > 0) {
+    pushError(problems.join('；'))
+  }
+  return prepared
+}
+
+// snapshotFiles 按原文件名与原始体积生成续传快照，压缩不改变匹配依据。
+function snapshotFiles(): SnapshotFile[] {
+  return tiles.value.map((tile) => ({ name: tile.name, size: tile.sourceSize ?? tile.size }))
 }
 
 function releaseTiles(items: WorkbenchTile[]): void {
@@ -210,7 +318,7 @@ async function refreshCover(): Promise<void> {
     return
   }
   try {
-    const cover = await makeCover(tile.blob)
+    const cover = await makeCover(tile.posterBlob ?? tile.blob)
     coverPreview.value = cover.dataUrl
     coverDataUrl.value = cover.dataUrl
     coverBytes.value = cover.bytes
@@ -231,7 +339,7 @@ function applyTiles(next: WorkbenchTile[]): void {
 function restoreOrder(): boolean {
   const saved = snapshot.value
   if (!saved) return true
-  const local: SnapshotFile[] = tiles.value.map((tile) => ({ name: tile.name, size: tile.size }))
+  const local: SnapshotFile[] = snapshotFiles()
   const matched = matchSnapshotFiles(saved.files, local)
   if ('error' in matched) {
     pushError(`${matched.error}。如需放弃上次任务 #${saved.postId}，点「放弃此任务」`)
@@ -251,7 +359,12 @@ function restoreOrder(): boolean {
 function setMode(next: UploadMode): void {
   if (next === mode.value || locked.value) return
   const limit = limitForMode(next)
-  const oversized = tiles.value.filter((tile) => tile.size > limit)
+  // 视频上限与画质模式无关；photo 模式下超 10MB 的静态图可以自动压缩，不需要拦。
+  const oversized = tiles.value.filter((tile) => {
+    if (tile.kind === 'video') return false
+    if (next === 'photo' && needsCompression(next, tile.name, tile.size)) return false
+    return tile.size > limit
+  })
   if (oversized.length > 0) {
     pushError(`有 ${oversized.length} 张超过 ${limit / (1024 * 1024)}MB 上限，请先移除这些图片再切换`)
     return
@@ -264,7 +377,7 @@ function onZip(file: File): void {
   working.value = true
   message.value = ''
   const reader = new FileReader()
-  reader.onload = () => {
+  reader.onload = async () => {
     try {
       const result = unpackZip(new Uint8Array(reader.result as ArrayBuffer), { metaNames: metaNames.value })
       if (!result.ok) {
@@ -276,8 +389,12 @@ function onZip(file: File): void {
         return
       }
       releaseTiles(tiles.value)
-      const next = result.images.map((image) =>
-        addTile(baseName(image.name), new Blob([image.data.slice()], { type: mimeForName(image.name) }), image.data.length),
+      // 压缩包内同样统一预处理：视频读首帧、photo 模式超大静态图先压缩。
+      const next = await prepareTiles(
+        result.images.map((image) => ({
+          name: image.name,
+          blob: new Blob([image.data.slice()], { type: mimeForName(image.name) || 'application/octet-stream' }),
+        })),
       )
       metaText.value = result.metaText
       metaSource.value = result.metaText === '' ? '' : result.metaName
@@ -290,7 +407,7 @@ function onZip(file: File): void {
       if (result.metaError !== '') {
         message.value = result.metaError
       } else if (result.skipped > 0 && message.value === '') {
-        message.value = `已忽略 ${result.skipped} 个非图片文件`
+        message.value = `已忽略 ${result.skipped} 个非媒体文件`
       }
       void refreshCover()
     } catch {
@@ -306,34 +423,41 @@ function onZip(file: File): void {
   reader.readAsArrayBuffer(file)
 }
 
-function onImages(files: File[]): void {
+async function onImages(files: File[]): Promise<void> {
   message.value = ''
   // 续传重选会整体替换旧选择，配额按新批次计算，避免旧列表占满 500 张上限。
   const replace = snapshot.value !== null && !resuming.value
   const base = quotaUsed(tiles.value.length, replace)
-  const accepted: WorkbenchTile[] = []
-  for (const file of files) {
-    if (base + accepted.length >= MAX_IMAGE_COUNT) {
-      pushError(`单个帖子最多 ${MAX_IMAGE_COUNT} 张图片`)
-      break
+  const entries: { name: string; blob: Blob }[] = []
+  working.value = true
+  try {
+    for (const file of files) {
+      if (base + entries.length >= MAX_IMAGE_COUNT) {
+        pushError(`单个帖子最多 ${MAX_IMAGE_COUNT} 张图片`)
+        break
+      }
+      const problem = checkMediaFile({ name: file.name, size: file.size }, mode.value)
+      if (problem) {
+        pushError(problem)
+        continue
+      }
+      entries.push({ name: baseName(file.name), blob: file })
     }
-    const problem = checkFile({ name: file.name, size: file.size }, mode.value, base + accepted.length + 1)
-    if (problem) {
-      pushError(problem)
-      continue
+    if (entries.length === 0) return
+    const accepted = await prepareTiles(entries)
+    if (accepted.length === 0) return
+    // 文件夹与多图入口默认按文件名自然排序；续传时失配的旧选择整体替换掉。
+    const sorted = sortByNaturalName(accepted, (tile) => tile.name)
+    if (replace) {
+      releaseTiles(tiles.value)
+      coverId.value = ''
     }
-    accepted.push(addTile(baseName(file.name), file, file.size))
+    applyTiles(appendSelection(tiles.value, sorted, replace))
+    restoreOrder()
+    void refreshCover()
+  } finally {
+    working.value = false
   }
-  if (accepted.length === 0) return
-  // 文件夹与多图入口默认按文件名自然排序；续传时失配的旧选择整体替换掉。
-  const sorted = sortByNaturalName(accepted, (tile) => tile.name)
-  if (replace) {
-    releaseTiles(tiles.value)
-    coverId.value = ''
-  }
-  applyTiles(appendSelection(tiles.value, sorted, replace))
-  restoreOrder()
-  void refreshCover()
 }
 
 function onMove(payload: { from: number; to: number }): void {
@@ -545,7 +669,7 @@ async function publish(): Promise<void> {
   if (busy.value) return
   message.value = ''
   if (tiles.value.length === 0) {
-    pushError('请先选择图片')
+    pushError('请先选择图片或视频')
     return
   }
   if (snapshot.value && !resuming.value) {
@@ -621,7 +745,9 @@ async function publish(): Promise<void> {
 }
 
 onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onPreviewKeydown)
   stopPolling()
+  closePreview()
   releaseTiles(tiles.value)
 })
 </script>
@@ -648,7 +774,7 @@ onBeforeUnmount(() => {
 
         <div class="flex shrink-0 items-center gap-2">
           <span class="tnum hidden text-xs text-muted sm:inline"
-            >{{ imageCount }} 张 · {{ formatBytes(totalSize) }}</span
+            >{{ imageCount }} 项 · {{ formatBytes(totalSize) }}</span
           >
           <button
             v-if="tiles.length > 0 && !locked"
@@ -736,6 +862,7 @@ onBeforeUnmount(() => {
               @move="onMove"
               @remove="onRemove"
               @select-cover="onSelectCover"
+              @preview="openPreview"
             />
 
             <MetaPanel
@@ -853,6 +980,28 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </template>
+
+      <!-- 视频预览：点击才创建对象 URL，关闭与离开页面都会释放。 -->
+      <div
+        v-if="previewUrl"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-ink/75 p-4"
+        role="dialog"
+        aria-modal="true"
+        aria-label="视频预览"
+        @click.self="closePreview"
+      >
+        <div class="relative w-full max-w-[720px]">
+          <video :src="previewUrl" controls autoplay playsinline class="w-full rounded-2xl bg-ink" />
+          <button
+            type="button"
+            class="absolute -top-12 right-0 flex h-11 w-11 items-center justify-center rounded-full bg-surface text-lg text-ink shadow transition hover:bg-canvas"
+            aria-label="关闭预览"
+            @click="closePreview"
+          >
+            ×
+          </button>
+        </div>
+      </div>
 
       <!-- 进度面板对所有状态可见：刷新后未重新选图也能继续发布或重试。 -->
       <div v-if="serverProgress" class="mt-4">

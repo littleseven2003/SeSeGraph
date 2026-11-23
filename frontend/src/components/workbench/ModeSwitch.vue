@@ -12,7 +12,9 @@ const options: { value: UploadMode; label: string }[] = [
 ]
 
 const limitText = computed(() =>
-  props.mode === 'document' ? '单图上限 20MB' : '单图上限 10MB，频道内按图片保存',
+  props.mode === 'document'
+    ? '原图上限 20MB，视频统一走短视频通道'
+    : '单图上限 10MB，超限静态图将自动压缩（GIF 除外）；视频上限 20MB',
 )
 </script>
 

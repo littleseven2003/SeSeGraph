@@ -12,6 +12,16 @@ export interface WorkbenchImage {
   blob: Blob
   /** 上传序号，从 1 开始，与服务端 sort_order 一致 */
   sortOrder: number
+  /** 媒体类型，缺省按图片处理 */
+  kind?: 'image' | 'video'
+  /** 视频时长（秒） */
+  duration?: number
+  /** 原始体积；压缩后仍按原文件名与大小匹配续传 */
+  sourceSize?: number
+  /** 压缩前的体积，用于显示前后对比 */
+  compressedFrom?: number
+  /** 视频首帧封面，用于生成缩略图 */
+  posterBlob?: Blob
 }
 
 let sequence = 0

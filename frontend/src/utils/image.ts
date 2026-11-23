@@ -1,6 +1,8 @@
 // 图片类型判定与单张大小限制，规则与后端保持一致。
 
 export const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif'] as const
+// 短视频只支持 MP4，与后端内容识别和上传白名单一致。
+export const VIDEO_EXTENSIONS = ['mp4'] as const
 
 // 扩展名到 MIME 的映射，上传时用于 declare 内容类型。
 const MIME_BY_EXTENSION: Record<string, string> = {
@@ -42,6 +44,16 @@ export function extensionOf(name: string): string {
     return ''
   }
   return base.slice(index + 1).toLowerCase()
+}
+
+// isVideoName 判断文件名是否为支持的视频类型。
+export function isVideoName(name: string): boolean {
+  return VIDEO_EXTENSIONS.includes(extensionOf(name) as (typeof VIDEO_EXTENSIONS)[number])
+}
+
+// isMediaName 判断文件名是否为图片或视频。
+export function isMediaName(name: string): boolean {
+  return isImageName(name) || isVideoName(name)
 }
 
 // isImageName 判断文件名是否属于支持的图片类型。

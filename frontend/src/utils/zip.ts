@@ -1,6 +1,6 @@
 // 在浏览器内解压 ZIP：先读中央目录筛选条目并检查限制，只展开命中的图片与说明文件。
 import { unzipSync } from 'fflate'
-import { baseName, isImageName } from './image.ts'
+import { baseName, isMediaName } from './image.ts'
 import { sortByNaturalName } from './natural.ts'
 
 // 默认识别的元信息文件名，匹配时不区分大小写。
@@ -89,7 +89,7 @@ export function unpackZip(data: Uint8Array, options: ArchiveOptions = {}): Unpac
   unzipSync(data, {
     filter: (file) => {
       if (isDirectoryEntry(file.name) || isJunkPath(file.name)) return false
-      if (isImageName(file.name)) {
+      if (isMediaName(file.name)) {
         if (images.length >= limits.maxImages || overCount > 0) {
           overCount += 1
           return false
