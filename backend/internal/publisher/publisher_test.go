@@ -23,6 +23,7 @@ type fakePages struct {
 	editCalls    int
 	failCreateAt int
 	failEditAt   int
+	onCreate     func()
 	created      []telegraph.PageRequest
 	edited       []telegraph.PageRequest
 	editedPaths  []string
@@ -36,6 +37,13 @@ func (f *fakePages) CreatePage(_ context.Context, request telegraph.PageRequest)
 		return telegraph.Page{}, telegraph.ErrUpstream
 	}
 	f.created = append(f.created, request)
+	if f.onCreate != nil {
+		hook := f.onCreate
+		f.onCreate = nil
+		f.mu.Unlock()
+		hook()
+		f.mu.Lock()
+	}
 	path := fmt.Sprintf("Page-%d", f.createCalls)
 	return telegraph.Page{Path: path, URL: "https://telegra.ph/" + path}, nil
 }
@@ -392,5 +400,44 @@ func TestPublisherCoverLeadsFirstImage(t *testing.T) {
 	}
 	if !strings.Contains(text, "第 1 张") {
 		t.Errorf("封面编号应按展示顺序从 1 开始: %s", text)
+	}
+}
+
+// TestPublisherPausesBetweenPages 验证发布中途暂停后放回待发布，恢复后复用已建页面。
+func TestPublisherPausesBetweenPages(t *testing.T) {
+	env := newPublishEnv(t, 400, "暂停发布")
+	env.pages.mu.Lock()
+	env.pages.onCreate = func() {
+		if err := env.repo.Pause(context.Background(), 1); err != nil {
+			t.Errorf("暂停失败: %v", err)
+		}
+	}
+	env.pages.mu.Unlock()
+
+	processed, err := env.pub.ProcessOnce(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("暂停发布返回 processed=%v err=%v", processed, err)
+	}
+	info := env.publishedInfo(t, 1)
+	if info.State != posts.PublishPending {
+		t.Fatalf("暂停后发布状态 = %q，期望 pending", info.State)
+	}
+	if len(info.Paths) != 1 {
+		t.Fatalf("暂停后已建页面 = %d，期望保留 1 条", len(info.Paths))
+	}
+	firstPath := info.Paths[0]
+
+	if err := env.repo.Resume(context.Background(), 1); err != nil {
+		t.Fatalf("恢复失败: %v", err)
+	}
+	if _, err := env.pub.ProcessOnce(context.Background()); err != nil {
+		t.Fatalf("恢复后发布失败: %v", err)
+	}
+	info = env.publishedInfo(t, 1)
+	if info.State != posts.PublishPublished {
+		t.Errorf("恢复后状态 = %q，期望 published", info.State)
+	}
+	if info.Paths[0] != firstPath {
+		t.Errorf("恢复后首条路径变化: %s -> %s", firstPath, info.Paths[0])
 	}
 }

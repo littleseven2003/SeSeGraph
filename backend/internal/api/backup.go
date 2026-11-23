@@ -1,10 +1,14 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/backup"
@@ -80,12 +84,65 @@ func backupDownloadHandler(deps Deps) gin.HandlerFunc {
 	}
 }
 
+// liveBackupPlan 按当前生效配置计算自动备份计划，避免展示进程启动时的旧值。
+func liveBackupPlan(deps Deps) (bool, string, string) {
+	if deps.Settings == nil {
+		// 未装配设置解析器时沿用启动时的展示文案，保持旧行为。
+		if deps.BackupSchedule == "" {
+			return false, "", ""
+		}
+		return true, deps.BackupSchedule, ""
+	}
+	effective, err := deps.Settings.Effective(context.Background())
+	if err != nil {
+		return false, "", ""
+	}
+	enabled := strings.EqualFold(strings.TrimSpace(effective.BackupEnabled.Value), "true")
+	schedule := effective.BackupTime.Value
+	if !enabled {
+		return false, schedule, ""
+	}
+	hour, minute, err := parseScheduleClock(schedule)
+	if err != nil {
+		return true, schedule, ""
+	}
+	now := time.Now()
+	next := time.Date(now.Year(), now.Month(), now.Day(), hour, minute, 0, 0, now.Location())
+	if !next.After(now) {
+		next = next.Add(24 * time.Hour)
+	}
+	return true, schedule, next.Format(time.RFC3339)
+}
+
+// parseScheduleClock 解析 HH:MM 时刻。
+func parseScheduleClock(raw string) (int, int, error) {
+	parts := strings.SplitN(strings.TrimSpace(raw), ":", 2)
+	if len(parts) != 2 {
+		return 0, 0, errors.New("时刻格式不正确")
+	}
+	hour, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, err
+	}
+	minute, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, err
+	}
+	if hour < 0 || hour > 23 || minute < 0 || minute > 59 {
+		return 0, 0, errors.New("时刻超出范围")
+	}
+	return hour, minute, nil
+}
+
 // backupStatusHandler 返回最近一次备份信息与定时备份说明。
 func backupStatusHandler(deps Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		enabled, schedule, nextRun := liveBackupPlan(deps)
 		payload := gin.H{
-			"schedule": deps.BackupSchedule,
-			"enabled":  deps.BackupSchedule != "",
+			"schedule": schedule,
+			"enabled":  enabled,
+			"next_run": nextRun,
+			"timezone": time.Local.String(),
 			"latest":   nil,
 		}
 		if deps.Backup == nil {

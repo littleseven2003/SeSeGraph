@@ -341,7 +341,8 @@ export function backupScheduleText(status: BackupStatus): string {
   if (!status.enabled || status.schedule === '') {
     return '未启用定时备份（设置 BACKUP_ENABLED=true 后按 BACKUP_CRON 执行）'
   }
-  return '定时备份：' + status.schedule
+  const next = status.next_run ? '，下一次 ' + status.next_run : ''
+  return '定时备份：' + status.schedule + next
 }
 
 /** backupLatestText 描述最近一份备份；没有备份时给出提示。 */

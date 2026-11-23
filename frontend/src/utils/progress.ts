@@ -82,6 +82,7 @@ export function publishActive(progress: ServerProgress): boolean {
 // canRequestPublish 判断是否可以发起或重试发布。
 export function canRequestPublish(progress: ServerProgress): boolean {
   if (progress.status !== 'completed') return false
+  if (progress.control_state === 'paused' || progress.control_state === 'stopped') return false
   if (progress.public) return false
   return progress.publish_state === 'idle' || progress.publish_state === 'failed'
 }

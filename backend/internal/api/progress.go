@@ -69,20 +69,27 @@ func progressHandler(deps Deps) gin.HandlerFunc {
 			return
 		}
 
+		coverSort, err := deps.Posts.CoverSort(c.Request.Context(), postID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取封面序号失败"})
+			return
+		}
+
 		c.JSON(http.StatusOK, gin.H{
-			"id":             post.ID,
-			"status":         post.Status,
-			"tags":           tags,
-			"image_count":    post.ImageCount,
-			"control_state":  post.ControlState,
-			"upload_round":   post.UploadRound,
-			"upload_mode":    post.UploadMode,
-			"stored_count":   stored,
-			"failed_count":   failed,
-			"images":         items,
-			"publish_state":  publishState,
-			"public":         public,
-			"telegraph_urls": publishURLs,
+			"id":               post.ID,
+			"status":           post.Status,
+			"tags":             tags,
+			"image_count":      post.ImageCount,
+			"control_state":    post.ControlState,
+			"upload_round":     post.UploadRound,
+			"cover_sort_order": coverSort,
+			"upload_mode":      post.UploadMode,
+			"stored_count":     stored,
+			"failed_count":     failed,
+			"images":           items,
+			"publish_state":    publishState,
+			"public":           public,
+			"telegraph_urls":   publishURLs,
 		})
 	}
 }

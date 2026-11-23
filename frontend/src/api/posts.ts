@@ -91,6 +91,8 @@ export interface ServerProgress {
   control_state: string
   /** 上传轮次，暂停后继续会递增；上传请求带上它可拒绝迟到写入 */
   upload_round: number
+  /** 当前封面来源序号，0 表示未选择封面 */
+  cover_sort_order: number
 }
 
 // uploadImage 逐张上传，请求体直接使用浏览器里的 Blob，由后端流式落盘。
@@ -99,21 +101,22 @@ export async function uploadImage(
   sortOrder: number,
   blob: Blob,
   mime: string,
-  round = -1,
+  round: number,
+  signal?: AbortSignal,
 ): Promise<UploadedImage> {
   // 单张上传必须有时限：低配链路卡住时给出明确失败，而不是让队列无限等待。
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 5 * 60 * 1000)
   let response: Response
   try {
-    const query = round >= 0 ? `&round=${round}` : ''
-    response = await adminRequest(`/api/posts/${postId}/images?sort=${sortOrder}${query}`, {
+    response = await adminRequest(`/api/posts/${postId}/images?sort=${sortOrder}&round=${round}`, {
       method: 'POST',
       headers: mime === '' ? undefined : { 'Content-Type': mime },
       body: blob,
-      signal: controller.signal,
+      signal: abortable(controller, signal),
     })
   } catch (error) {
+    if (signal?.aborted === true) throw new Error('上传已取消')
     if (controller.signal.aborted) throw new Error('单张上传超过 5 分钟未完成，已中断，可继续上传重试')
     throw error
   } finally {
@@ -146,6 +149,33 @@ export async function resumeTask(postId: number): Promise<void> {
 // stopTask 停止任务；停止后短码关闭且不再被队列领取。
 export async function stopTask(postId: number): Promise<void> {
   await adminRequest(`/api/posts/${postId}/stop`, { method: 'POST' })
+}
+
+// abortable 把外部取消信号与单张超时合并成一个 AbortSignal。
+function abortable(controller: AbortController, external?: AbortSignal): AbortSignal {
+  if (external === undefined) return controller.signal
+  if (external.aborted) controller.abort()
+  else external.addEventListener('abort', () => controller.abort(), { once: true })
+  return controller.signal
+}
+
+/** TaskRow 是任务列表的一行，聚合上传、存图与发布状态。 */
+export interface TaskRow {
+  id: number
+  title: string
+  status: string
+  publish_state: string
+  control_state: string
+  upload_round: number
+  image_count: number
+  stored_count: number
+  updated_at: string
+}
+
+/** fetchTasks 分页读取任务列表。 */
+export async function fetchTasks(page: number, pageSize = 20): Promise<{ items: TaskRow[]; total: number; page: number; page_size: number }> {
+  const response = await adminRequest(`/api/tasks?page=${page}&page_size=${pageSize}`)
+  return (await response.json()) as { items: TaskRow[]; total: number; page: number; page_size: number }
 }
 
 // mediaPath 返回管理员会话下读取原图或视频的地址，供换封面生成缩略图。

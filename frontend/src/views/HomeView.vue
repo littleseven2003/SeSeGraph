@@ -318,6 +318,12 @@ onBeforeUnmount(() => {
 
         <div class="flex items-center gap-1">
           <router-link
+            :to="{ name: 'tasks' }"
+            class="inline-flex h-11 items-center rounded-full px-3.5 text-sm text-muted transition hover:bg-canvas hover:text-ink"
+          >
+            任务
+          </router-link>
+          <router-link
             :to="{ name: 'settings' }"
             class="inline-flex h-11 items-center rounded-full px-3.5 text-sm text-muted transition hover:bg-canvas hover:text-ink"
           >

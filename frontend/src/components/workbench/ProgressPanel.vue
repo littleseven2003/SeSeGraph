@@ -32,7 +32,9 @@ const controllable = computed(
   () =>
     props.progress.status === 'uploading' ||
     props.progress.status === 'queued' ||
-    props.progress.status === 'publishing',
+    props.progress.status === 'publishing' ||
+    (props.progress.status === 'completed' &&
+      (props.progress.publish_state === 'pending' || props.progress.publish_state === 'publishing')),
 )
 const controlState = computed(() => props.progress.control_state ?? 'running')
 const canPublish = computed(() => canRequestPublish(props.progress))

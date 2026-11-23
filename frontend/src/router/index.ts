@@ -4,6 +4,7 @@ import HomeView from '../views/HomeView.vue'
 import LoginView from '../views/LoginView.vue'
 import SettingsView from '../views/SettingsView.vue'
 import SetupView from '../views/SetupView.vue'
+import TasksView from '../views/TasksView.vue'
 import WorkbenchView from '../views/WorkbenchView.vue'
 
 const router = createRouter({
@@ -13,6 +14,7 @@ const router = createRouter({
     { path: '/login', name: 'login', component: LoginView },
     { path: '/setup', name: 'setup', component: SetupView },
     { path: '/workbench', name: 'workbench', component: WorkbenchView },
+    { path: '/tasks', name: 'tasks', component: TasksView },
     { path: '/settings', name: 'settings', component: SettingsView },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],

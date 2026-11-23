@@ -403,3 +403,40 @@ func TestRunPrunesWhenSendFails(t *testing.T) {
 		t.Errorf("保留份数 = %d，期望 2：%v", len(files), files)
 	}
 }
+
+// TestPruneConcurrentWithSetKeep 验证并发更新保留份数时清理不越界、不竞态。
+func TestPruneConcurrentWithSetKeep(t *testing.T) {
+	manager, _, _, _ := newEnv(t, Options{Keep: 5})
+	dir := manager.Dir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("创建备份目录失败: %v", err)
+	}
+	for index := 0; index < 20; index++ {
+		name := filepath.Join(dir, backupPrefix+time.Date(2026, 11, 22, 3, index, 0, 0, time.UTC).Format("20060102-150405")+".zip")
+		if err := os.WriteFile(name, []byte("x"), 0o600); err != nil {
+			t.Fatalf("写入备份占位失败: %v", err)
+		}
+	}
+
+	var wait sync.WaitGroup
+	for index := 0; index < 8; index++ {
+		wait.Add(2)
+		go func(keep int) {
+			defer wait.Done()
+			manager.SetKeep(keep)
+		}(index + 1)
+		go func() {
+			defer wait.Done()
+			manager.prune()
+		}()
+	}
+	wait.Wait()
+
+	files, err := manager.list()
+	if err != nil {
+		t.Fatalf("列出备份失败: %v", err)
+	}
+	if len(files) > 20 {
+		t.Errorf("清理后文件数 = %d", len(files))
+	}
+}

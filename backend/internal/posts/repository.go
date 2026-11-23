@@ -448,15 +448,40 @@ func (r *Repository) PublicImage(ctx context.Context, shortCode string) (*Public
 // RequestPublish 由管理员确认发布：标记公开并把发布任务置为待处理。
 // 只有图片全部存图的帖子才能发布，旧版存图任务必须显式调用。
 func (r *Repository) RequestPublish(ctx context.Context, postID int64) error {
+	return r.RequestPublishWithPath(ctx, postID, "", "")
+}
+
+// RequestPublishWithPath 在首次进入发布队列的同一条语句里冻结链接生成方式与短码。
+// 已有冻结值（重试或历史任务）保持不变；mode 为空表示沿用按标题生成。
+func (r *Repository) RequestPublishWithPath(ctx context.Context, postID int64, mode, slug string) error {
+	if mode == "" {
+		mode = "title"
+	}
 	result, err := r.handle.ExecContext(ctx,
-		`UPDATE posts SET is_public = 1, publish_state = ?, publish_error = '', updated_at = CURRENT_TIMESTAMP
-		 WHERE id = ? AND pending_delete = 0 AND status = ? AND publish_state IN (?, ?)`,
-		PublishPending, postID, StatusCompleted, PublishIdle, PublishFailed)
+		`UPDATE posts SET is_public = 1, publish_state = ?, publish_error = '',
+		        publish_path_mode = CASE WHEN COALESCE(publish_path_mode, '') = '' THEN ? ELSE publish_path_mode END,
+		        publish_slug = CASE WHEN COALESCE(publish_slug, '') = '' THEN ? ELSE publish_slug END,
+		        updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND pending_delete = 0 AND status = ? AND publish_state IN (?, ?)
+		   AND COALESCE(control_state, 'running') = ?`,
+		PublishPending, mode, slug, postID, StatusCompleted, PublishIdle, PublishFailed, ControlRunning)
 	if err != nil {
 		return errors.New("更新发布状态失败")
 	}
 	if affected, _ := result.RowsAffected(); affected == 0 {
 		return r.missingOrPending(ctx, postID)
+	}
+	return nil
+}
+
+// ResetPublishPending 把暂停中的发布放回待发布，恢复后复用已建页面。
+func (r *Repository) ResetPublishPending(ctx context.Context, postID int64) error {
+	_, err := r.handle.ExecContext(ctx,
+		`UPDATE posts SET publish_state = ?, publish_error = '', updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND publish_state = ? AND control_state = ?`,
+		PublishPending, postID, PublishPublishing, ControlPaused)
+	if err != nil {
+		return errors.New("放回待发布失败")
 	}
 	return nil
 }
@@ -484,8 +509,9 @@ func (r *Repository) ClaimPublishable(ctx context.Context) (int64, bool, error) 
 // RecoverPublish 把中断的发布任务放回待处理，进程启动时调用。
 func (r *Repository) RecoverPublish(ctx context.Context) (int64, error) {
 	result, err := r.handle.ExecContext(ctx,
-		`UPDATE posts SET publish_state = ?, updated_at = CURRENT_TIMESTAMP WHERE publish_state = ?`,
-		PublishPending, PublishPublishing)
+		`UPDATE posts SET publish_state = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE publish_state = ? AND COALESCE(control_state, 'running') <> ?`,
+		PublishPending, PublishPublishing, ControlStopped)
 	if err != nil {
 		return 0, errors.New("恢复发布任务失败")
 	}
@@ -552,12 +578,19 @@ func (r *Repository) MarkPublished(ctx context.Context, postID int64, paths, url
 	if err != nil {
 		return errors.New("保存发布结果失败")
 	}
-	if _, err := r.handle.ExecContext(ctx,
+	result, err := r.handle.ExecContext(ctx,
 		`UPDATE posts SET publish_state = ?, publish_error = '', telegraph_paths = ?, telegraph_urls = ?,
 		 is_public = 1, published_at = COALESCE(NULLIF(published_at, ''), CURRENT_TIMESTAMP),
-		 updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		PublishPublished, string(encodedPaths), string(encodedURLs), postID); err != nil {
+		 updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND publish_state IN (?, ?, ?, ?) AND pending_delete = 0
+		   AND COALESCE(control_state, 'running') = ?`,
+		PublishPublished, string(encodedPaths), string(encodedURLs),
+		postID, PublishIdle, PublishPending, PublishPublishing, PublishPublished, ControlRunning)
+	if err != nil {
 		return errors.New("保存发布结果失败")
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return ErrPublishStateChanged
 	}
 	return nil
 }
@@ -749,6 +782,20 @@ func (r *Repository) ImageByOrder(ctx context.Context, postID int64, sortOrder i
 	return image, nil
 }
 
+// CoverSort 读取封面来源序号，0 表示未选择封面。
+func (r *Repository) CoverSort(ctx context.Context, postID int64) (int, error) {
+	var sortOrder int
+	err := r.handle.QueryRowContext(ctx,
+		`SELECT COALESCE(cover_sort_order, 0) FROM posts WHERE id = ?`, postID).Scan(&sortOrder)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, errors.New("读取封面序号失败")
+	}
+	return sortOrder, nil
+}
+
 // SetCover 更新帖子封面路径。
 func (r *Repository) SetCover(ctx context.Context, id int64, path string) error {
 	result, err := r.handle.ExecContext(ctx,
@@ -862,7 +909,7 @@ func (r *Repository) FreezePublishPath(ctx context.Context, postID int64, mode, 
 	}
 	result, err := r.handle.ExecContext(ctx,
 		`UPDATE posts SET publish_path_mode = ?, publish_slug = ?, updated_at = CURRENT_TIMESTAMP
-		 WHERE id = ? AND (publish_path_mode IS NULL OR publish_path_mode = '')`,
+		 WHERE id = ?`,
 		mode, slug, postID)
 	if err != nil {
 		return errors.New("保存链接生成方式失败")
@@ -900,8 +947,11 @@ func (r *Repository) Enqueue(ctx context.Context, postID int64) ([]int, error) {
 	var (
 		imageCount int
 		status     string
+		control    string
 	)
-	err = tx.QueryRowContext(ctx, `SELECT image_count, status FROM posts WHERE id = ?`, postID).Scan(&imageCount, &status)
+	err = tx.QueryRowContext(ctx,
+		`SELECT image_count, status, COALESCE(control_state, 'running') FROM posts WHERE id = ?`,
+		postID).Scan(&imageCount, &status, &control)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -910,6 +960,9 @@ func (r *Repository) Enqueue(ctx context.Context, postID int64) ([]int, error) {
 	}
 	if status == StatusQueued {
 		return nil, ErrAlreadyQueued
+	}
+	if control != ControlRunning {
+		return nil, ErrControlInvalid
 	}
 	if status != StatusUploading {
 		return nil, ErrNotUploading
@@ -945,7 +998,9 @@ func (r *Repository) Enqueue(ctx context.Context, postID int64) ([]int, error) {
 	}
 
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE posts SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, StatusQueued, postID); err != nil {
+		`UPDATE posts SET status = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND COALESCE(control_state, 'running') = ?`,
+		StatusQueued, postID, ControlRunning); err != nil {
 		return nil, errors.New("更新帖子状态失败")
 	}
 	if err := tx.Commit(); err != nil {
@@ -1029,8 +1084,9 @@ func newShortCode() (string, error) {
 // RecoverPublishing 把中断在上传中的帖子重置为待处理，返回受影响条数。
 func (r *Repository) RecoverPublishing(ctx context.Context) (int64, error) {
 	result, err := r.handle.ExecContext(ctx,
-		`UPDATE posts SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE status = ?`,
-		StatusQueued, StatusPublishing)
+		`UPDATE posts SET status = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE status = ? AND COALESCE(control_state, 'running') = ?`,
+		StatusQueued, StatusPublishing, ControlRunning)
 	if err != nil {
 		return 0, errors.New("恢复中断任务失败")
 	}
@@ -1202,10 +1258,15 @@ func (r *Repository) CountStored(ctx context.Context, postID int64) (int, error)
 
 // MarkPostFinished 结束帖子的上传流程，写入最终状态与失败原因。
 func (r *Repository) MarkPostFinished(ctx context.Context, postID int64, status, message string) error {
-	if _, err := r.handle.ExecContext(ctx,
-		`UPDATE posts SET status = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		status, message, postID); err != nil {
+	result, err := r.handle.ExecContext(ctx,
+		`UPDATE posts SET status = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND COALESCE(control_state, 'running') = ?`,
+		status, message, postID, ControlRunning)
+	if err != nil {
 		return errors.New("更新帖子状态失败")
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return ErrControlInvalid
 	}
 	return nil
 }
@@ -1264,6 +1325,9 @@ func (r *Repository) ResetFailedImages(ctx context.Context, postID int64) (int64
 // ErrControlInvalid 表示任务当前状态不允许这次控制操作。
 var ErrControlInvalid = errors.New("任务当前状态不允许该操作")
 
+// ErrPublishStateChanged 表示发布收尾时状态已被控制操作或删除改写。
+var ErrPublishStateChanged = errors.New("发布状态已变化")
+
 // Control 读取任务控制状态与上传轮次，供进度接口与写入点复核。
 func (r *Repository) Control(ctx context.Context, postID int64) (string, int, error) {
 	var state string
@@ -1285,8 +1349,9 @@ func (r *Repository) Pause(ctx context.Context, postID int64) error {
 	result, err := r.handle.ExecContext(ctx,
 		`UPDATE posts SET control_state = ?, updated_at = CURRENT_TIMESTAMP
 		 WHERE id = ? AND COALESCE(control_state, 'running') = ?
-		   AND status IN (?, ?, ?)`,
-		ControlPaused, postID, ControlRunning, StatusUploading, StatusQueued, StatusPublishing)
+		   AND (status IN (?, ?, ?) OR publish_state IN (?, ?))`,
+		ControlPaused, postID, ControlRunning, StatusUploading, StatusQueued, StatusPublishing,
+		PublishPending, PublishPublishing)
 	if err != nil {
 		return errors.New("暂停任务失败")
 	}

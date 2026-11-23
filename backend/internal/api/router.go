@@ -127,6 +127,7 @@ func NewRouter(deps Deps) *gin.Engine {
 
 	admin := router.Group("/api", RequireAuth(deps.Sessions, deps.Auth))
 	admin.GET("/posts", listPostsHandler(deps))
+	admin.GET("/tasks", tasksHandler(deps))
 	admin.GET("/posts/:id", postDetailHandler(deps))
 	admin.GET("/posts/:id/media/:sort", adminMediaHandler(deps))
 	admin.PUT("/posts/:id", limitBody(maxCreatePostBodyBytes), updatePostHandler(deps))

@@ -364,6 +364,8 @@ async function save(): Promise<void> {
   try {
     applyView(await saveSettings(patch))
     feedback.value = '设置已保存并立即生效'
+    void loadTraffic()
+    void loadBackup()
   } catch (cause) {
     const failure = failText(cause)
     saveError.value = failure.message

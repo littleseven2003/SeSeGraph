@@ -111,6 +111,10 @@ export interface BackupInfo {
 export interface BackupStatus {
   schedule: string
   enabled: boolean
+  /** 下一次自动备份时间（服务器时区），未启用时为空 */
+  next_run?: string
+  /** 服务器时区名称 */
+  timezone?: string
   latest: BackupInfo | null
 }
 

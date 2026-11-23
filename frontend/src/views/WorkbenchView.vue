@@ -115,6 +115,8 @@ const metaSource = ref('')
 const coverPreview = ref('')
 const coverDataUrl = ref('')
 const coverBytes = ref(0)
+// uploadAbort 结束本轮在途上传：暂停或停止任务时立即取消。
+let uploadAbort: AbortController | null = null
 const draft = ref<PostMeta>({ title: '', description: '', tags: [], author: '' })
 const postId = ref(0)
 const phase = ref<Phase>('idle')
@@ -667,6 +669,8 @@ async function runControl(action: 'pause' | 'resume' | 'stop'): Promise<void> {
   if (postId.value === 0 || controlBusy.value) return
   controlBusy.value = true
   try {
+    // 主动暂停或停止时先结束在途上传；服务端仍会复核轮次。
+    if (action !== 'resume' && uploadAbort !== null) uploadAbort.abort()
     if (action === 'pause') await pauseTask(postId.value)
     else if (action === 'resume') await resumeTask(postId.value)
     else await stopTask(postId.value)
@@ -689,8 +693,8 @@ async function runControl(action: 'pause' | 'resume' | 'stop'): Promise<void> {
 function onSelectCover(id: string): void {
   coverId.value = id
   void refreshCover()
-  // 任务已创建时同步把新封面写给服务端；失败保留原封面并给出原因。
-  if (postId.value === 0 || locked.value) return
+  // 任务已创建时同步把新封面写给服务端；提交压缩期间先不改，避免与提交冲突。
+  if (postId.value === 0 || submitting.value) return
   const tile = tiles.value.find((item) => item.id === id)
   if (tile === undefined) return
   void (async () => {
@@ -699,6 +703,11 @@ function onSelectCover(id: string): void {
       await changeCover(postId.value, tile.sortOrder, cover.dataUrl)
       message.value = '封面已更新'
     } catch (error) {
+      // 失败时回到服务端实际封面，不让界面显示一份没生效的选择。
+      const actual = serverProgress.value?.cover_sort_order ?? 0
+      const fallback = tiles.value.find((item) => item.sortOrder === actual)
+      coverId.value = fallback?.id ?? ''
+      void refreshCover()
       pushError(error instanceof ApiError ? error.message : '更换封面失败，请稍后重试')
     }
   })()
@@ -969,10 +978,11 @@ async function runUpload(): Promise<void> {
     const queue = planUploadQueue(tiles.value.slice(), planned.plan.pending)
     // 受控并发：首错停止派发，已在途的请求收尾，全部成功才提交入队。
     const round = progress.upload_round
+    uploadAbort = new AbortController()
     const failure = await runUploadPool(queue, UPLOAD_CONCURRENCY, async (item) => {
       statuses.value = { ...statuses.value, [item.sortOrder]: 'uploading' }
       try {
-        await uploadImage(id, item.sortOrder, item.tile.blob, item.tile.mime, round)
+        await uploadImage(id, item.sortOrder, item.tile.blob, item.tile.mime, round, uploadAbort?.signal)
         statuses.value = { ...statuses.value, [item.sortOrder]: 'uploaded' }
       } catch (error) {
         statuses.value = { ...statuses.value, [item.sortOrder]: 'failed' }
@@ -980,8 +990,13 @@ async function runUpload(): Promise<void> {
       }
     })
     if (failure !== null) {
-      phase.value = 'failed'
       const item = queue[failure.index]
+      if (uploadAbort?.signal.aborted === true) {
+        // 用户主动暂停或停止：在途项回到待上传，保留已完成的项。
+        statuses.value = { ...statuses.value, [item.sortOrder]: 'pending' }
+        return
+      }
+      phase.value = 'failed'
       const reason = failure.error instanceof ApiError ? failure.error.message : '网络中断或超时'
       pushError(`第 ${failure.index + 1}/${queue.length} 项 ${item.tile.name} 上传失败：${reason}；已停止本轮，点「继续上传」只补未完成的项`)
       return
@@ -1124,6 +1139,7 @@ onBeforeUnmount(() => {
               :cover-id="coverId"
               :statuses="statuses"
               :disabled="working || locked"
+              :cover-disabled="submitting"
               @move="onMove"
               @remove="onRemove"
               @select-cover="onSelectCover"

@@ -13,6 +13,8 @@ const props = defineProps<{
   /** 各序号的上传状态，未出现表示待上传 */
   statuses?: Record<number, UploadStatus>
   disabled?: boolean
+  /** 封面按钮单独开关：任务恢复或上传中仍可换封面，只有提交压缩期间禁用 */
+  coverDisabled?: boolean
   mode: UploadMode
   autoCompress: boolean
 }>()
@@ -190,7 +192,7 @@ function moveBy(index: number, delta: number): void {
           <button
             type="button"
             class="h-7 rounded px-1.5 text-xs font-medium text-muted transition hover:bg-canvas hover:text-brand-strong disabled:opacity-40"
-            :disabled="props.disabled || item.id === props.coverId"
+            :disabled="(props.coverDisabled ?? props.disabled) || item.id === props.coverId"
             :aria-label="`将 ${item.name} 设为封面`"
             @click="emit('select-cover', item.id)"
           >

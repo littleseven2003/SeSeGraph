@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/littleseven2003/SeSeGraph/backend/internal/backup"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/db"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/settings"
 )
 
 // newBackupManager 在独立数据目录里准备一份可备份的数据库。
@@ -196,5 +198,35 @@ func TestBackupTriggerWarnsWhenTargetNotPrivate(t *testing.T) {
 				t.Fatalf("下载状态码 = %d，期望本地备份仍可下载", download.Code)
 			}
 		})
+	}
+}
+
+// TestBackupStatusReflectsLiveSchedule 验证备份状态按最新设置返回计划与下一次时间。
+func TestBackupStatusReflectsLiveSchedule(t *testing.T) {
+	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
+		deps.Settings = settings.NewResolver(settings.NewStore(handle), settings.Env{})
+	})
+	cookie := env.setup(t)
+
+	rec := env.do(t, http.MethodPut, "/api/settings",
+		`{"backup":{"enabled":true,"time":"04:30","keep":4}}`, cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("保存备份计划失败: %s", rec.Body.String())
+	}
+	rec = env.do(t, http.MethodGet, "/api/backup/status", "", cookie)
+	var body struct {
+		Schedule string `json:"schedule"`
+		Enabled  bool   `json:"enabled"`
+		NextRun  string `json:"next_run"`
+		Timezone string `json:"timezone"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("解析状态失败: %v", err)
+	}
+	if !body.Enabled || body.Schedule != "04:30" {
+		t.Errorf("计划 = %+v，期望启用且 04:30", body)
+	}
+	if body.NextRun == "" || body.Timezone == "" {
+		t.Errorf("缺少下一次时间或时区: %+v", body)
 	}
 }

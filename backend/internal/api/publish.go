@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/config"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/settings"
 )
 
 // publishPostHandler 由管理员确认发布：校验发布条件后开启图片访问并进入发布队列。
@@ -52,7 +53,23 @@ func publishPostHandler(deps Deps) gin.HandlerFunc {
 			return
 		}
 
-		if err := deps.Posts.RequestPublish(c.Request.Context(), postID); err != nil {
+		// 首次发布时原子冻结链接生成方式与随机短码；重试沿用已冻结值。
+		mode := settings.PathModeTitle
+		if deps.Settings != nil {
+			if effective, err := deps.Settings.Effective(c.Request.Context()); err == nil {
+				mode = effective.TelegraphPathMode.Value
+			}
+		}
+		slug := ""
+		if mode == settings.PathModeSlug {
+			generated, err := posts.NewPublishSlug()
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "生成链接短码失败"})
+				return
+			}
+			slug = generated
+		}
+		if err := deps.Posts.RequestPublishWithPath(c.Request.Context(), postID, mode, slug); err != nil {
 			if errors.Is(err, posts.ErrPendingDelete) {
 				c.JSON(http.StatusConflict, gin.H{"error": "帖子正在删除，无法继续操作"})
 				return

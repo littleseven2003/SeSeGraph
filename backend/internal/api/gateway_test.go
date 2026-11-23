@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -1180,5 +1181,53 @@ func TestGatewayCancelWhileWaitingLeavesQueue(t *testing.T) {
 	after, body := getImage(t, env.server.URL+"/i/"+code)
 	if after.StatusCode != http.StatusOK {
 		t.Errorf("释放后状态码 = %d，响应: %s", after.StatusCode, body)
+	}
+}
+
+// TestGatewayHandlesColdBurst 验证多图页面冷打开时排队生效：并发请求全部成功、无拥塞 503。
+func TestGatewayHandlesColdBurst(t *testing.T) {
+	provider := &fakeStreamProvider{}
+	provider.open = func(context.Context, string) (storage.Stream, error) {
+		return storage.Stream{
+			Body:        io.NopCloser(strings.NewReader("burst")),
+			ContentType: "image/jpeg",
+			Size:        5,
+		}, nil
+	}
+	// 取流上限压到 4 路并允许排队，模拟 1 核实例上 100 张图的冷打开。
+	env := newGatewayEnvOptions(t, 4, 100, 5*time.Second, provider)
+
+	codes := make([]string, 0, 100)
+	for index := 0; index < 100; index++ {
+		codes = append(codes, env.publishPost(t, fmt.Sprintf("burst%07d", index), "image/jpeg", "photo", true, false))
+	}
+
+	var wait sync.WaitGroup
+	results := make(chan int, len(codes))
+	for _, code := range codes {
+		wait.Add(1)
+		go func(code string) {
+			defer wait.Done()
+			response, err := http.Get(env.server.URL + "/i/" + code)
+			if err != nil {
+				results <- -1
+				return
+			}
+			_, _ = io.Copy(io.Discard, response.Body)
+			_ = response.Body.Close()
+			results <- response.StatusCode
+		}(code)
+	}
+	wait.Wait()
+	close(results)
+
+	failures := 0
+	for status := range results {
+		if status != http.StatusOK {
+			failures++
+		}
+	}
+	if failures != 0 {
+		t.Errorf("冷打开 100 张图有 %d 个请求失败", failures)
 	}
 }

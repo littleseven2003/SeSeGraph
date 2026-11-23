@@ -96,6 +96,9 @@ func (e *Editor) ChangeCover(ctx context.Context, postID int64, sortOrder int, t
 		return posts.ErrPendingDelete
 	}
 
+	if state, _, stateErr := e.repo.Control(ctx, postID); stateErr == nil && state != posts.ControlRunning {
+		return posts.ErrControlInvalid
+	}
 	info, err := e.repo.PublishInfo(ctx, postID)
 	if err != nil {
 		return err

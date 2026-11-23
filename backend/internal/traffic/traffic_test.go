@@ -434,3 +434,30 @@ func TestRecorderRetriesFailedAlert(t *testing.T) {
 		t.Errorf("送达后数据库 alert_sent = %d，期望 1", stored)
 	}
 }
+
+// TestRecorderHotUpdatesLimits 验证阈值热更新立即影响熔断判断与快照。
+func TestRecorderHotUpdatesLimits(t *testing.T) {
+	ctx := context.Background()
+	clock := newTestClock()
+	recorder := newRecorder(t, clock, Options{LimitBytes: 1000, AlertBytes: 500})
+
+	recorder.Add(ctx, 600)
+	if recorder.OverLimit() {
+		t.Fatal("600 字节不应超限")
+	}
+	recorder.SetLimits(400, 300)
+	if !recorder.OverLimit() {
+		t.Error("硬上限调到 300 后应立即超限")
+	}
+	stats, err := recorder.Stats(ctx)
+	if err != nil {
+		t.Fatalf("读取快照失败: %v", err)
+	}
+	if stats.AlertBytes != 400 || stats.LimitBytes != 300 {
+		t.Errorf("快照阈值 = %d / %d，期望 400 / 300", stats.AlertBytes, stats.LimitBytes)
+	}
+	recorder.SetLimits(0, 0)
+	if recorder.OverLimit() {
+		t.Error("关闭硬上限后不应再熔断")
+	}
+}

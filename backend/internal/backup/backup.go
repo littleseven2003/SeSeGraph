@@ -349,10 +349,20 @@ func addFile(writer *zip.Writer, name, source string) error {
 // prune 只保留最近 Keep 份备份。
 func (m *Manager) prune() {
 	files, err := m.list()
-	if err != nil || len(files) <= m.opts.Keep {
+	if err != nil {
 		return
 	}
-	for _, path := range files[:len(files)-m.opts.Keep] {
+	// 在锁内取一次保留份数快照：避免并发修改时两次读到不同值。
+	m.mu.Lock()
+	keep := m.opts.Keep
+	m.mu.Unlock()
+	if keep <= 0 {
+		keep = DefaultKeep
+	}
+	if len(files) <= keep {
+		return
+	}
+	for _, path := range files[:len(files)-keep] {
 		_ = os.Remove(path)
 	}
 }

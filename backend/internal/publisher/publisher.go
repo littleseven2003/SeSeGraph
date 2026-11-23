@@ -22,6 +22,28 @@ const (
 	imagePathPattern = "/i/"
 )
 
+// 发布检查点的控制结果：暂停时把任务放回待发布，停止时记录失败。
+var (
+	errPublishPaused  = errors.New("发布已暂停")
+	errPublishStopped = errors.New("任务已停止")
+)
+
+// checkControl 在每个页面调用前复核任务控制状态。
+func (p *Publisher) checkControl(ctx context.Context, postID int64) error {
+	state, _, err := p.repo.Control(ctx, postID)
+	if err != nil {
+		return nil
+	}
+	switch state {
+	case posts.ControlPaused:
+		return errPublishPaused
+	case posts.ControlStopped:
+		return errPublishStopped
+	default:
+		return nil
+	}
+}
+
 // PageAPI 是发布流程需要的页面接口，便于测试替换。
 type PageAPI interface {
 	CreatePage(ctx context.Context, request telegraph.PageRequest) (telegraph.Page, error)
@@ -110,8 +132,18 @@ func (p *Publisher) ProcessOnce(ctx context.Context) (bool, error) {
 	}
 
 	if err := p.publish(ctx, postID, pageAPI); err != nil {
-		_ = p.repo.MarkPublishFailed(ctx, postID, publishErrText)
-		return true, err
+		switch {
+		case errors.Is(err, errPublishPaused):
+			// 暂停：放回待发布，恢复后复用已建页面继续。
+			_ = p.repo.ResetPublishPending(ctx, postID)
+			return true, nil
+		case errors.Is(err, errPublishStopped):
+			_ = p.repo.MarkPublishFailed(ctx, postID, "任务已停止")
+			return true, nil
+		default:
+			_ = p.repo.MarkPublishFailed(ctx, postID, publishErrText)
+			return true, err
+		}
 	}
 	return true, nil
 }
@@ -125,9 +157,8 @@ func (p *Publisher) publish(ctx context.Context, postID int64, pageAPI PageAPI) 
 	if len(info.Images) == 0 {
 		return errors.New("没有可发布的存图记录")
 	}
-	// 领取后与控制操作并发时以任务状态为准：停止的任务不再建页。
-	if state, _, stateErr := p.repo.Control(ctx, postID); stateErr == nil && state != posts.ControlRunning {
-		return errors.New("任务已停止")
+	if err := p.checkControl(ctx, postID); err != nil {
+		return err
 	}
 
 	images := orderForPublish(info.Images, info.CoverSortOrder)
@@ -148,6 +179,9 @@ func (p *Publisher) publish(ctx context.Context, postID int64, pageAPI PageAPI) 
 		if index < len(info.Paths) && strings.TrimSpace(info.Paths[index]) != "" {
 			paths = append(paths, strings.TrimPrefix(info.Paths[index], "/"))
 			continue
+		}
+		if err := p.checkControl(ctx, postID); err != nil {
+			return err
 		}
 		createTitle := pageTitle(info.Title, page)
 		if slugMode {
@@ -176,6 +210,9 @@ func (p *Publisher) publish(ctx context.Context, postID int64, pageAPI PageAPI) 
 	// 无中文模式下单页也必须编辑一次，否则页面标题会停在建页用的短码。
 	if slugMode || len(pages) > 1 {
 		for index, page := range pages {
+			if err := p.checkControl(ctx, postID); err != nil {
+				return err
+			}
 			prevURL, nextURL := "", ""
 			if index > 0 {
 				prevURL = urls[index-1]
@@ -201,11 +238,17 @@ func (p *Publisher) publish(ctx context.Context, postID int64, pageAPI PageAPI) 
 	}
 
 	// 收尾前再确认任务未被停止或暂停：停止后不再把发布标记为成功。
-	if state, _, stateErr := p.repo.Control(ctx, postID); stateErr == nil && state != posts.ControlRunning {
-		return errors.New("任务已停止")
+	if err := p.checkControl(ctx, postID); err != nil {
+		return err
 	}
 
-	return p.repo.MarkPublished(ctx, postID, paths, urls)
+	if err := p.repo.MarkPublished(ctx, postID, paths, urls); err != nil {
+		if errors.Is(err, posts.ErrPublishStateChanged) {
+			return errPublishStopped
+		}
+		return err
+	}
+	return nil
 }
 
 // orderForPublish 把封面媒体提到第一项，其余媒体保持原序号顺序。

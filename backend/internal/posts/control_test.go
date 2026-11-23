@@ -3,7 +3,10 @@ package posts
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
+
+	"github.com/littleseven2003/SeSeGraph/backend/internal/db"
 )
 
 // controlPost 建一个正在上传、已有一张已上传图片的任务。
@@ -165,5 +168,48 @@ func TestStopKeepsPublishedShortCodes(t *testing.T) {
 	}
 	if public != 1 {
 		t.Error("已发布帖停止后短码被关闭")
+	}
+}
+
+// TestControlStateSurvivesRestart 验证暂停与停止状态写入数据库，重开连接后仍生效。
+func TestControlStateSurvivesRestart(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "restart.db")
+	handle, err := db.Open(path)
+	if err != nil {
+		t.Fatalf("打开数据库失败: %v", err)
+	}
+	if err := db.Migrate(ctx, handle); err != nil {
+		t.Fatalf("迁移失败: %v", err)
+	}
+	repo := NewRepository(handle)
+	paused := controlPost(t, repo)
+	if _, err := repo.Enqueue(ctx, paused); err != nil && !errors.Is(err, ErrAlreadyQueued) {
+		t.Fatalf("入队失败: %v", err)
+	}
+	if err := repo.Pause(ctx, paused); err != nil {
+		t.Fatalf("暂停失败: %v", err)
+	}
+	stopped := controlPost(t, repo)
+	if err := repo.Stop(ctx, stopped); err != nil {
+		t.Fatalf("停止失败: %v", err)
+	}
+	_ = handle.Close()
+
+	reopened, err := db.Open(path)
+	if err != nil {
+		t.Fatalf("重新打开数据库失败: %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	repo = NewRepository(reopened)
+
+	if state, _, err := repo.Control(ctx, paused); err != nil || state != ControlPaused {
+		t.Errorf("重启后暂停状态 = %q / %v，期望 paused", state, err)
+	}
+	if state, _, err := repo.Control(ctx, stopped); err != nil || state != ControlStopped {
+		t.Errorf("重启后停止状态 = %q / %v，期望 stopped", state, err)
+	}
+	if _, ok, err := repo.ClaimNext(ctx); err != nil || ok {
+		t.Errorf("重启后仍领取了暂停或停止的任务: ok=%v err=%v", ok, err)
 	}
 }
