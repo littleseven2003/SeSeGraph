@@ -33,6 +33,11 @@ const (
 	DefaultMetaFilenames = "info.txt,meta.txt,readme.txt"
 	// DefaultMetaParseMode 是说明文件的默认解析方式。
 	DefaultMetaParseMode = "first-line"
+	// 链接生成方式：按标题生成，或先建英文页再改回原题。
+	PathModeTitle = "title"
+	PathModeSlug  = "slug"
+	// DefaultPathMode 沿用按标题生成，升级后行为不变。
+	DefaultPathMode = PathModeTitle
 )
 
 // 说明文件解析方式。
@@ -93,6 +98,8 @@ type Env struct {
 	ProxyTelegraph string
 	// UploadMode 是新任务的默认画质模式，photo 或 document。
 	UploadMode string
+	// TelegraphPathMode 是 Telegraph 链接生成方式，title 或 slug。
+	TelegraphPathMode string
 }
 
 // Value 是一项生效配置及其来源。敏感项只通过 Value 在校验与自检内部使用，不对外输出。
@@ -121,6 +128,8 @@ type Effective struct {
 	ProxyTelegraph Value
 	// UploadMode 是新任务的默认画质模式。
 	UploadMode Value
+	// TelegraphPathMode 是 Telegraph 链接生成方式。
+	TelegraphPathMode Value
 	// MetaFilenames 是压缩包内说明文件的候选名（逗号分隔）。
 	MetaFilenames Value
 	// MetaParseMode 是说明文件的默认解析方式。
@@ -191,19 +200,20 @@ func resolveEndpoint(envValue, fallback string) Value {
 // effectiveFrom 在一份配置快照上解析生效配置。
 func (r *Resolver) effectiveFrom(stored map[string]string) Effective {
 	return Effective{
-		TelegramToken:    resolve(r.env.TelegramToken, stored, KeyTelegramToken, ""),
-		TelegramChannel:  resolve(r.env.TelegramChannel, stored, KeyTelegramChannel, ""),
-		TelegramAPIBase:  resolveEndpoint(r.env.TelegramAPIBase, DefaultTelegramAPIBase),
-		TelegraphToken:   resolve(r.env.TelegraphToken, stored, KeyTelegraphToken, ""),
-		TelegraphAuthor:  resolve(r.env.TelegraphAuthor, stored, KeyTelegraphAuthorName, ""),
-		TelegraphAPIBase: resolveEndpoint(r.env.TelegraphAPIBase, DefaultTelegraphAPIBase),
-		ProxyMode:        resolveProxyMode(r.env.ProxyMode, stored[KeyProxyMode]),
-		ProxyURL:         resolve(r.env.ProxyURL, stored, KeyProxyURL, ""),
-		ProxyTelegram:    resolveFlag(r.env.ProxyTelegram, stored[KeyProxyTelegram]),
-		ProxyTelegraph:   resolveFlag(r.env.ProxyTelegraph, stored[KeyProxyTelegraph]),
-		UploadMode:       resolveUploadMode(r.env.UploadMode, stored[KeyUploadMode]),
-		MetaFilenames:    resolve("", stored, KeyMetaFilenames, DefaultMetaFilenames),
-		MetaParseMode:    resolveMetaParseMode(stored[KeyMetaParseMode]),
+		TelegramToken:     resolve(r.env.TelegramToken, stored, KeyTelegramToken, ""),
+		TelegramChannel:   resolve(r.env.TelegramChannel, stored, KeyTelegramChannel, ""),
+		TelegramAPIBase:   resolveEndpoint(r.env.TelegramAPIBase, DefaultTelegramAPIBase),
+		TelegraphToken:    resolve(r.env.TelegraphToken, stored, KeyTelegraphToken, ""),
+		TelegraphAuthor:   resolve(r.env.TelegraphAuthor, stored, KeyTelegraphAuthorName, ""),
+		TelegraphAPIBase:  resolveEndpoint(r.env.TelegraphAPIBase, DefaultTelegraphAPIBase),
+		ProxyMode:         resolveProxyMode(r.env.ProxyMode, stored[KeyProxyMode]),
+		ProxyURL:          resolve(r.env.ProxyURL, stored, KeyProxyURL, ""),
+		ProxyTelegram:     resolveFlag(r.env.ProxyTelegram, stored[KeyProxyTelegram]),
+		ProxyTelegraph:    resolveFlag(r.env.ProxyTelegraph, stored[KeyProxyTelegraph]),
+		UploadMode:        resolveUploadMode(r.env.UploadMode, stored[KeyUploadMode]),
+		TelegraphPathMode: resolvePathMode(r.env.TelegraphPathMode, stored[KeyTelegraphPathMode]),
+		MetaFilenames:     resolve("", stored, KeyMetaFilenames, DefaultMetaFilenames),
+		MetaParseMode:     resolveMetaParseMode(stored[KeyMetaParseMode]),
 	}
 }
 
@@ -217,6 +227,45 @@ func resolveUploadMode(envMode, storedMode string) Value {
 		return Value{Value: value, Source: SourceStored}
 	}
 	return Value{Value: DefaultUploadMode, Source: SourceDefault}
+}
+
+// resolvePathMode 解析 Telegraph 链接生成方式：环境变量优先，非法取值回落默认。
+func resolvePathMode(envMode, storedMode string) Value {
+	if value := normalizePathMode(envMode); value != "" {
+		return Value{Value: value, Source: SourceEnv}
+	}
+	if value := normalizePathMode(storedMode); value != "" {
+		return Value{Value: value, Source: SourceStored}
+	}
+	return Value{Value: DefaultPathMode, Source: SourceDefault}
+}
+
+// normalizePathMode 把取值归一化为 title 或 slug，非法时返回空串。
+func normalizePathMode(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case PathModeTitle:
+		return PathModeTitle
+	case PathModeSlug:
+		return PathModeSlug
+	default:
+		return ""
+	}
+}
+
+// validatePathMode 校验链接生成方式只取两个约定值。
+func validatePathMode(value string) error {
+	if normalizePathMode(value) == "" {
+		return errors.New("链接生成方式不合法")
+	}
+	return nil
+}
+
+// validateUploadMode 校验画质模式只取两个约定值。
+func validateUploadMode(value string) error {
+	if normalizeUploadMode(value) == "" {
+		return errors.New("画质模式不合法")
+	}
+	return nil
 }
 
 // normalizeUploadMode 把取值归一化为 photo 或 document，非法时返回空串。
@@ -296,13 +345,17 @@ type Patch struct {
 	// 压缩包说明文件：候选文件名与默认解析方式。
 	MetaFilenames *[]string
 	MetaParseMode *string
+	// 发帖默认画质与 Telegraph 链接生成方式。
+	UploadMode        *string
+	TelegraphPathMode *string
 }
 
 // Empty 报告补丁是否没有任何字段。
 func (p Patch) Empty() bool {
 	return p.TelegramToken == nil && p.TelegramChannel == nil && p.TelegraphAuthor == nil &&
 		p.ProxyMode == nil && p.ProxyURL == nil && p.ProxyTelegram == nil && p.ProxyTelegraph == nil &&
-		p.MetaFilenames == nil && p.MetaParseMode == nil
+		p.MetaFilenames == nil && p.MetaParseMode == nil &&
+		p.UploadMode == nil && p.TelegraphPathMode == nil
 }
 
 // Prepare 校验补丁并返回应用后的生效配置，不写入数据库。
@@ -382,6 +435,8 @@ func (r *Resolver) classify(stored map[string]string, patch Patch) (Effective, m
 	apply(patch.TelegraphAuthor, current.TelegraphAuthor, KeyTelegraphAuthorName, "telegraph.author_name", validateAuthor)
 	applyProxy(patch, current, values, &deletes, &invalid, &conflicts)
 	applyMeta(patch, current, values, &deletes, &invalid)
+	apply(patch.UploadMode, current.UploadMode, KeyUploadMode, "post.upload_mode", validateUploadMode)
+	apply(patch.TelegraphPathMode, current.TelegraphPathMode, KeyTelegraphPathMode, "telegraph.path_mode", validatePathMode)
 
 	if len(invalid) > 0 {
 		return Effective{}, nil, nil, &FieldProblem{Fields: invalid}

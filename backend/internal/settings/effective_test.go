@@ -490,3 +490,78 @@ func TestMetaSettingsDefaultsAndUpdate(t *testing.T) {
 		t.Errorf("非法文件名错误 = %v，期望 ErrInvalidValue", err)
 	}
 }
+
+// TestPathModeDefaultAndUpdate 验证链接生成方式默认按标题，可写入数据库，非法值被拒绝。
+func TestPathModeDefaultAndUpdate(t *testing.T) {
+	ctx := context.Background()
+	resolver := newResolver(t, Env{})
+
+	effective, err := resolver.Effective(ctx)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if effective.TelegraphPathMode.Value != PathModeTitle || effective.TelegraphPathMode.Source != SourceDefault {
+		t.Errorf("默认链接方式 = %+v，期望 title / default", effective.TelegraphPathMode)
+	}
+
+	envResolver := newResolver(t, Env{TelegraphPathMode: "SLUG"})
+	effective, err = envResolver.Effective(ctx)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if effective.TelegraphPathMode.Value != PathModeSlug || effective.TelegraphPathMode.Source != SourceEnv {
+		t.Errorf("环境变量链接方式 = %+v，期望 slug / env", effective.TelegraphPathMode)
+	}
+
+	mode := PathModeSlug
+	if err := resolver.Update(ctx, Patch{TelegraphPathMode: &mode}); err != nil {
+		t.Fatalf("保存失败: %v", err)
+	}
+	effective, err = resolver.Effective(ctx)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if effective.TelegraphPathMode.Value != PathModeSlug || effective.TelegraphPathMode.Source != SourceStored {
+		t.Errorf("保存后链接方式 = %+v，期望 slug / stored", effective.TelegraphPathMode)
+	}
+
+	invalid := "random"
+	err = resolver.Update(ctx, Patch{TelegraphPathMode: &invalid})
+	var problem *FieldProblem
+	if !errors.As(err, &problem) || len(problem.Fields) != 1 || problem.Fields[0] != "telegraph.path_mode" {
+		t.Fatalf("错误 = %v，期望 telegraph.path_mode 校验失败", err)
+	}
+}
+
+// TestUploadModeWritable 验证默认画质可通过设置写入，环境变量托管时拒绝覆盖。
+func TestUploadModeWritable(t *testing.T) {
+	ctx := context.Background()
+	resolver := newResolver(t, Env{})
+
+	mode := "document"
+	if err := resolver.Update(ctx, Patch{UploadMode: &mode}); err != nil {
+		t.Fatalf("保存失败: %v", err)
+	}
+	effective, err := resolver.Effective(ctx)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if effective.UploadMode.Value != "document" || effective.UploadMode.Source != SourceStored {
+		t.Errorf("保存后默认画质 = %+v，期望 document / stored", effective.UploadMode)
+	}
+
+	invalid := "ultra"
+	var problem *FieldProblem
+	if err := resolver.Update(ctx, Patch{UploadMode: &invalid}); !errors.As(err, &problem) ||
+		len(problem.Fields) != 1 || problem.Fields[0] != "post.upload_mode" {
+		t.Fatalf("错误 = %v，期望 post.upload_mode 校验失败", err)
+	}
+
+	envResolver := newResolver(t, Env{UploadMode: "photo"})
+	stored := "document"
+	var conflict *FieldConflict
+	if err := envResolver.Update(ctx, Patch{UploadMode: &stored}); !errors.As(err, &conflict) ||
+		len(conflict.Fields) != 1 || conflict.Fields[0] != "post.upload_mode" {
+		t.Fatalf("错误 = %v，期望 post.upload_mode 由环境变量托管", err)
+	}
+}

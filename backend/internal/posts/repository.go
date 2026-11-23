@@ -72,6 +72,11 @@ type PublishInfo struct {
 	State       string
 	Images      []Image
 	Paths       []string
+	// CoverSortOrder 是封面来源序号，0 表示未选择封面。
+	CoverSortOrder int
+	// PathMode 是入队时冻结的链接生成方式，Slug 是随之冻结的随机短码。
+	PathMode string
+	Slug     string
 }
 
 // PublicImage 是网关可以对外转发的图片信息，仅包含必要字段。
@@ -565,8 +570,11 @@ func (r *Repository) PublishInfo(ctx context.Context, postID int64) (*PublishInf
 	info := &PublishInfo{PostID: postID}
 	var pathsJSON string
 	err := r.handle.QueryRowContext(ctx,
-		`SELECT title, description, author_name, publish_state, telegraph_paths FROM posts WHERE id = ?`, postID,
-	).Scan(&info.Title, &info.Description, &info.AuthorName, &info.State, &pathsJSON)
+		`SELECT title, description, author_name, publish_state, telegraph_paths,
+		        COALESCE(cover_sort_order, 0), publish_path_mode, publish_slug
+		 FROM posts WHERE id = ?`, postID,
+	).Scan(&info.Title, &info.Description, &info.AuthorName, &info.State, &pathsJSON,
+		&info.CoverSortOrder, &info.PathMode, &info.Slug)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -610,6 +618,30 @@ func (r *Repository) SetPublic(ctx context.Context, postID int64, public bool) e
 		`UPDATE posts SET is_public = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, value, postID)
 	if err != nil {
 		return errors.New("更新公开标记失败")
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetCoverSelection 更新封面来源序号与缩略图路径；缩略图为空时只改序号。
+func (r *Repository) SetCoverSelection(ctx context.Context, id int64, sortOrder int, thumbPath string) error {
+	var (
+		result sql.Result
+		err    error
+	)
+	if thumbPath == "" {
+		result, err = r.handle.ExecContext(ctx,
+			`UPDATE posts SET cover_sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+			sortOrder, id)
+	} else {
+		result, err = r.handle.ExecContext(ctx,
+			`UPDATE posts SET cover_sort_order = ?, cover_thumb_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+			sortOrder, thumbPath, id)
+	}
+	if err != nil {
+		return errors.New("更新封面失败")
 	}
 	if affected, _ := result.RowsAffected(); affected == 0 {
 		return ErrNotFound
@@ -701,6 +733,40 @@ func (r *Repository) AttachImage(ctx context.Context, image Image) (string, erro
 		previous = ""
 	}
 	return previous, nil
+}
+
+// FreezePublishPath 在首次入队时写入链接生成方式与随机短码，已有取值时不覆盖。
+// 冻结后即使设置页改了口径，这次发布仍按入队时的选择执行。
+func (r *Repository) FreezePublishPath(ctx context.Context, postID int64, mode, slug string) error {
+	if mode == "" {
+		return nil
+	}
+	result, err := r.handle.ExecContext(ctx,
+		`UPDATE posts SET publish_path_mode = ?, publish_slug = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND (publish_path_mode IS NULL OR publish_path_mode = '')`,
+		mode, slug, postID)
+	if err != nil {
+		return errors.New("保存链接生成方式失败")
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return nil
+	}
+	return nil
+}
+
+// NewPublishSlug 生成用于 Telegraph 路径的随机短码，只含小写字母与数字。
+func NewPublishSlug() (string, error) {
+	const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+	const length = 10
+	buffer := make([]byte, length)
+	for index := range buffer {
+		value, err := rand.Int(rand.Reader, big.NewInt(int64(len(alphabet))))
+		if err != nil {
+			return "", errors.New("生成短码失败")
+		}
+		buffer[index] = alphabet[value.Int64()]
+	}
+	return string(buffer), nil
 }
 
 // Enqueue 在事务内统计缺图并完成 uploading → queued 的状态转换。

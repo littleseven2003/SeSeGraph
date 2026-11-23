@@ -308,3 +308,89 @@ func TestBuildBodyUsesVideoNodeForMP4(t *testing.T) {
 		t.Errorf("备用链接 = %+v", figure.Children[2])
 	}
 }
+
+// TestPublisherSlugModeRestoresTitle 验证无中文模式下先用短码建页，随后改回真实标题。
+func TestPublisherSlugModeRestoresTitle(t *testing.T) {
+	env := newPublishEnv(t, 2, "说明")
+	if err := env.repo.FreezePublishPath(context.Background(), 1, "slug", "abcd123456"); err != nil {
+		t.Fatalf("冻结链接方式失败: %v", err)
+	}
+
+	processed, err := env.pub.ProcessOnce(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("处理结果 processed=%v err=%v", processed, err)
+	}
+
+	creates, edits := env.pages.counts()
+	if creates != 1 || edits != 1 {
+		t.Fatalf("创建 %d 次、编辑 %d 次，单页无中文模式期望 1/1", creates, edits)
+	}
+	if got := env.pages.created[0].Title; got != "abcd123456" {
+		t.Errorf("建页标题 = %q，期望短码", got)
+	}
+	if got := env.pages.edited[0].Title; got != "发布测试" {
+		t.Errorf("还原标题 = %q，期望真实标题", got)
+	}
+	if path := env.pages.editedPaths[0]; !strings.HasPrefix(path, "Page-") {
+		t.Errorf("编辑路径 = %q，应沿用建页返回的路径", path)
+	}
+}
+
+// TestPublisherSlugModeMultiPageSuffix 验证多页短码带页序，还原后标题带分页标记。
+func TestPublisherSlugModeMultiPageSuffix(t *testing.T) {
+	env := newPublishEnv(t, 400, "多页说明")
+	if err := env.repo.FreezePublishPath(context.Background(), 1, "slug", "page123456"); err != nil {
+		t.Fatalf("冻结链接方式失败: %v", err)
+	}
+	if _, err := env.pub.ProcessOnce(context.Background()); err != nil {
+		t.Fatalf("发布失败: %v", err)
+	}
+
+	if len(env.pages.created) < 2 {
+		t.Fatalf("创建页数 = %d，期望多页", len(env.pages.created))
+	}
+	if got := env.pages.created[0].Title; got != "page123456" {
+		t.Errorf("首页建页标题 = %q", got)
+	}
+	if got := env.pages.created[1].Title; got != "page123456-2" {
+		t.Errorf("第二页建页标题 = %q", got)
+	}
+	if got := env.pages.edited[0].Title; !strings.HasPrefix(got, "发布测试") {
+		t.Errorf("还原标题 = %q，期望真实标题", got)
+	}
+}
+
+// TestPublisherCoverLeadsFirstImage 验证封面媒体被提到正文第一项，编号按展示顺序。
+func TestPublisherCoverLeadsFirstImage(t *testing.T) {
+	env := newPublishEnv(t, 3, "封面顺序")
+	if err := env.repo.SetCoverSelection(context.Background(), 1, 3, ""); err != nil {
+		t.Fatalf("设置封面失败: %v", err)
+	}
+	if _, err := env.pub.ProcessOnce(context.Background()); err != nil {
+		t.Fatalf("发布失败: %v", err)
+	}
+
+	images, err := env.repo.ListImages(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("读取图片失败: %v", err)
+	}
+	coverCode := ""
+	for _, image := range images {
+		if image.SortOrder == 3 {
+			coverCode = image.ShortCode
+		}
+	}
+	content, err := telegraph.MarshalContent(env.pages.created[0].Content)
+	if err != nil {
+		t.Fatalf("序列化失败: %v", err)
+	}
+	text := string(content)
+	firstImage := strings.Index(text, "/i/")
+	coverAt := strings.Index(text, "/i/"+coverCode)
+	if coverAt < 0 || firstImage != coverAt {
+		t.Errorf("封面未排在第一张: first=%d cover=%d", firstImage, coverAt)
+	}
+	if !strings.Contains(text, "第 1 张") {
+		t.Errorf("封面编号应按展示顺序从 1 开始: %s", text)
+	}
+}

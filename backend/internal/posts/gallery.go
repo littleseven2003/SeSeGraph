@@ -110,6 +110,8 @@ type GalleryDetail struct {
 	PublishError  string
 	Paths         []string
 	Images        []GalleryImage
+	// CoverSort 是当前封面来源序号，0 表示未选择封面。
+	CoverSort int
 }
 
 // TagCount 是标签及其关联帖子数量。
@@ -257,13 +259,13 @@ func (r *Repository) GalleryDetail(ctx context.Context, id int64) (*GalleryDetai
 		        strftime('%Y-%m-%dT%H:%M:%SZ', p.created_at),
 		        strftime('%Y-%m-%dT%H:%M:%SZ', p.updated_at),
 		        p.views_count, COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', p.views_updated_at), ''),
-		        p.pending_delete
+		        p.pending_delete, COALESCE(p.cover_sort_order, 0)
 		 FROM posts p WHERE p.id = ?`, id,
 	).Scan(&detail.ID, &detail.Title, &detail.Description, &detail.AuthorName, &detail.CoverThumbPath,
 		&detail.ImageCount, &detail.UploadMode, &detail.Status, &detail.ErrorMessage,
 		&detail.PublishState, &detail.PublishError, &public, &disabled, &urls, &paths,
 		&detail.PublishedAt, &detail.CreatedAt, &detail.UpdatedAt,
-		&detail.ViewsCount, &detail.ViewsUpdatedAt, &pending)
+		&detail.ViewsCount, &detail.ViewsUpdatedAt, &pending, &detail.CoverSort)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

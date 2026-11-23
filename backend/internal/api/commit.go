@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/settings"
 )
 
 // commitPostHandler 校验图片是否齐全，齐全后把帖子置为待上传。
@@ -54,6 +55,27 @@ func commitPostHandler(deps Deps) gin.HandlerFunc {
 				"error":   "图片未上传完整",
 				"missing": missing,
 			})
+			return
+		}
+
+		// 首次入队时冻结链接生成方式：之后改设置不影响这次发布。
+		mode := settings.PathModeTitle
+		if deps.Settings != nil {
+			if effective, err := deps.Settings.Effective(c.Request.Context()); err == nil {
+				mode = effective.TelegraphPathMode.Value
+			}
+		}
+		slug := ""
+		if mode == settings.PathModeSlug {
+			generated, err := posts.NewPublishSlug()
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "生成链接短码失败"})
+				return
+			}
+			slug = generated
+		}
+		if err := deps.Posts.FreezePublishPath(c.Request.Context(), post.ID, mode, slug); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存链接生成方式失败"})
 			return
 		}
 

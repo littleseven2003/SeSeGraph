@@ -65,6 +65,8 @@ type galleryDetailResponse struct {
 	PendingDelete bool `json:"pending_delete"`
 	// PublicBaseURL 是拼接单图外链用的公开地址，未配置或结构不合法时为空。
 	PublicBaseURL string `json:"public_base_url"`
+	// CoverSortOrder 是当前封面来源序号，0 表示未选择封面。
+	CoverSortOrder int `json:"cover_sort_order"`
 }
 
 // coverURL 把库内封面路径转成接口地址，只保留文件名部分。
@@ -248,6 +250,7 @@ func postDetailHandler(deps Deps) gin.HandlerFunc {
 			Images:              images,
 			PendingDelete:       detail.PendingDelete,
 			PublicBaseURL:       publicBaseURL(deps.PublicURL),
+			CoverSortOrder:      detail.CoverSort,
 		})
 	}
 }

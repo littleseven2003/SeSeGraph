@@ -52,12 +52,14 @@ type settingsView struct {
 		APIBaseSource string `json:"api_base_source"`
 	} `json:"telegram"`
 	Telegraph struct {
-		TokenSet      bool   `json:"token_set"`
-		TokenSource   string `json:"token_source"`
-		AuthorName    string `json:"author_name"`
-		AuthorSource  string `json:"author_source"`
-		APIBase       string `json:"api_base"`
-		APIBaseSource string `json:"api_base_source"`
+		TokenSet       bool   `json:"token_set"`
+		TokenSource    string `json:"token_source"`
+		AuthorName     string `json:"author_name"`
+		AuthorSource   string `json:"author_source"`
+		APIBase        string `json:"api_base"`
+		APIBaseSource  string `json:"api_base_source"`
+		PathMode       string `json:"path_mode"`
+		PathModeSource string `json:"path_mode_source"`
 	} `json:"telegraph"`
 	// Proxy 汇报代理配置的来源与开关。自定义地址可能带账密，只报是否已设置。
 	Proxy struct {
@@ -130,6 +132,8 @@ func buildSettingsView(effective settings.Effective, publicURL string) settingsV
 	view.Proxy.URLSource = effective.ProxyURL.Source
 	view.Proxy.TelegramEnabled = effective.ProxyEnabled(netclient.ServiceTelegram)
 	view.Proxy.TelegraphEnabled = effective.ProxyEnabled(netclient.ServiceTelegraph)
+	view.Telegraph.PathMode = effective.TelegraphPathMode.Value
+	view.Telegraph.PathModeSource = effective.TelegraphPathMode.Source
 	view.Upload.DefaultMode = effective.UploadMode.Value
 	view.Upload.ModeSource = effective.UploadMode.Source
 	view.Meta.Filenames = splitMetaFilenames(effective.MetaFilenames.Value)
@@ -151,6 +155,7 @@ func buildSettingsView(effective settings.Effective, publicURL string) settingsV
 		{"proxy.telegram", effective.ProxyTelegram},
 		{"proxy.telegraph", effective.ProxyTelegraph},
 		{"upload.mode", effective.UploadMode},
+		{"telegraph.path_mode", effective.TelegraphPathMode},
 	}
 	for _, field := range fields {
 		if field.value.Source == settings.SourceEnv {
@@ -194,7 +199,11 @@ type settingsPatchRequest struct {
 	} `json:"telegram"`
 	Telegraph *struct {
 		AuthorName *string `json:"author_name"`
+		PathMode   *string `json:"path_mode"`
 	} `json:"telegraph"`
+	Upload *struct {
+		Mode *string `json:"mode"`
+	} `json:"upload"`
 	Meta *struct {
 		Filenames *[]string `json:"filenames"`
 		ParseMode *string   `json:"parse_mode"`
@@ -216,6 +225,10 @@ func (r settingsPatchRequest) toPatch() settings.Patch {
 	}
 	if r.Telegraph != nil {
 		patch.TelegraphAuthor = r.Telegraph.AuthorName
+		patch.TelegraphPathMode = r.Telegraph.PathMode
+	}
+	if r.Upload != nil {
+		patch.UploadMode = r.Upload.Mode
 	}
 	if r.Proxy != nil {
 		patch.ProxyMode = r.Proxy.Mode

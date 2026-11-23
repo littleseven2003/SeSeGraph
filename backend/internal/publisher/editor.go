@@ -79,6 +79,73 @@ func (e *Editor) Withdraw(ctx context.Context, paths []string) error {
 	return nil
 }
 
+// ReorderCover 按新的封面序号重排已发布帖的远端页面。
+// 只做远端写入，本地序号与缩略图由调用方在成功后落库。
+func (e *Editor) ReorderCover(ctx context.Context, postID int64, sortOrder int) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	pending, pendingErr := e.repo.PendingDelete(ctx, postID)
+	if pendingErr != nil {
+		return pendingErr
+	}
+	if pending {
+		return posts.ErrPendingDelete
+	}
+
+	info, err := e.repo.PublishInfo(ctx, postID)
+	if err != nil {
+		return err
+	}
+	switch {
+	case info.State == posts.PublishPublished && len(info.Paths) > 0:
+		// 已发布：按新顺序逐页改写，全部成功才算完成。
+	case info.State == posts.PublishIdle,
+		info.State == posts.PublishFailed && len(info.Paths) == 0,
+		info.State == posts.PublishPublished && len(info.Paths) == 0:
+		// 没有远端页面，只需改本地记录。
+		return nil
+	default:
+		return ErrPublishInProgress
+	}
+	if !config.PublicURLIsHTTPS(e.publicURL) {
+		return ErrPublicURLInvalid
+	}
+
+	pageAPI, err := e.pages(ctx)
+	if err != nil {
+		return err
+	}
+
+	pages, err := telegraph.Paginate(buildBody(e.publicURL, info.Description, orderForPublish(info.Images, sortOrder)))
+	if err != nil {
+		return err
+	}
+	if len(pages) != len(info.Paths) {
+		return ErrPageCountChanged
+	}
+
+	urls := pageURLs(info.Paths)
+	for index, page := range pages {
+		prevURL, nextURL := "", ""
+		if index > 0 {
+			prevURL = urls[index-1]
+		}
+		if index < len(urls)-1 {
+			nextURL = urls[index+1]
+		}
+		content := append(append([]telegraph.Node{}, page.Body...), telegraph.NavNodes(prevURL, nextURL, page.Index, page.Total)...)
+		if _, err := pageAPI.EditPage(ctx, info.Paths[index], telegraph.PageRequest{
+			Title:      pageTitle(info.Title, page),
+			AuthorName: info.AuthorName,
+			Content:    content,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Update 更新元数据：未发布的帖子只改本地记录；
 // 已发布的帖子按原有页面路径逐页编辑，全部成功后才写入本地。
 func (e *Editor) Update(ctx context.Context, postID int64, meta Metadata) error {
@@ -126,8 +193,8 @@ func (e *Editor) Update(ctx context.Context, postID int64, meta Metadata) error 
 		return err
 	}
 
-	// 沿用发布时的正文结构，只替换说明与作者。
-	pages, err := telegraph.Paginate(buildBody(e.publicURL, meta.Description, info.Images))
+	// 沿用发布时的正文结构，只替换说明与作者；封面仍前置在首图。
+	pages, err := telegraph.Paginate(buildBody(e.publicURL, meta.Description, orderForPublish(info.Images, info.CoverSortOrder)))
 	if err != nil {
 		return err
 	}

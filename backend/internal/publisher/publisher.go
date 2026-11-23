@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/settings"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/telegraph"
 )
 
@@ -125,11 +126,17 @@ func (p *Publisher) publish(ctx context.Context, postID int64, pageAPI PageAPI) 
 		return errors.New("没有可发布的存图记录")
 	}
 
-	body := buildBody(p.publicURL, info.Description, info.Images)
+	images := orderForPublish(info.Images, info.CoverSortOrder)
+	body := buildBody(p.publicURL, info.Description, images)
 	pages, err := telegraph.Paginate(body)
 	if err != nil {
 		return err
 	}
+
+	// 无中文链接模式：用冻结的短码建页固定 path，随后统一改回真实标题。
+	// 历史任务没有冻结值，仍按标题生成，行为与升级前一致。
+	slug := strings.TrimSpace(info.Slug)
+	slugMode := info.PathMode == settings.PathModeSlug && slug != ""
 
 	// 逐页创建并增量落库，进程中断后重试可以复用已建好的页面。
 	paths := make([]string, 0, len(pages))
@@ -138,8 +145,12 @@ func (p *Publisher) publish(ctx context.Context, postID int64, pageAPI PageAPI) 
 			paths = append(paths, strings.TrimPrefix(info.Paths[index], "/"))
 			continue
 		}
+		createTitle := pageTitle(info.Title, page)
+		if slugMode {
+			createTitle = slugPageTitle(slug, page.Index)
+		}
 		created, err := pageAPI.CreatePage(ctx, telegraph.PageRequest{
-			Title:      pageTitle(info.Title, page),
+			Title:      createTitle,
 			AuthorName: info.AuthorName,
 			Content:    page.Body,
 		})
@@ -157,8 +168,9 @@ func (p *Publisher) publish(ctx context.Context, postID int64, pageAPI PageAPI) 
 
 	urls := pageURLs(paths)
 
-	// 全部页面就绪后补互链：首页只有下一页、末页只有上一页。
-	if len(pages) > 1 {
+	// 全部页面就绪后还原真实标题；多页同时补互链：首页只有下一页、末页只有上一页。
+	// 无中文模式下单页也必须编辑一次，否则页面标题会停在建页用的短码。
+	if slugMode || len(pages) > 1 {
 		for index, page := range pages {
 			prevURL, nextURL := "", ""
 			if index > 0 {
@@ -167,7 +179,10 @@ func (p *Publisher) publish(ctx context.Context, postID int64, pageAPI PageAPI) 
 			if index < len(urls)-1 {
 				nextURL = urls[index+1]
 			}
-			content := append(append([]telegraph.Node{}, page.Body...), telegraph.NavNodes(prevURL, nextURL, page.Index, page.Total)...)
+			content := append([]telegraph.Node{}, page.Body...)
+			if len(pages) > 1 {
+				content = append(content, telegraph.NavNodes(prevURL, nextURL, page.Index, page.Total)...)
+			}
 			if _, err := telegraph.ContentBytes(content); err != nil {
 				return err
 			}
@@ -182,6 +197,37 @@ func (p *Publisher) publish(ctx context.Context, postID int64, pageAPI PageAPI) 
 	}
 
 	return p.repo.MarkPublished(ctx, postID, paths, urls)
+}
+
+// orderForPublish 把封面媒体提到第一项，其余媒体保持原序号顺序。
+// 封面序号为空或找不到对应媒体时顺序不变。
+func orderForPublish(images []posts.Image, coverSortOrder int) []posts.Image {
+	if coverSortOrder <= 0 || len(images) < 2 {
+		return images
+	}
+	index := -1
+	for position, image := range images {
+		if image.SortOrder == coverSortOrder {
+			index = position
+			break
+		}
+	}
+	if index <= 0 {
+		return images
+	}
+	ordered := make([]posts.Image, 0, len(images))
+	ordered = append(ordered, images[index])
+	ordered = append(ordered, images[:index]...)
+	ordered = append(ordered, images[index+1:]...)
+	return ordered
+}
+
+// slugPageTitle 返回无中文模式的建页标题：首页用短码，后续页补页序。
+func slugPageTitle(slug string, page int) string {
+	if page <= 1 {
+		return slug
+	}
+	return fmt.Sprintf("%s-%d", slug, page)
 }
 
 // buildBody 生成正文节点：说明段落与逐张图片。

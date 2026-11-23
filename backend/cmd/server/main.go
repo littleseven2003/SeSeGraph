@@ -91,17 +91,18 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 
 	settingsStore := settings.NewStore(store)
 	resolver := settings.NewResolver(settingsStore, settings.Env{
-		TelegramToken:    envValue(lookupEnv, "TELEGRAM_BOT_TOKEN"),
-		TelegramChannel:  envValue(lookupEnv, "TELEGRAM_CHANNEL_ID"),
-		TelegramAPIBase:  envValue(lookupEnv, "TELEGRAM_API_BASE"),
-		TelegraphToken:   envValue(lookupEnv, "TELEGRAPH_ACCESS_TOKEN"),
-		TelegraphAuthor:  envValue(lookupEnv, "TELEGRAPH_AUTHOR_NAME"),
-		TelegraphAPIBase: envValue(lookupEnv, "TELEGRAPH_API_BASE"),
-		ProxyMode:        envValue(lookupEnv, "PROXY_MODE"),
-		ProxyURL:         envValue(lookupEnv, "PROXY_URL"),
-		ProxyTelegram:    envValue(lookupEnv, "PROXY_FOR_TELEGRAM"),
-		ProxyTelegraph:   envValue(lookupEnv, "PROXY_FOR_TELEGRAPH"),
-		UploadMode:       envValue(lookupEnv, "UPLOAD_MODE"),
+		TelegramToken:     envValue(lookupEnv, "TELEGRAM_BOT_TOKEN"),
+		TelegramChannel:   envValue(lookupEnv, "TELEGRAM_CHANNEL_ID"),
+		TelegramAPIBase:   envValue(lookupEnv, "TELEGRAM_API_BASE"),
+		TelegraphToken:    envValue(lookupEnv, "TELEGRAPH_ACCESS_TOKEN"),
+		TelegraphAuthor:   envValue(lookupEnv, "TELEGRAPH_AUTHOR_NAME"),
+		TelegraphAPIBase:  envValue(lookupEnv, "TELEGRAPH_API_BASE"),
+		ProxyMode:         envValue(lookupEnv, "PROXY_MODE"),
+		ProxyURL:          envValue(lookupEnv, "PROXY_URL"),
+		ProxyTelegram:     envValue(lookupEnv, "PROXY_FOR_TELEGRAM"),
+		ProxyTelegraph:    envValue(lookupEnv, "PROXY_FOR_TELEGRAPH"),
+		UploadMode:        envValue(lookupEnv, "UPLOAD_MODE"),
+		TelegraphPathMode: envValue(lookupEnv, "TELEGRAPH_PATH_MODE"),
 	})
 	effective, err := resolver.Effective(ctx)
 	if err != nil {

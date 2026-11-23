@@ -31,10 +31,12 @@ const (
 
 // createPostRequest 是新建帖子的请求体。
 type createPostRequest struct {
-	Title          string   `json:"title"`
-	Description    string   `json:"description"`
-	AuthorName     string   `json:"author_name"`
-	UploadMode     string   `json:"upload_mode"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	AuthorName  string `json:"author_name"`
+	UploadMode  string `json:"upload_mode"`
+	// CoverSortOrder 是封面来源序号，与缩略图一起提交。
+	CoverSortOrder int      `json:"cover_sort_order"`
 	ImageCount     int      `json:"image_count"`
 	CoverThumbnail string   `json:"cover_thumbnail"`
 	Tags           []string `json:"tags"`
@@ -197,7 +199,13 @@ func createPostHandler(deps Deps) gin.HandlerFunc {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "保存封面失败"})
 				return
 			}
-			if err := deps.Posts.SetCover(c.Request.Context(), id, coverPath); err != nil {
+		}
+		if req.CoverSortOrder < 0 || req.CoverSortOrder > req.ImageCount {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "封面序号超出图片数量"})
+			return
+		}
+		if len(cover) > 0 || req.CoverSortOrder > 0 {
+			if err := deps.Posts.SetCoverSelection(c.Request.Context(), id, req.CoverSortOrder, coverPath); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "保存封面失败"})
 				return
 			}
