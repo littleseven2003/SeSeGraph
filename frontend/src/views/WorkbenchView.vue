@@ -93,6 +93,8 @@ let modeTouched = false
 const tiles = ref<WorkbenchTile[]>([])
 const coverId = ref('')
 const working = ref(false)
+// 提交锁覆盖「压缩 + 建任务 + 上传」整段，阻止双击与中途换策略。
+const submitting = ref(false)
 const message = ref('')
 const metaText = ref('')
 const metaSource = ref('')
@@ -131,7 +133,7 @@ const imageCount = computed(() => tiles.value.length)
 const totalSize = computed(() => totalBytes(tiles.value))
 const coverTile = computed(() => tiles.value.find((tile) => tile.id === coverId.value))
 const uploadedCount = computed(() => acceptedCount(statuses.value))
-const busy = computed(() => discardBlocked(phase.value))
+const busy = computed(() => discardBlocked(phase.value) || submitting.value)
 const finished = computed(() => serverProgress.value?.status === 'completed')
 // resuming 表示当前选中的文件与上次任务完全一致，可以直接补传。
 const resuming = computed(() => {
@@ -315,11 +317,12 @@ function resetToSource(): void {
     size: tile.sourceSize ?? tile.size,
     mime: tile.sourceMime ?? tile.mime,
     compressedFrom: undefined,
+    compressFailed: undefined,
   }))
 }
 
 // compressForSubmit 提交前逐图压缩，失败即中止；成功后返回空串。
-async function compressForSubmit(): Promise<string> {
+async function compressForSubmit(frozenMode: UploadMode, frozenCompress: boolean): Promise<string> {
   const pending: WorkbenchTile[] = []
   const blocked: string[] = []
   for (const tile of tiles.value) {
@@ -332,8 +335,8 @@ async function compressForSubmit(): Promise<string> {
         animatedKind: tile.animatedKind,
         failed: tile.compressFailed,
       },
-      mode.value,
-      autoCompress.value,
+      frozenMode,
+      frozenCompress,
     )
     if (verdict.state === 'blocked') blocked.push(`${tile.name} ${verdict.label}`)
     else if (verdict.state === 'pending') pending.push(tile)
@@ -361,12 +364,13 @@ async function compressForSubmit(): Promise<string> {
     for (const [index, tile] of pending.entries()) {
       message.value = `正在压缩（${index + 1} / ${pending.length}）：${tile.name} (${formatBytes(tile.sourceSize ?? tile.size)})…`
       try {
-        const target = mode.value === 'document' ? COMPRESS_TARGET_DOCUMENT : COMPRESS_TARGET_BYTES
+        const target = frozenMode === 'document' ? COMPRESS_TARGET_DOCUMENT : COMPRESS_TARGET_BYTES
         const result = await compressImage(tile.sourceBlob ?? tile.blob, target)
         const position = updated.findIndex((item) => item.id === tile.id)
         if (position >= 0) {
           updated[position] = {
             ...tile,
+            compressFailed: undefined,
             blob: result.blob,
             size: result.toSize,
             mime: result.blob.type || 'image/webp',
@@ -830,7 +834,8 @@ async function ensureTask(): Promise<number | null> {
 
 // 发布：建任务 → 按服务端进度补传 → 提交入队，快照保留以便刷新后查看与重试。
 async function publish(): Promise<void> {
-  if (busy.value) return
+  // 提交锁覆盖压缩与上传整段：双击、换模式、排序都不能插进来。
+  if (busy.value || submitting.value) return
   message.value = ''
   if (tiles.value.length === 0) {
     pushError('请先选择图片或视频')
@@ -851,10 +856,17 @@ async function publish(): Promise<void> {
     return
   }
 
-  const compressionProblem = await compressForSubmit()
+  submitting.value = true
+  const frozenMode = mode.value
+  const frozenCompress = autoCompress.value
+  let compressionProblem = ''
+  try {
+    compressionProblem = await compressForSubmit(frozenMode, frozenCompress)
+  } finally {
+    if (compressionProblem !== '') submitting.value = false
+  }
   if (compressionProblem !== '') {
     pushError(compressionProblem)
-    announceStatus()
     return
   }
 
@@ -919,6 +931,8 @@ async function publish(): Promise<void> {
   } catch (error) {
     phase.value = 'idle'
     pushError(error instanceof ApiError ? error.message : '发布失败，请稍后重试')
+  } finally {
+    submitting.value = false
   }
 }
 
