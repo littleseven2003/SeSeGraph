@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ApiError, logout } from '../api/client'
 import {
+  deletePost,
   fetchGallery,
   fetchPostDetail,
   refreshPostViews,
@@ -50,6 +51,8 @@ const viewsNotice = ref('')
 const viewsNoticeTone = ref<'ok' | 'muted'>('ok')
 let viewsNoticeTimer: ReturnType<typeof setTimeout> | undefined
 const detailError = ref('')
+const deleting = ref(false)
+const deleteError = ref('')
 const detailId = ref<number | null>(null)
 
 let searchTimer: ReturnType<typeof setTimeout> | undefined
@@ -228,6 +231,30 @@ function onToggled(): void {
   void loadList(page.value)
 }
 
+async function onDelete(): Promise<void> {
+  if (detail.value === null || deleting.value) return
+  deleting.value = true
+  deleteError.value = ''
+  try {
+    await deletePost(detail.value.id)
+    closeDetail()
+    await loadList(page.value)
+  } catch (cause) {
+    if (cause instanceof ApiError) {
+      deleteError.value =
+        cause.status === 409
+          ? '任务正在进行中，稍后再试'
+          : cause.status === 502
+            ? '远端页面撤回未完成，已保留待删除记录，可重试'
+            : cause.message
+    } else {
+      deleteError.value = '删除失败，请稍后重试'
+    }
+  } finally {
+    deleting.value = false
+  }
+}
+
 function onSaved(): void {
   // 保存成功后刷新详情与列表，标题与发布时间可能变化。
   void loadDetail()
@@ -240,6 +267,7 @@ function closeDetail(): void {
   drawerOpen.value = false
   detail.value = null
   detailError.value = ''
+  deleteError.value = ''
   viewsNotice.value = ''
   if (viewsNoticeTimer !== undefined) {
     clearTimeout(viewsNoticeTimer)
@@ -551,6 +579,9 @@ onBeforeUnmount(() => {
       :views-refreshing="viewsRefreshing"
       :views-notice="viewsNotice"
       :views-notice-tone="viewsNoticeTone"
+      :deleting="deleting"
+      :delete-error="deleteError"
+      @delete="onDelete"
       @refresh-views="refreshViews"
       @close="closeDetail"
       @retry="loadDetail"

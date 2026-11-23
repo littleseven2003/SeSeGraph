@@ -20,6 +20,9 @@ var ErrPublishInProgress = errors.New("帖子正在发布流程中")
 // ErrPublicURLInvalid 表示已发布帖缺少可拼接图片的合法 HTTPS 公开地址。
 var ErrPublicURLInvalid = errors.New("需要先配置公开 HTTPS 地址")
 
+// WithdrawTitle 是撤回后远端页面统一使用的标题。
+const WithdrawTitle = "此图集已撤回"
+
 // Metadata 是帖子可在线编辑的元数据。
 type Metadata struct {
 	Title       string
@@ -46,6 +49,33 @@ func NewEditor(repo *posts.Repository, pages func(ctx context.Context) (PageAPI,
 		pages:     pages,
 		publicURL: strings.TrimRight(strings.TrimSpace(publicURL), "/"),
 	}, nil
+}
+
+// Withdraw 把保存过的远端页面清空为撤回提示，移除图片、作者与互链导航。
+// 只做远端替换；本地记录由调用方在全部页面处理成功后删除。
+func (e *Editor) Withdraw(ctx context.Context, paths []string) error {
+	if len(paths) == 0 {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	pageAPI, err := e.pages(ctx)
+	if err != nil {
+		return err
+	}
+	for _, path := range paths {
+		if strings.TrimSpace(path) == "" {
+			continue
+		}
+		if _, err := pageAPI.EditPage(ctx, path, telegraph.PageRequest{
+			Title:   WithdrawTitle,
+			Content: []telegraph.Node{telegraph.Paragraph(WithdrawTitle)},
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Update 更新元数据：未发布的帖子只改本地记录；

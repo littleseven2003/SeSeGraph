@@ -26,6 +26,10 @@ func togglePostHandler(deps Deps) gin.HandlerFunc {
 			return
 		}
 
+		if rejectPendingDelete(c, deps, postID) {
+			return
+		}
+
 		var req setDisabledRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			var maxErr *http.MaxBytesError

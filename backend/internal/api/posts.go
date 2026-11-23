@@ -39,7 +39,25 @@ type createPostRequest struct {
 	Tags           []string `json:"tags"`
 }
 
-// deletePostHandler 删除帖子；上传或发布进行中时返回 409，删除后短码立即 404。
+// rejectPendingDelete 在帖子进入删除流程后阻止恢复、编辑与重新发布。
+func rejectPendingDelete(c *gin.Context, deps Deps, postID int64) bool {
+	pending, err := deps.Posts.PendingDelete(c.Request.Context(), postID)
+	switch {
+	case errors.Is(err, posts.ErrNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": "帖子不存在"})
+		return true
+	case err != nil:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取帖子状态失败"})
+		return true
+	case pending:
+		c.JSON(http.StatusConflict, gin.H{"error": "帖子正在删除，无法继续操作"})
+		return true
+	}
+	return false
+}
+
+// deletePostHandler 永久删除帖子：先停用短码并清空远端页面，成功后才删本地记录。
+// 远端清理失败时保留待删除标记，短码继续 404，可再次调用重试。
 func deletePostHandler(deps Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		postID, parseErr := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -48,8 +66,7 @@ func deletePostHandler(deps Deps) gin.HandlerFunc {
 			return
 		}
 
-		post, postErr := deps.Posts.Get(c.Request.Context(), postID)
-		err := deps.Posts.Delete(c.Request.Context(), postID)
+		paths, err := deps.Posts.MarkPendingDelete(c.Request.Context(), postID)
 		switch {
 		case errors.Is(err, posts.ErrNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"error": "帖子不存在"})
@@ -59,6 +76,31 @@ func deletePostHandler(deps Deps) gin.HandlerFunc {
 			return
 		case err != nil:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "删除帖子失败"})
+			return
+		}
+
+		// 先清空远端页面：昵称、图片与互链导航都会被替换成撤回提示。
+		if len(paths) > 0 {
+			if deps.Editor == nil {
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Telegraph 未配置，暂时无法撤回远端页面"})
+				return
+			}
+			if err := deps.Editor.Withdraw(c.Request.Context(), paths); err != nil {
+				c.JSON(http.StatusBadGateway, gin.H{"error": "远端页面撤回未完成，已保留待删除记录，可稍后重试"})
+				return
+			}
+		}
+
+		post, postErr := deps.Posts.Get(c.Request.Context(), postID)
+		if err := deps.Posts.Delete(c.Request.Context(), postID); err != nil {
+			switch {
+			case errors.Is(err, posts.ErrNotFound):
+				c.JSON(http.StatusNotFound, gin.H{"error": "帖子不存在"})
+			case errors.Is(err, posts.ErrTaskRunning):
+				c.JSON(http.StatusConflict, gin.H{"error": "任务正在进行中，完成或失败后再删除"})
+			default:
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "删除帖子失败"})
+			}
 			return
 		}
 

@@ -29,6 +29,10 @@ func updatePostHandler(deps Deps) gin.HandlerFunc {
 			return
 		}
 
+		if rejectPendingDelete(c, deps, postID) {
+			return
+		}
+
 		var req updatePostRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式不正确"})

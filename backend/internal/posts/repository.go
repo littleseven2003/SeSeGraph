@@ -204,6 +204,68 @@ func (r *Repository) SetDisabled(ctx context.Context, postID int64, disabled boo
 	return gotDisabled == 1, public == 1, nil
 }
 
+// ErrPendingDelete 表示帖子正处于删除流程中。
+var ErrPendingDelete = errors.New("帖子正在删除")
+
+// MarkPendingDelete 在短事务里标记待删除并立即停用短码，返回待清空的远端页面路径。
+// 已经处于待删除状态时直接复用现有标记，供失败后重试。
+func (r *Repository) MarkPendingDelete(ctx context.Context, postID int64) ([]string, error) {
+	tx, err := r.handle.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, errors.New("标记删除失败")
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var (
+		status       string
+		publishState string
+		urls         string
+		pending      int
+	)
+	err = tx.QueryRowContext(ctx,
+		`SELECT status, publish_state, telegraph_paths, pending_delete FROM posts WHERE id = ?`, postID).
+		Scan(&status, &publishState, &urls, &pending)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, errors.New("标记删除失败")
+	}
+
+	if pending == 0 {
+		switch status {
+		case StatusUploading, StatusQueued, StatusPublishing:
+			return nil, ErrTaskRunning
+		}
+		switch publishState {
+		case PublishPending, PublishPublishing:
+			return nil, ErrTaskRunning
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE posts SET pending_delete = 1, is_disabled = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+			postID); err != nil {
+			return nil, errors.New("标记删除失败")
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, errors.New("标记删除失败")
+	}
+	return parseStringList(urls), nil
+}
+
+// PendingDelete 报告帖子是否处于删除流程中。
+func (r *Repository) PendingDelete(ctx context.Context, postID int64) (bool, error) {
+	var pending int
+	err := r.handle.QueryRowContext(ctx, `SELECT pending_delete FROM posts WHERE id = ?`, postID).Scan(&pending)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	if err != nil {
+		return false, errors.New("读取删除状态失败")
+	}
+	return pending == 1, nil
+}
+
 // Delete 删除帖子及其图片、标签关联。上传或发布进行中时拒绝删除。
 func (r *Repository) Delete(ctx context.Context, postID int64) error {
 	tx, err := r.handle.BeginTx(ctx, nil)

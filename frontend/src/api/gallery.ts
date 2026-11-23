@@ -144,3 +144,8 @@ export async function setPostDisabled(
   })
   return (await response.json()) as { id: number; disabled: boolean; public: boolean }
 }
+
+// deletePost 永久删除图集：服务端先清空远端页面，成功后才移除本地记录。
+export async function deletePost(id: number): Promise<void> {
+  await galleryRequest('/api/posts/' + String(id), { method: 'DELETE' })
+}

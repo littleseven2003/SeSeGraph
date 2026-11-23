@@ -8,7 +8,7 @@ import (
 )
 
 // SchemaVersion 是当前代码期望的数据库结构版本，写入 SQLite 的 user_version。
-const SchemaVersion = 9
+const SchemaVersion = 10
 
 // schemaStatements 是首次建库所需的语句，顺序即执行顺序。
 var schemaStatements = []string{
@@ -33,6 +33,7 @@ var schemaStatements = []string{
 		is_public INTEGER DEFAULT 0,
 		publish_state TEXT DEFAULT 'idle',
 		publish_error TEXT DEFAULT '',
+		pending_delete INTEGER NOT NULL DEFAULT 0,
 		published_at DATETIME DEFAULT NULL,
 		views_count INTEGER NOT NULL DEFAULT 0,
 		views_updated_at DATETIME DEFAULT NULL,
@@ -139,6 +140,10 @@ func Migrate(ctx context.Context, handle *sql.DB) error {
 	}
 	if err := ensureColumn(ctx, tx, "posts", "views_updated_at", "ALTER TABLE posts ADD COLUMN views_updated_at DATETIME DEFAULT NULL"); err != nil {
 		return errors.New("升级浏览量同步时间失败")
+	}
+	// 旧库升级：删除流程标记。置位后短码立即 404，远端页面清空成功才真正删本地记录。
+	if err := ensureColumn(ctx, tx, "posts", "pending_delete", "ALTER TABLE posts ADD COLUMN pending_delete INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return errors.New("升级删除标记失败")
 	}
 	// 旧库升级：会话版本用于让改密后的旧 Cookie 立即失效，默认 0 与升级前的令牌兼容。
 	if err := ensureColumn(ctx, tx, "admin_users", "session_version", "ALTER TABLE admin_users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0"); err != nil {

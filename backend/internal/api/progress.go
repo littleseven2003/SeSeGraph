@@ -25,6 +25,10 @@ func progressHandler(deps Deps) gin.HandlerFunc {
 			return
 		}
 
+		if rejectPendingDelete(c, deps, postID) {
+			return
+		}
+
 		post, err := deps.Posts.Get(c.Request.Context(), postID)
 		if errors.Is(err, posts.ErrNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "帖子不存在"})

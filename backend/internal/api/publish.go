@@ -20,6 +20,10 @@ func publishPostHandler(deps Deps) gin.HandlerFunc {
 			return
 		}
 
+		if rejectPendingDelete(c, deps, postID) {
+			return
+		}
+
 		if deps.Telegraph == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Telegraph 未配置"})
 			return

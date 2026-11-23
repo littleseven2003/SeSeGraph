@@ -34,9 +34,11 @@ const props = defineProps<{
   viewsRefreshing?: boolean
   viewsNotice?: string
   viewsNoticeTone?: 'ok' | 'muted'
+  deleting?: boolean
+  deleteError?: string
 }>()
 
-const emit = defineEmits<{ close: []; retry: []; saved: []; toggled: []; refreshViews: [] }>()
+const emit = defineEmits<{ close: []; retry: []; saved: []; toggled: []; refreshViews: []; delete: [] }>()
 
 const closeButton = ref<HTMLButtonElement | null>(null)
 const panel = ref<HTMLElement | null>(null)
@@ -54,6 +56,7 @@ const draft = ref<MetadataDraft>({ title: '', description: '', authorName: '' })
 const toggling = ref(false)
 const confirmToggle = ref(false)
 const toggleError = ref('')
+const confirmDelete = ref(false)
 let previousFocus: HTMLElement | null = null
 // 记录当前已加载的帖子编号，刷新同一帖时不清掉操作反馈。
 let activeId: number | null = null
@@ -606,6 +609,47 @@ watch(
             </ul>
             <p v-if="detail.images.length === 0" class="mt-2 text-xs text-muted">还没有已上传的图片。</p>
           </section>
+
+          <div class="mt-5 border-t border-line pt-3">
+            <div
+              v-if="confirmDelete"
+              class="rounded-xl border border-danger/25 bg-danger-soft/70 px-3.5 py-3"
+            >
+              <p class="text-xs leading-relaxed text-danger">
+                删除后本站链接立即停用，已发布的 Telegraph 页面会清空为「此图集已撤回」，本地记录与封面一并移除，且无法恢复。
+              </p>
+              <div class="mt-2 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  class="h-9 rounded-full bg-danger px-3 text-xs font-medium text-white transition hover:bg-danger/90 disabled:opacity-60"
+                  :disabled="deleting"
+                  @click="emit('delete')"
+                >
+                  {{ deleting ? '正在删除…' : '确认删除' }}
+                </button>
+                <button
+                  type="button"
+                  class="h-9 rounded-full border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
+                  :disabled="deleting"
+                  @click="confirmDelete = false"
+                >
+                  取消
+                </button>
+              </div>
+              <p v-if="deleteError !== undefined && deleteError !== ''" class="mt-2 text-xs text-danger" aria-live="polite">
+                {{ deleteError }}
+              </p>
+            </div>
+            <button
+              v-else
+              type="button"
+              class="h-9 rounded-full border border-danger/35 px-3 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-60"
+              :disabled="deleting"
+              @click="confirmDelete = true"
+            >
+              删除图集
+            </button>
+          </div>
 
           <details class="mt-5 border-t border-line pt-3 text-xs">
             <summary class="inline-flex min-h-6 cursor-pointer select-none items-center py-1 text-muted hover:text-ink">
