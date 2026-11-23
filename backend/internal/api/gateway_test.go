@@ -779,6 +779,10 @@ func openRange(t *testing.T, method, url, header string) (*http.Response, []byte
 // newSwitcherProvider 用真实 Switcher 包一个指向测试文件服务的提供方，
 // 验证生产入口的固定快照与区间能力，而不是靠测试替身直接满足接口。
 func newSwitcherProvider(t *testing.T, body []byte, ignoreRange bool) storage.StreamProvider {
+	return newSwitcherProviderMode(t, body, ignoreRange, false)
+}
+
+func newSwitcherProviderMode(t *testing.T, body []byte, ignoreRange, shortEnd bool) storage.StreamProvider {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/getFile") {
@@ -798,6 +802,9 @@ func newSwitcherProvider(t *testing.T, body []byte, ignoreRange bool) storage.St
 				if parsed, err := strconv.Atoi(endText); err == nil && parsed < end {
 					end = parsed
 				}
+			}
+			if shortEnd {
+				end -= 1
 			}
 			w.Header().Set("Content-Type", "video/mp4")
 			w.Header().Set("Content-Range", "bytes "+strconv.Itoa(start)+"-"+strconv.Itoa(end)+"/"+strconv.Itoa(len(body)))
@@ -848,6 +855,17 @@ func TestGatewayRangeThroughSwitcherIgnoresUpstream(t *testing.T) {
 	}
 	if response.Header.Get("Content-Length") != "4" || string(got) != "3456" {
 		t.Errorf("长度/正文不符: %q / %q", response.Header.Get("Content-Length"), got)
+	}
+}
+
+func TestGatewayRejectsMismatchedUpstreamRange(t *testing.T) {
+	body := []byte("0123456789")
+	env := newGatewayEnv(t, 4, newSwitcherProviderMode(t, body, false, true))
+	code := env.publishPost(t, "", "video/mp4", "photo", true, false)
+
+	response, _ := openRange(t, http.MethodGet, env.server.URL+"/i/"+code, "bytes=3-6")
+	if response.StatusCode != http.StatusBadGateway {
+		t.Errorf("上游少回一字节时状态码 = %d，期望 502", response.StatusCode)
 	}
 }
 
