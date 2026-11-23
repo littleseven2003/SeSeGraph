@@ -617,6 +617,7 @@ watch(
             >
               <p class="text-xs leading-relaxed text-danger">
                 删除后本站链接立即停用，已发布的 Telegraph 页面会清空为「此图集已撤回」，本地记录与封面一并移除，且无法恢复。
+                Telegraph 原地址仍可能被访问到；Telegram 私有频道里的原图与历史备份继续保留。
               </p>
               <div class="mt-2 flex flex-wrap items-center gap-2">
                 <button
