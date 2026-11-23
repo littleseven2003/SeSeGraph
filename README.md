@@ -60,6 +60,8 @@ SeSeGraph 是一个自托管的私人图册管理程序。你把本地图片或�
 
 ## 快速开始
 
+下面命令与镜像标签按 `v1.1.1` 编写；该版本的 Release 资产与镜像要在正式发版后才可下载，发版前请把命令中的版本号换成已发布版本（如 `v1.1.0`）。
+
 提供三种部署方式。程序数据目录内只有 `sesegraph.db` 及其 WAL 附属文件、`thumbs/` 封面缩略图、`tmp/` 待上传临时文件和 `backups/` 备份包，迁移或备份直接复制该目录即可。
 
 ### Docker Compose（推荐，自动配置 HTTPS）
@@ -70,6 +72,7 @@ curl -fsSLO https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.1.1/d
 mkdir -p deploy && curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.1.1/deploy/Caddyfile -o deploy/Caddyfile
 curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.1.1/.env.example -o .env
 # 至少填写 DOMAIN、ADMIN_USERNAME、ADMIN_PASSWORD
+chmod 600 .env
 $EDITOR .env
 docker compose up -d
 ```
@@ -126,6 +129,8 @@ systemd 单元通过 `StateDirectory` 自动创建并授权 `/var/lib/sesegraph`
 2. **配置 Telegram 图床**：先通过 [@BotFather](https://t.me/BotFather) 创建 Bot 并取得 Token，再新建一个私有频道并把该 Bot 设为管理员（授予发消息权限）。在 **设置** 页面填入 Bot Token 与频道标识（形如 `-100…` 或 `@channel`）并保存；服务器需要代理访问 Telegram 时，可在同一页面配置代理。
 3. **申请 Telegraph 账户并自检**：在 **设置 → Telegraph 发布** 中填好默认作者名，点击 **「申请账户」** 自动创建匿名 Telegraph 账户，访问令牌保存在服务端、不回显；也可以改用环境变量 `TELEGRAPH_ACCESS_TOKEN` 手工提供。随后在 **连通性自检** 中确认 Telegram 与 Telegraph 均正常。
 4. **发布第一篇图集**：进入 **工作台**，拖入图片文件夹、多张图片或 ZIP 压缩包，调整顺序、点选封面并填写标题与标签，点击 **「提交存图」** 把图片上传到私有频道。存图完成后点击 **「发布到 Telegraph」** 生成图集页面；发布结束后回到 **画廊** 即可浏览、复制外链或分享图集页面。
+
+发布后的 Telegraph 页面与短码图片都可以直接分享给他人访问；在画廊里撤回图集后，本站的图片短码链接会立即停用。
 
 > `v1.1.1` 新增了设置页的「申请账户」按钮与「修改管理员用户名与密码」卡片；升级到该版本后即可使用。
 
@@ -189,7 +194,7 @@ make cross                   # 交叉编译四个平台二进制
 
 - **自动迁移**：从 `v1.0.0` 或 `v1.1.0` 升级到 `v1.1.1` 时，数据库会在启动时自动迁移到结构版本 9（新增凭据更新用的会话版本列），无需手工执行 SQL。
 - **升级前备份**：建议先停止服务并复制整个数据目录，或在设置页点击「立即备份」生成快照。
-- **Compose 更新**：执行 `docker compose pull sesegraph && docker compose up -d sesegraph`，`/opt/sesegraph/data` 与 Caddy 证书卷都会保留。
+- **Compose 更新**：先确认 `.env` 中的 `SESEGRAPH_VERSION` 已改成目标版本（或用 `SESEGRAPH_IMAGE` 指定镜像），再执行 `docker compose pull sesegraph && docker compose up -d sesegraph`；`/opt/sesegraph/data` 与 Caddy 证书卷都会保留。
 
 ## 版本与许可
 
