@@ -101,7 +101,7 @@ func NewRouter(deps Deps) *gin.Engine {
 	gateway := newImageGateway(deps.Posts, deps.Streams, deps.ImageConcurrency, deps.Logger, deps.Traffic)
 	router.GET("/i/:short_code", gateway.handle)
 
-	admin := router.Group("/api", RequireAuth(deps.Sessions))
+	admin := router.Group("/api", RequireAuth(deps.Sessions, deps.Auth))
 	admin.GET("/posts", listPostsHandler(deps))
 	admin.GET("/posts/:id", postDetailHandler(deps))
 	admin.PUT("/posts/:id", limitBody(maxCreatePostBodyBytes), updatePostHandler(deps))
@@ -118,6 +118,7 @@ func NewRouter(deps Deps) *gin.Engine {
 	admin.POST("/settings/test-connection", testConnectionHandler(deps))
 	admin.GET("/telegraph/status", telegraphStatusHandler(deps))
 	admin.POST("/settings/telegraph/create-account", limitBody(maxTelegraphBodyBytes), telegraphAccountHandler(deps))
+	admin.PUT("/settings/admin-credentials", limitBody(maxAccountBodyBytes), updateCredentialsHandler(deps))
 	admin.POST("/backup/trigger", backupTriggerHandler(deps))
 	admin.GET("/backup/download", backupDownloadHandler(deps))
 	admin.GET("/backup/status", backupStatusHandler(deps))
@@ -142,9 +143,11 @@ func statusHandler(deps Deps) gin.HandlerFunc {
 			return
 		}
 		authenticated := false
-		if deps.Sessions != nil {
-			if _, err := deps.Sessions.AuthenticateRequest(c.Request); err == nil {
-				authenticated = true
+		if deps.Sessions != nil && deps.Auth != nil {
+			if _, version, err := deps.Sessions.AuthenticateRequest(c.Request); err == nil {
+				if current, err := deps.Auth.SessionVersion(c.Request.Context()); err == nil && current == version {
+					authenticated = true
+				}
 			}
 		}
 		c.JSON(http.StatusOK, gin.H{
@@ -186,11 +189,16 @@ func setupHandler(deps Deps) gin.HandlerFunc {
 			return
 		}
 
-		if err := issueSession(c, deps, req.Username); err != nil {
+		creds, err := deps.Auth.Credentials(c.Request.Context())
+		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "签发会话失败"})
 			return
 		}
-		c.JSON(http.StatusCreated, gin.H{"username": strings.TrimSpace(req.Username)})
+		if err := issueSession(c, deps, creds); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "签发会话失败"})
+			return
+		}
+		c.JSON(http.StatusCreated, gin.H{"username": creds.Username})
 	}
 }
 
@@ -202,7 +210,8 @@ func loginHandler(deps Deps) gin.HandlerFunc {
 			return
 		}
 
-		switch err := deps.Auth.Authenticate(c.Request.Context(), req.Username, req.Password); {
+		creds, err := deps.Auth.Authenticate(c.Request.Context(), req.Username, req.Password)
+		switch {
 		case err == nil:
 		case errors.Is(err, auth.ErrNotInitialized):
 			c.JSON(http.StatusConflict, gin.H{"error": "管理员尚未初始化"})
@@ -215,11 +224,11 @@ func loginHandler(deps Deps) gin.HandlerFunc {
 			return
 		}
 
-		if err := issueSession(c, deps, req.Username); err != nil {
+		if err := issueSession(c, deps, creds); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "签发会话失败"})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"username": strings.TrimSpace(req.Username)})
+		c.JSON(http.StatusOK, gin.H{"username": creds.Username})
 	}
 }
 
@@ -233,11 +242,12 @@ func logoutHandler(deps Deps) gin.HandlerFunc {
 	}
 }
 
-func issueSession(c *gin.Context, deps Deps, username string) error {
+// issueSession 用校验时读到的会话版本签发 Cookie。
+func issueSession(c *gin.Context, deps Deps, creds auth.Credentials) error {
 	if deps.Sessions == nil {
 		return auth.ErrInvalidSession
 	}
-	deps.Sessions.SetCookie(c.Writer, strings.TrimSpace(username))
+	deps.Sessions.SetCookie(c.Writer, strings.TrimSpace(creds.Username), creds.Version)
 	return nil
 }
 

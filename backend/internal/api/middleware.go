@@ -65,15 +65,22 @@ func Recovery(logger *log.Logger) gin.HandlerFunc {
 	}
 }
 
-// RequireAuth 校验会话 Cookie，未登录时返回 401。
-func RequireAuth(sessions *auth.Sessions) gin.HandlerFunc {
+// RequireAuth 校验会话 Cookie 与会话版本，未登录或凭据已变更时返回 401。
+func RequireAuth(sessions *auth.Sessions, accounts *auth.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if sessions == nil {
+		if sessions == nil || accounts == nil {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "服务器内部错误"})
 			return
 		}
-		if _, err := sessions.AuthenticateRequest(c.Request); err != nil {
+		_, version, err := sessions.AuthenticateRequest(c.Request)
+		if err != nil {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "未登录"})
+			return
+		}
+		current, err := accounts.SessionVersion(c.Request.Context())
+		if err != nil || current != version {
+			sessions.ClearCookie(c.Writer)
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "登录已失效，请重新登录"})
 			return
 		}
 		c.Next()
