@@ -47,12 +47,12 @@
 
 | 设置与流量看护 | 移动端画廊 |
 | :---: | :---: |
-| ![设置页](docs/screenshots/settings.webp) | ![移动端画廊](docs/screenshots/mobile-gallery.webp) |
-| 连通性自检、月度流量与自动备份 | 390px 双列布局，标签与视图切换同行 |
+| ![设置页](docs/screenshots/settings.webp) | <img src="docs/screenshots/mobile-gallery.webp" alt="移动端画廊" width="210" /> |
+| 连通性自检、月度流量与自动备份 | 390px 窄屏适配：焦点轮播与同行标签入口 |
 
 ## 快速开始
 
-三种形态任选其一，数据目录里只有 SQLite 与临时文件，备份即复制该目录。
+三种形态任选其一。数据目录里只有 `sesegraph.db` 及其 WAL 附属文件、`thumbs/` 封面缩略图、`tmp/` 待上传临时文件和 `backups/` 快照，备份即复制整个目录。
 
 ### Docker Compose（推荐，自带 HTTPS）
 

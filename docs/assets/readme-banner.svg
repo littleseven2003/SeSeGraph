@@ -35,8 +35,8 @@
       </g>
   </g>
 
-  <rect x="398" y="212" width="96" height="6" rx="3" fill="#D04223" opacity="0.85" />
-  <rect x="502" y="212" width="36" height="6" rx="3" fill="#D97706" opacity="0.8" />
-  <rect x="546" y="212" width="36" height="6" rx="3" fill="#0D7A72" opacity="0.8" />
-  <rect x="590" y="212" width="36" height="6" rx="3" fill="#C0266A" opacity="0.8" />
+  <rect x="526" y="212" width="96" height="6" rx="3" fill="#D04223" opacity="0.85" />
+  <rect x="630" y="212" width="36" height="6" rx="3" fill="#D97706" opacity="0.8" />
+  <rect x="674" y="212" width="36" height="6" rx="3" fill="#0D7A72" opacity="0.8" />
+  <rect x="718" y="212" width="36" height="6" rx="3" fill="#C0266A" opacity="0.8" />
 </svg>
