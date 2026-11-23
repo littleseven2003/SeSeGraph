@@ -2,7 +2,7 @@
 import type { ServerProgress } from '../api/posts.ts'
 
 // 单张图片在本地的上传状态。
-export type UploadStatus = 'pending' | 'uploading' | 'uploaded' | 'failed'
+export type UploadStatus = 'pending' | 'uploading' | 'uploaded' | 'stored' | 'failed'
 
 // 需要上传的序号。
 export interface UploadPlan {
@@ -49,12 +49,15 @@ export function planUploads(progress: ServerProgress, localCount: number): PlanR
 export function initialStatuses(progress: ServerProgress): Record<number, UploadStatus> {
   const states: Record<number, UploadStatus> = {}
   for (const image of progress.images) {
-    states[image.sort_order] = DONE_STATUSES.has(image.status) ? 'uploaded' : 'pending'
+    // 已存入频道与已传至服务器是两段状态，界面上要能区分。
+    if (image.status === 'stored') states[image.sort_order] = 'stored'
+    else if (image.status === 'uploaded') states[image.sort_order] = 'uploaded'
+    else states[image.sort_order] = 'pending'
   }
   return states
 }
 
 // acceptedCount 统计当前已收录的图片数量，用于进度文案。
 export function acceptedCount(states: Record<number, UploadStatus>): number {
-  return Object.values(states).filter((status) => status === 'uploaded').length
+  return Object.values(states).filter((status) => status === 'uploaded' || status === 'stored').length
 }

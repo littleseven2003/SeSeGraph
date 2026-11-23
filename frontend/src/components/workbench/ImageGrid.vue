@@ -21,6 +21,7 @@ const STATUS_TEXT: Record<UploadStatus, string> = {
   pending: '待上传',
   uploading: '上传中',
   uploaded: '已传至服务器',
+  stored: '已存入频道',
   failed: '上传失败',
 }
 
@@ -28,6 +29,7 @@ const STATUS_CLASS: Record<UploadStatus, string> = {
   pending: 'bg-ink/60 text-white',
   uploading: 'bg-brand text-brand-ink',
   uploaded: 'bg-accent text-white',
+  stored: 'bg-accent-soft text-accent',
   failed: 'bg-danger text-white',
 }
 

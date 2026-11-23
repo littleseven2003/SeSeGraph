@@ -630,7 +630,9 @@ function applyServerProgress(progress: ServerProgress): void {
   serverProgress.value = progress
   const next: Record<number, UploadStatus> = { ...statuses.value }
   for (const image of progress.images) {
-    if (image.status === 'stored' || image.status === 'uploaded') {
+    if (image.status === 'stored') {
+      next[image.sort_order] = 'stored'
+    } else if (image.status === 'uploaded') {
       next[image.sort_order] = 'uploaded'
     } else if (image.status === 'failed') {
       next[image.sort_order] = 'failed'
