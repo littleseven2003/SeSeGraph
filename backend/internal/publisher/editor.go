@@ -91,6 +91,16 @@ func (e *Editor) Update(ctx context.Context, postID int64, meta Metadata) error 
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	// 互斥之后再看待删除状态：排队的编辑可能在撤回完成后才拿到锁，
+	// 此时必须直接失败，绝不能再向 Telegraph 写入页面。
+	pending, pendingErr := e.repo.PendingDelete(ctx, postID)
+	if pendingErr != nil {
+		return pendingErr
+	}
+	if pending {
+		return posts.ErrPendingDelete
+	}
+
 	info, err := e.repo.PublishInfo(ctx, postID)
 	if err != nil {
 		return err

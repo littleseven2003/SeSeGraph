@@ -65,6 +65,9 @@ func updatePostHandler(deps Deps) gin.HandlerFunc {
 		case errors.Is(err, posts.ErrNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"error": "帖子不存在"})
 			return
+		case errors.Is(err, posts.ErrPendingDelete):
+			c.JSON(http.StatusConflict, gin.H{"error": "帖子正在删除，无法继续操作"})
+			return
 		case errors.Is(err, publisher.ErrPageCountChanged):
 			c.JSON(http.StatusConflict, gin.H{"error": "修改后分页数量会变化，请调整说明长度"})
 			return

@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/publisher"
@@ -372,5 +374,73 @@ func TestUpdatePublishedPostRequiresHTTPSPublicURL(t *testing.T) {
 		if detail.Title != "旧标题" || detail.Description != "旧说明" {
 			t.Errorf("公开地址 %q 校验失败时不应改动本地记录: %+v", publicURL, detail)
 		}
+	}
+}
+
+// blockingPageAPI 在编辑时阻塞，用于验证撤回与排队编辑之间的互斥顺序。
+type blockingPageAPI struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (b *blockingPageAPI) CreatePage(context.Context, telegraph.PageRequest) (telegraph.Page, error) {
+	return telegraph.Page{}, telegraph.ErrUpstream
+}
+
+func (b *blockingPageAPI) EditPage(_ context.Context, path string, _ telegraph.PageRequest) (telegraph.Page, error) {
+	b.once.Do(func() { close(b.started) })
+	<-b.release
+	return telegraph.Page{Path: path, URL: "https://telegra.ph/" + path}, nil
+}
+
+// TestUpdateQueuedBehindDeleteReturnsConflict 验证已进入删除流程的编辑返回 409，
+// 而不是在撤回之后又把正文写回 Telegraph。
+func TestUpdateQueuedBehindDeleteReturnsConflict(t *testing.T) {
+	pages := &blockingPageAPI{started: make(chan struct{}), release: make(chan struct{})}
+	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, _ *sql.DB) {
+		editor, err := publisher.NewEditor(deps.Posts, func(context.Context) (publisher.PageAPI, error) {
+			return pages, nil
+		}, "https://img.example.com")
+		if err != nil {
+			t.Fatalf("创建编辑器失败: %v", err)
+		}
+		deps.Editor = editor
+	})
+	cookie := env.setup(t)
+	postID := publishedPost(t, env)
+	path := "/api/posts/" + formatID(postID)
+
+	updateDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		updateDone <- env.doWithToken(t, http.MethodPut, path, updateBody("撤回后的标题", "", ""), env.setupToken, cookie)
+	}()
+	select {
+	case <-pages.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("编辑请求未进入远端调用")
+	}
+
+	deleteDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() { deleteDone <- env.doWithToken(t, http.MethodDelete, path, "", env.setupToken, cookie) }()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		pending, err := env.posts.PendingDelete(context.Background(), postID)
+		if err == nil && pending {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("删除未标记待删除: pending=%v err=%v", pending, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	close(pages.release)
+
+	if rec := <-updateDone; rec.Code != http.StatusConflict {
+		t.Errorf("待删除时的编辑 = %d，期望 409，响应: %s", rec.Code, rec.Body.String())
+	}
+	if rec := <-deleteDone; rec.Code != http.StatusNoContent {
+		t.Errorf("删除状态 = %d，期望 204，响应: %s", rec.Code, rec.Body.String())
 	}
 }

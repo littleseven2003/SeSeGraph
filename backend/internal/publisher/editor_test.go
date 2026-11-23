@@ -244,3 +244,22 @@ func nodeHasText(node telegraph.Node, want string) bool {
 	}
 	return false
 }
+
+func TestEditorRejectsPendingDeleteBeforeRemoteEdit(t *testing.T) {
+	env, editor := newEditorEnv(t, 400, "初始说明")
+	env.pages.resetCounts()
+	if _, err := env.repo.MarkPendingDelete(context.Background(), 1); err != nil {
+		t.Fatalf("标记删除失败: %v", err)
+	}
+
+	err := editor.Update(context.Background(), 1, Metadata{Title: "撤回后的编辑", Description: "不应写入"})
+	if !errors.Is(err, posts.ErrPendingDelete) {
+		t.Fatalf("错误 = %v，期望 ErrPendingDelete", err)
+	}
+	if _, edits := env.pages.counts(); edits != 0 {
+		t.Errorf("待删除时不应发出远端编辑，实际 %d 次", edits)
+	}
+	if title, _, _, _ := metadataOf(t, env, 1); title == "撤回后的编辑" {
+		t.Error("待删除时本地记录不应被改动")
+	}
+}
