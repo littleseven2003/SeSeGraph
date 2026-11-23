@@ -57,6 +57,12 @@ const toggling = ref(false)
 const confirmToggle = ref(false)
 const toggleError = ref('')
 const confirmDelete = ref(false)
+// 视频条目按需展开播放器，避免打开抽屉就加载整段视频。
+const playingCode = ref('')
+
+function togglePlay(code: string): void {
+  playingCode.value = playingCode.value === code ? '' : code
+}
 let previousFocus: HTMLElement | null = null
 // 记录当前已加载的帖子编号，刷新同一帖时不清掉操作反馈。
 let activeId: number | null = null
@@ -578,15 +584,23 @@ watch(
           </section>
 
           <section class="mt-5">
-            <h3 class="text-xs font-medium text-muted">图片清单</h3>
+            <h3 class="text-xs font-medium text-muted">媒体清单</h3>
             <ul class="mt-2 divide-y divide-line/70 overflow-hidden rounded-xl bg-surface">
               <li
                 v-for="image in detail.images"
                 :key="image.short_code"
-                class="flex items-center justify-between gap-3 px-3 py-2"
+                class="px-3 py-2"
               >
+                <div class="flex items-center justify-between gap-3">
                 <div class="min-w-0">
-                  <p class="text-xs font-medium tnum">第 {{ image.sort_order }} 张</p>
+                  <p class="flex items-center gap-1.5 text-xs font-medium tnum">
+                    第 {{ image.sort_order }} 项
+                    <span
+                      v-if="image.mime_type === 'video/mp4'"
+                      class="rounded bg-canvas px-1.5 py-0.5 text-[11px] font-medium text-ink"
+                      >MP4</span
+                    >
+                  </p>
                   <p class="mt-0.5 truncate text-xs text-muted">
                     {{ image.mime_type }} · {{ formatFileSize(image.file_size) }}
                   </p>
@@ -600,6 +614,14 @@ watch(
                     >查看外链</a
                   >
                   <button
+                    v-if="image.mime_type === 'video/mp4'"
+                    type="button"
+                    class="h-9 shrink-0 rounded border border-line px-2.5 text-xs text-muted transition hover:bg-canvas"
+                    @click="togglePlay(image.short_code)"
+                  >
+                    {{ playingCode === image.short_code ? '收起' : '播放' }}
+                  </button>
+                  <button
                     type="button"
                     class="h-9 shrink-0 rounded border border-line px-2.5 text-xs text-muted transition hover:bg-canvas"
                     @click="copy(imageLink(image), '单图外链')"
@@ -608,6 +630,15 @@ watch(
                   </button>
                 </template>
                 <span v-else class="shrink-0 text-xs text-muted">暂不可用</span>
+                </div>
+                <video
+                  v-if="playingCode === image.short_code && imageLink(image) !== ''"
+                  :src="imageLink(image)"
+                  controls
+                  playsinline
+                  preload="metadata"
+                  class="mt-2 w-full rounded-lg bg-ink"
+                />
               </li>
             </ul>
             <p v-if="detail.images.length === 0" class="mt-2 text-xs text-muted">还没有已上传的图片。</p>
