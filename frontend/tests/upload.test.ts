@@ -147,3 +147,23 @@ test('空队列直接返回成功', async () => {
   })
   assert.equal(failure, null)
 })
+
+test('慢传中主动取消：只停在途两路，不再派发后续项', async () => {
+  const controller = new AbortController()
+  const started: number[] = []
+  const pool = runUploadPool([0, 1, 2, 3, 4], UPLOAD_CONCURRENCY, async (item) => {
+    started.push(item)
+    await new Promise<void>((resolve, reject) => {
+      if (controller.signal.aborted) {
+        reject(new Error('上传已取消'))
+        return
+      }
+      controller.signal.addEventListener('abort', () => reject(new Error('上传已取消')), { once: true })
+    })
+    void resolve
+  })
+  setTimeout(() => controller.abort(), 5)
+  const failure = await pool
+  assert.notEqual(failure, null)
+  assert.deepEqual(started.slice().sort((a, b) => a - b), [0, 1])
+})
