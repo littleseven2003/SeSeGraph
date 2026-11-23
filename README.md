@@ -139,7 +139,8 @@ systemctl daemon-reload && systemctl enable --now sesegraph
 ```bash
 make build          # 构建前端并生成 bin/sesegraph
 make test           # 后端测试
-make typecheck      # 前端类型检查与单测
+make typecheck      # 前端类型检查
+cd frontend && pnpm test   # 前端单元测试
 make cross          # 四个平台交叉编译
 ```
 
