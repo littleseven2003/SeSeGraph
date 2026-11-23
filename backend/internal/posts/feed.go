@@ -79,16 +79,26 @@ func (r *Repository) ListFeed(ctx context.Context, limit int) ([]FeedItem, error
 }
 
 // firstTelegraphLink 只接受规范 Telegraph 地址，其他链接一律忽略。
+// 带用户信息、查询参数、片段或非默认端口的地址可能被用来夹带令牌，直接拒绝。
 func firstTelegraphLink(links []string) string {
 	for _, raw := range links {
 		parsed, err := url.Parse(strings.TrimSpace(raw))
-		if err != nil || parsed.Scheme != "https" {
+		if err != nil {
+			continue
+		}
+		if parsed.Scheme != "https" || parsed.User != nil || parsed.RawQuery != "" ||
+			parsed.Fragment != "" || parsed.Port() != "" || parsed.Opaque != "" {
 			continue
 		}
 		host := strings.ToLower(parsed.Hostname())
-		if host == "telegra.ph" || strings.HasSuffix(host, ".telegra.ph") {
-			return parsed.String()
+		if host != "telegra.ph" && !strings.HasSuffix(host, ".telegra.ph") {
+			continue
 		}
+		path := strings.TrimSuffix(parsed.EscapedPath(), "/")
+		if path == "" {
+			continue
+		}
+		return "https://" + host + path
 	}
 	return ""
 }

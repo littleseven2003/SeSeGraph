@@ -11,7 +11,8 @@ import (
 var htmlTagPattern = regexp.MustCompile(`<[^>]*>`)
 
 // telegramURLPattern 匹配 Telegram 文件直链，这类地址可能含 Bot 令牌，不能进入订阅。
-var telegramURLPattern = regexp.MustCompile(`https?://api\.telegram\.org/\S+`)
+// 主机名按大小写不敏感识别，并容忍任意子域、端口与查询串。
+var telegramURLPattern = regexp.MustCompile(`(?i)https?://(?:[a-z0-9-]+\.)*api\.telegram\.org(?::\d+)?\S*`)
 
 // botTokenPattern 兜底匹配形如 123456:ABC-DEF 的令牌片段。
 var botTokenPattern = regexp.MustCompile(`\b\d{6,}:[A-Za-z0-9_-]{30,}\b`)

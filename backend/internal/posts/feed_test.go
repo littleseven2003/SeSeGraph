@@ -86,6 +86,10 @@ func TestFirstTelegraphLinkRejectsOtherHosts(t *testing.T) {
 		"http://telegra.ph/Page-11-23":            "",
 		"https://example.com/Page-11-23":          "",
 		"https://telegra.ph.evil.test/Page-11-23": "",
+		"https://telegra.ph/Page-11-23?token=abc": "",
+		"https://user@telegra.ph/Page-11-23":      "",
+		"https://telegra.ph:8443/Page-11-23":      "",
+		"https://telegra.ph/":                     "",
 	}
 	for raw, want := range cases {
 		if got := firstTelegraphLink([]string{raw}); got != want {

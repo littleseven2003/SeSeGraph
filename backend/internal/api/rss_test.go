@@ -134,3 +134,58 @@ func TestRSSDropsWithdrawnItem(t *testing.T) {
 		t.Error("撤回后不应再返回该条目")
 	}
 }
+
+// seedFeedPostFull 建立标题、说明与标签都可自定义的已发布图集。
+func seedFeedPostFull(t *testing.T, env *testEnv, title, description string, tags []string, link string) int64 {
+	t.Helper()
+	id, err := env.posts.Create(context.Background(), posts.Post{Title: title, Description: description, Tags: tags})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+	if _, err := env.handle.Exec(
+		`UPDATE posts SET publish_state = 'published', is_public = 1, is_disabled = 0, telegraph_urls = ?, published_at = ? WHERE id = ?`,
+		`["`+link+`"]`, "2026-11-22 10:00:00", id); err != nil {
+		t.Fatalf("写入发布状态失败: %v", err)
+	}
+	return id
+}
+
+func TestRSSSanitizesTitleDescriptionAndTags(t *testing.T) {
+	env := newRSSEnv(t)
+	const (
+		botURL = "https://API.Telegram.ORG/file/bot987654:ZYXwvuTSRqponMLKjihgFEDcba/photo.jpg"
+		token  = "123456:ABCdefGHIjklMNOpqrSTUvwxYZ0123456"
+	)
+	seedFeedPostFull(t, env, "公开图集 "+botURL, "说明 <b>粗体</b> "+botURL+" 结束 "+token,
+		[]string{"写真", botURL, token}, "https://telegra.ph/Clean-11-23")
+
+	body := strings.ToLower(env.do(t, http.MethodGet, "/rss.xml", "", nil).Body.String())
+	if strings.Contains(body, "api.telegram.org") || strings.Contains(body, "bot987654") {
+		t.Error("订阅不应输出 Telegram 文件直链")
+	}
+	if strings.Contains(body, strings.ToLower(token)) {
+		t.Error("订阅不应输出令牌片段")
+	}
+	if strings.Contains(body, "<b>") {
+		t.Error("订阅不应保留 HTML 标签")
+	}
+	if !strings.Contains(body, "<category>写真</category>") {
+		t.Error("正常标签应保留")
+	}
+}
+
+func TestRSSDropsNonCanonicalTelegraphLink(t *testing.T) {
+	env := newRSSEnv(t)
+	seedFeedPost(t, env, "带查询参数", true, false, "2026-11-22 10:00:00", "https://telegra.ph/Bad-11-23?token=secret")
+	seedFeedPost(t, env, "带用户信息", true, false, "2026-11-21 10:00:00", "https://user@telegra.ph/Bad-11-22")
+
+	body := env.do(t, http.MethodGet, "/rss.xml", "", nil).Body.String()
+	for _, banned := range []string{"带查询参数", "带用户信息", "token=secret"} {
+		if strings.Contains(body, banned) {
+			t.Errorf("非规范 Telegraph 链接不应进入订阅: %q", banned)
+		}
+	}
+	if strings.Contains(body, "<item>") {
+		t.Error("没有可公开条目时不应输出 item")
+	}
+}

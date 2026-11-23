@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -33,6 +34,25 @@ func siteHandler(deps Deps) gin.HandlerFunc {
 		c.Header("Cache-Control", "no-cache")
 		c.JSON(http.StatusOK, gin.H{"rss_url": subscriptionURL(deps)})
 	}
+}
+
+// sanitizeCategories 对标签逐个脱敏：标签同样是公开文本，可能被写入直链或令牌。
+// 清洗后为空或重复的标签直接丢弃，避免输出空分类。
+func sanitizeCategories(tags []string) []string {
+	out := make([]string, 0, len(tags))
+	seen := make(map[string]struct{}, len(tags))
+	for _, tag := range tags {
+		clean := strings.Join(strings.Fields(rss.SanitizeText(tag)), " ")
+		if clean == "" {
+			continue
+		}
+		if _, ok := seen[clean]; ok {
+			continue
+		}
+		seen[clean] = struct{}{}
+		out = append(out, clean)
+	}
+	return out
 }
 
 // rssHandler 输出站点图集的 RSS 2.0 订阅源。
@@ -64,12 +84,12 @@ func rssHandler(deps Deps) gin.HandlerFunc {
 				continue
 			}
 			feed.Items = append(feed.Items, rss.Item{
-				Title:       item.Title,
+				Title:       rss.SanitizeText(item.Title),
 				Description: rss.SanitizeText(item.Description),
 				Link:        item.Link,
 				GUID:        item.Link,
 				Published:   published,
-				Categories:  item.Tags,
+				Categories:  sanitizeCategories(item.Tags),
 			})
 			if feed.LastBuild.Before(published) {
 				feed.LastBuild = published
