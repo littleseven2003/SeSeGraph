@@ -3,7 +3,9 @@ import { test } from 'node:test'
 import { mimeForName } from '../src/utils/image.ts'
 import {
   COMPRESS_MAX_DIMENSION_SUM,
+  evaluateMedia,
   MAX_VIDEO_BYTES,
+  checkImportFile,
   checkMediaFile,
   compressionSummary,
   fitScale,
@@ -97,4 +99,47 @@ test('selectionSummary 汇总读取、加入与跳过原因', () => {
   })
   assert.match(text, /读取 42 个文件：加入 40 项/)
   assert.match(text, /跳过 1 个：超过 20MB 1 个（如 big\.jpg）/)
+})
+
+test('40+ 张 JPG 与混合格式的导入与跳过计数', () => {
+  const files = [
+    ...Array.from({ length: 42 }, (_, index) => ({ name: `IMG_${index + 1}.jpg`, size: 8_000_000 })),
+    { name: 'notes.txt', size: 1000 },
+    { name: 'IMG_0043.HEIC', size: 5_000_000 },
+    { name: 'clip.mp4', size: 20_000_000 },
+    { name: 'big.mp4', size: 20_000_001 },
+    { name: 'edge.jpg', size: 49_999_999 },
+    { name: 'over.jpg', size: 50_000_000 },
+  ]
+  const accepted: string[] = []
+  const skipped: Record<string, number> = {}
+  for (const file of files) {
+    const problem = checkImportFile(file)
+    if (problem === null) accepted.push(file.name)
+    else skipped[problem.includes('50MB') ? '超过 50MB' : problem.includes('20MB') ? '超过 20MB' : '格式不支持'] =
+      (skipped[problem.includes('50MB') ? '超过 50MB' : problem.includes('20MB') ? '超过 20MB' : '格式不支持'] ?? 0) + 1
+  }
+  assert.equal(accepted.length, 44)
+  assert.equal(accepted.includes('IMG_0043.HEIC'), false)
+  assert.equal(accepted.includes('notes.txt'), false)
+  assert.equal(accepted.includes('clip.mp4'), true)
+  assert.equal(accepted.includes('edge.jpg'), true)
+  assert.equal(skipped['超过 50MB'], 1)
+  assert.equal(skipped['超过 20MB'], 1)
+  assert.equal(skipped['格式不支持'], 2)
+})
+
+test('动图先于开关判定', () => {
+  // 超限动图无论开关都标为不可压缩，交给界面显示 GIF 超限/动图超限。
+  assert.equal(evaluateMedia({ kind: 'image', size: 12_000_000, compressed: false, animated: true }, 'photo', true).state, 'blocked')
+  assert.equal(evaluateMedia({ kind: 'image', size: 12_000_000, compressed: false, animated: true }, 'photo', false).state, 'blocked')
+  assert.equal(evaluateMedia({ kind: 'image', size: 12_000_000, compressed: false }, 'document', true).label, '满足')
+})
+
+test('模式与开关切换后按原图重算', () => {
+  const large = { kind: 'image' as const, size: 12_000_000, compressed: false }
+  assert.equal(evaluateMedia(large, 'photo', true).state, 'pending')
+  assert.equal(evaluateMedia(large, 'photo', false).state, 'blocked')
+  assert.equal(evaluateMedia(large, 'document', false).label, '满足')
+  assert.equal(evaluateMedia({ ...large, compressed: true }, 'photo', true).state, 'compressed')
 })
