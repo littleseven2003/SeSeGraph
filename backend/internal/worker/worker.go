@@ -241,11 +241,16 @@ func (w *Worker) uploadImage(ctx context.Context, provider storage.Provider, pos
 			_ = w.repo.MarkImageFailed(ctx, image.ID, "读取临时文件失败")
 			return errors.New("读取临时文件失败")
 		}
+		// 视频不看画质模式，一律走 sendVideo；静态图沿用帖子的画质选择。
+		mode := post.UploadMode
+		if image.MimeType == posts.MimeVideoMP4 {
+			mode = storage.ModeVideo
+		}
 		result, uploadErr := provider.Upload(ctx, storage.UploadRequest{
 			FileName: filepath.Base(path),
 			MIMEType: image.MimeType,
 			Size:     image.FileSize,
-			Mode:     post.UploadMode,
+			Mode:     mode,
 			Reader:   file,
 		})
 		_ = file.Close()

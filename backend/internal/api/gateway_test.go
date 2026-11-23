@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"io"
@@ -713,5 +714,136 @@ func TestGatewayFallsBackToStoredMIME(t *testing.T) {
 	}
 	if got := response.Header.Get("Content-Type"); got != "image/png" {
 		t.Errorf("Content-Type = %q，期望回落到入库类型 image/png", got)
+	}
+}
+
+// rangeProvider 在假图床上补出区间能力，供网关 Range 测试使用。
+type rangeProvider struct {
+	*fakeStreamProvider
+	size int64
+	body []byte
+}
+
+func (p *rangeProvider) Size(context.Context, string) (int64, error) { return p.size, nil }
+
+func (p *rangeProvider) OpenStream(context.Context, string) (storage.Stream, error) {
+	return storage.Stream{
+		Body:        io.NopCloser(bytes.NewReader(p.body)),
+		ContentType: "video/mp4",
+		Size:        int64(len(p.body)),
+	}, nil
+}
+
+func (p *rangeProvider) OpenStreamRange(_ context.Context, _ string, r storage.ByteRange) (storage.Stream, error) {
+	start := r.Start
+	end := int64(len(p.body))
+	if r.Length >= 0 && start+r.Length < end {
+		end = start + r.Length
+	}
+	if start > end || start > int64(len(p.body)) {
+		return storage.Stream{}, storage.ErrFileUnavailable
+	}
+	return storage.Stream{
+		Body:        io.NopCloser(bytes.NewReader(p.body[start:end])),
+		ContentType: "video/mp4",
+		Size:        int64(len(p.body)),
+	}, nil
+}
+
+// openRange 发一个带 Range 头的请求并读取响应。
+func openRange(t *testing.T, method, url, header string) (*http.Response, []byte) {
+	t.Helper()
+	req, err := http.NewRequest(method, url, nil)
+	if err != nil {
+		t.Fatalf("构造请求失败: %v", err)
+	}
+	if header != "" {
+		req.Header.Set("Range", header)
+	}
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("请求失败: %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("读取响应失败: %v", err)
+	}
+	return response, body
+}
+
+func TestGatewayServesByteRanges(t *testing.T) {
+	body := []byte("0123456789")
+	provider := &rangeProvider{fakeStreamProvider: &fakeStreamProvider{}, size: int64(len(body)), body: body}
+	env := newGatewayEnv(t, 4, provider)
+	code := env.publishPost(t, "", "video/mp4", "photo", true, false)
+	url := env.server.URL + "/i/" + code
+
+	cases := []struct {
+		name       string
+		method     string
+		header     string
+		wantStatus int
+		wantRange  string
+		wantBody   string
+	}{
+		{"闭区间", http.MethodGet, "bytes=0-3", http.StatusPartialContent, "bytes 0-3/10", "0123"},
+		{"开放区间", http.MethodGet, "bytes=4-", http.StatusPartialContent, "bytes 4-9/10", "456789"},
+		{"末尾区间", http.MethodGet, "bytes=-3", http.StatusPartialContent, "bytes 7-9/10", "789"},
+		{"越界区间", http.MethodGet, "bytes=20-", http.StatusRequestedRangeNotSatisfiable, "", ""},
+		{"多区间按整段", http.MethodGet, "bytes=0-0,2-3", http.StatusOK, "", "0123456789"},
+		{"HEAD 探测", http.MethodHead, "bytes=0-3", http.StatusPartialContent, "bytes 0-3/10", ""},
+	}
+	for _, testCase := range cases {
+		response, got := openRange(t, testCase.method, url, testCase.header)
+		if response.StatusCode != testCase.wantStatus {
+			t.Errorf("%s 状态码 = %d，期望 %d", testCase.name, response.StatusCode, testCase.wantStatus)
+			continue
+		}
+		if testCase.wantRange == "" && testCase.wantStatus == http.StatusRequestedRangeNotSatisfiable {
+			if got := response.Header.Get("Content-Range"); got != "bytes */10" {
+				t.Errorf("%s Content-Range = %q，期望 bytes */10", testCase.name, got)
+			}
+			continue
+		}
+		if got := response.Header.Get("Content-Range"); got != testCase.wantRange {
+			t.Errorf("%s Content-Range = %q，期望 %q", testCase.name, got, testCase.wantRange)
+		}
+		if response.Header.Get("Accept-Ranges") != "bytes" {
+			t.Errorf("%s 缺少 Accept-Ranges", testCase.name)
+		}
+		if string(got) != testCase.wantBody {
+			t.Errorf("%s 正文 = %q，期望 %q", testCase.name, got, testCase.wantBody)
+		}
+	}
+}
+
+func TestGatewayFallsBackWhenUpstreamIgnoresRange(t *testing.T) {
+	// 普通假图床没有区间能力，带 Range 的请求按整段 200 返回。
+	provider := &fakeStreamProvider{}
+	env := newGatewayEnv(t, 4, provider)
+	code := env.publishPost(t, "", "video/mp4", "photo", true, false)
+
+	response, body := openRange(t, http.MethodGet, env.server.URL+"/i/"+code, "bytes=0-3")
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("状态码 = %d，期望 200", response.StatusCode)
+	}
+	if response.Header.Get("Content-Range") != "" {
+		t.Errorf("整段响应不应带 Content-Range")
+	}
+	if string(body) != "image-bytes" {
+		t.Errorf("正文 = %q", body)
+	}
+}
+
+func TestGatewayRangeStillHidesWithdrawnMedia(t *testing.T) {
+	body := []byte("0123456789")
+	provider := &rangeProvider{fakeStreamProvider: &fakeStreamProvider{}, size: int64(len(body)), body: body}
+	env := newGatewayEnv(t, 4, provider)
+	code := env.publishPost(t, "", "video/mp4", "photo", true, true)
+
+	response, _ := openRange(t, http.MethodGet, env.server.URL+"/i/"+code, "bytes=0-3")
+	if response.StatusCode != http.StatusNotFound {
+		t.Errorf("撤回后区间请求状态码 = %d，期望 404", response.StatusCode)
 	}
 }

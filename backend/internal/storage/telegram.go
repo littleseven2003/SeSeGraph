@@ -22,6 +22,8 @@ const (
 	DefaultPhotoMaxBytes = 10 << 20
 	// DefaultDocumentMaxBytes 是 sendDocument 的单张上限。
 	DefaultDocumentMaxBytes = 20 << 20
+	// MaxVideoBytes 是 sendVideo 的上限，同时也是 Telegram 云端 getFile 的硬限制。
+	MaxVideoBytes = 20000000
 	// defaultTimeout 覆盖大图上传的常规耗时。
 	defaultTimeout = 120 * time.Second
 	// DefaultPathTTL 是远端文件路径的缓存时长。
@@ -263,6 +265,8 @@ func (t *Telegram) Upload(ctx context.Context, req UploadRequest) (UploadResult,
 		method, field, limit = "sendPhoto", "photo", t.photoMax
 	case ModeDocument:
 		method, field, limit = "sendDocument", "document", t.docMax
+	case ModeVideo:
+		method, field, limit = "sendVideo", "video", MaxVideoBytes
 	default:
 		return UploadResult{}, ErrUnsupportedMode
 	}
@@ -404,6 +408,11 @@ type messageResult struct {
 		FileSize int64  `json:"file_size"`
 		MIMEType string `json:"mime_type"`
 	} `json:"document"`
+	Video *struct {
+		FileID   string `json:"file_id"`
+		FileSize int64  `json:"file_size"`
+		MIMEType string `json:"mime_type"`
+	} `json:"video"`
 }
 
 // errorFor 把上游失败转换为对外错误，不带原始描述与请求地址。
@@ -434,6 +443,15 @@ func (t *Telegram) resultFrom(raw json.RawMessage, mode string) (UploadResult, e
 	result := UploadResult{
 		Provider:  t.Name(),
 		MessageID: message.MessageID,
+	}
+	if mode == ModeVideo {
+		if message.Video == nil || message.Video.FileID == "" {
+			return UploadResult{}, ErrUpstream
+		}
+		result.FileID = message.Video.FileID
+		result.FileSize = message.Video.FileSize
+		result.MIMEType = message.Video.MIMEType
+		return result, nil
 	}
 	if mode == ModeDocument {
 		if message.Document == nil || message.Document.FileID == "" {

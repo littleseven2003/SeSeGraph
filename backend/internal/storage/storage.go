@@ -12,6 +12,8 @@ import (
 const (
 	ModePhoto    = "photo"
 	ModeDocument = "document"
+	// ModeVideo 走 sendVideo 通道，与画质模式无关，只由内容类型决定。
+	ModeVideo = "video"
 )
 
 // 图床操作对外返回的错误类别。
@@ -21,6 +23,8 @@ var (
 	ErrUpstream        = errors.New("图床上传失败")
 	ErrNotConfigured   = errors.New("图床未配置")
 	ErrUnsupportedMode = errors.New("不支持的画质模式")
+	// ErrRangeUnsupported 表示上游不支持区间且无法安全跳过前缀。
+	ErrRangeUnsupported = errors.New("上游不支持区间读取")
 	// ErrFileUnavailable 表示远端文件已不可取，调用方应返回 404 而不是 5xx。
 	ErrFileUnavailable = errors.New("远端文件不可用")
 )
@@ -75,6 +79,18 @@ type Stream struct {
 // 让一次任务或一次请求在配置热切换期间仍使用同一份图床配置。
 type Snapshotter interface {
 	Snapshot() (StreamProvider, bool)
+}
+
+// ByteRange 描述一次字节区间请求，Length 为 -1 表示到文件末尾。
+type ByteRange struct {
+	Start  int64
+	Length int64
+}
+
+// RangeStreamer 是可选能力：读取远端文件大小并按区间取流，供视频拖拽使用。
+type RangeStreamer interface {
+	Size(ctx context.Context, fileID string) (int64, error)
+	OpenStreamRange(ctx context.Context, fileID string, r ByteRange) (Stream, error)
 }
 
 // StreamProvider 是在上传之外提供流式读取的图床接口，供图片网关按远端标识转发。

@@ -278,3 +278,60 @@ func TestUploadAfterCommitLeavesNoFile(t *testing.T) {
 		t.Errorf("被拒绝的上传不应留下文件，实际 %d 个", len(entries))
 	}
 }
+
+// mp4Header 是能被识别为 video/mp4 的最小头部（ftyp 盒子）。
+var mp4Header = []byte{0x00, 0x00, 0x00, 0x18, 'f', 't', 'y', 'p', 'm', 'p', '4', '2', 0x00, 0x00, 0x00, 0x00}
+
+func TestUploadVideoAcceptsTwentyMegabyteBoundary(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	cookie := env.setup(t)
+	// photo 模式同样放行 MP4，长度上限按 20,000,000 字节计算。
+	postID := env.createPost(t, cookie, 1, "photo")
+
+	content := append(append([]byte{}, mp4Header...), make([]byte, posts.MaxVideoBytes-int64(len(mp4Header)))...)
+	rec := env.doRaw(t, http.MethodPost, "/api/posts/"+strconv.Itoa(int(postID))+"/images?sort=1", "video/mp4", content, cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("状态码 = %d，期望 200，响应头: %s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		FileSize int64  `json:"file_size"`
+		MimeType string `json:"mime_type"`
+	}
+	if err := decodeJSON(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("解析响应失败: %v", err)
+	}
+	if payload.MimeType != posts.MimeVideoMP4 || payload.FileSize != posts.MaxVideoBytes {
+		t.Errorf("响应字段不符: %+v", payload)
+	}
+}
+
+func TestUploadVideoRejectsOverTwentyMegabytes(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	cookie := env.setup(t)
+	postID := env.createPost(t, cookie, 1, "photo")
+
+	content := append(append([]byte{}, mp4Header...), make([]byte, posts.MaxVideoBytes+1-int64(len(mp4Header)))...)
+	rec := env.doRaw(t, http.MethodPost, "/api/posts/"+strconv.Itoa(int(postID))+"/images?sort=1", "video/mp4", content, cookie)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("状态码 = %d，期望 413", rec.Code)
+	}
+	images, err := env.posts.ListImages(context.Background(), postID)
+	if err != nil {
+		t.Fatalf("读取图片记录失败: %v", err)
+	}
+	if len(images) != 0 {
+		t.Errorf("超限时不应留下记录: %+v", images)
+	}
+}
+
+func TestUploadVideoRejectsDisguisedContent(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	cookie := env.setup(t)
+	postID := env.createPost(t, cookie, 1, "photo")
+
+	rec := env.doRaw(t, http.MethodPost, "/api/posts/"+strconv.Itoa(int(postID))+"/images?sort=1",
+		"video/mp4", []byte("这不是视频内容"), cookie)
+	if rec.Code != http.StatusUnsupportedMediaType {
+		t.Errorf("伪装内容状态码 = %d，期望 415", rec.Code)
+	}
+}

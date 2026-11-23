@@ -33,7 +33,7 @@ func imageType(candidate string) string {
 	if index := strings.IndexByte(value, ';'); index >= 0 {
 		value = strings.TrimSpace(value[:index])
 	}
-	if allowedImageTypes[value] {
+	if allowedMediaTypes[value] {
 		return value
 	}
 	return ""
@@ -47,7 +47,7 @@ func resolveContentType(primary, fallback string) string {
 	if index := strings.IndexByte(value, ';'); index >= 0 {
 		value = strings.TrimSpace(value[:index])
 	}
-	if allowedImageTypes[value] {
+	if allowedMediaTypes[value] {
 		return value
 	}
 	if value != "" && value != octetStream {
@@ -57,6 +57,65 @@ func resolveContentType(primary, fallback string) string {
 		return known
 	}
 	return octetStream
+}
+
+// rangeVerdict 是单区间解析结果。
+type rangeVerdict int
+
+const (
+	rangeIgnored rangeVerdict = iota
+	rangeUsable
+	rangeUnsatisfiable
+)
+
+// parseByteRange 解析单区间 Range 头：只支持 bytes=start-end、bytes=start-、bytes=-N。
+// 多区间与无法识别的语法按普通请求处理，起点超出总长时返回不可满足。
+func parseByteRange(header string, size int64) (storage.ByteRange, rangeVerdict) {
+	value := strings.TrimSpace(header)
+	if size <= 0 || !strings.HasPrefix(strings.ToLower(value), "bytes=") {
+		return storage.ByteRange{}, rangeIgnored
+	}
+	spec := strings.TrimSpace(value[len("bytes="):])
+	if spec == "" || strings.Contains(spec, ",") {
+		return storage.ByteRange{}, rangeIgnored
+	}
+	startText, endText, found := strings.Cut(spec, "-")
+	if !found {
+		return storage.ByteRange{}, rangeIgnored
+	}
+	startText = strings.TrimSpace(startText)
+	endText = strings.TrimSpace(endText)
+
+	if startText == "" {
+		// bytes=-N：末尾 N 字节。
+		suffix, err := strconv.ParseInt(endText, 10, 64)
+		if err != nil || suffix <= 0 {
+			return storage.ByteRange{}, rangeIgnored
+		}
+		if suffix > size {
+			suffix = size
+		}
+		return storage.ByteRange{Start: size - suffix, Length: suffix}, rangeUsable
+	}
+
+	start, err := strconv.ParseInt(startText, 10, 64)
+	if err != nil || start < 0 {
+		return storage.ByteRange{}, rangeIgnored
+	}
+	if start >= size {
+		return storage.ByteRange{}, rangeUnsatisfiable
+	}
+	if endText == "" {
+		return storage.ByteRange{Start: start, Length: size - start}, rangeUsable
+	}
+	end, err := strconv.ParseInt(endText, 10, 64)
+	if err != nil || end < start {
+		return storage.ByteRange{}, rangeIgnored
+	}
+	if end >= size {
+		end = size - 1
+	}
+	return storage.ByteRange{Start: start, Length: end - start + 1}, rangeUsable
 }
 
 // imageGateway 按短码把公开图片流式转发给访客。
@@ -163,7 +222,28 @@ func (g *imageGateway) handle(c *gin.Context) {
 		return
 	}
 
-	stream, err := g.streams.OpenStream(c.Request.Context(), image.RemoteFileID)
+	ctx := c.Request.Context()
+	var requested storage.ByteRange
+	ranged := false
+	if header := strings.TrimSpace(c.Request.Header.Get("Range")); header != "" {
+		if ranger, ok := g.streams.(storage.RangeStreamer); ok {
+			if size, sizeErr := ranger.Size(ctx, image.RemoteFileID); sizeErr == nil {
+				parsed, verdict := parseByteRange(header, size)
+				switch verdict {
+				case rangeUnsatisfiable:
+					c.Header("Accept-Ranges", "bytes")
+					c.Header("Content-Range", "bytes */"+strconv.FormatInt(size, 10))
+					c.Header("Cache-Control", "no-store")
+					c.Status(http.StatusRequestedRangeNotSatisfiable)
+					return
+				case rangeUsable:
+					requested, ranged = parsed, true
+				}
+			}
+		}
+	}
+
+	stream, partial, err := g.openStream(ctx, image.RemoteFileID, requested, ranged)
 	switch {
 	case errors.Is(err, storage.ErrFileUnavailable):
 		notFound(c)
@@ -173,7 +253,7 @@ func (g *imageGateway) handle(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "图片暂不可用"})
 		return
 	case err != nil:
-		if c.Request.Context().Err() != nil {
+		if ctx.Err() != nil {
 			return
 		}
 		if g.logger != nil {
@@ -198,13 +278,31 @@ func (g *imageGateway) handle(c *gin.Context) {
 	c.Header("Cache-Control", imageCacheControl)
 	c.Header("Content-Disposition", "inline")
 	c.Header("X-Content-Type-Options", "nosniff")
-	if stream.Size > 0 {
+	c.Header("Accept-Ranges", "bytes")
+	if partial {
+		length := requested.Length
+		if stream.Size > 0 && requested.Start+length > stream.Size {
+			length = stream.Size - requested.Start
+		}
+		end := requested.Start + length - 1
+		c.Header("Content-Range", "bytes "+strconv.FormatInt(requested.Start, 10)+"-"+
+			strconv.FormatInt(end, 10)+"/"+strconv.FormatInt(stream.Size, 10))
+		c.Header("Content-Length", strconv.FormatInt(length, 10))
+		c.Status(http.StatusPartialContent)
+	} else if stream.Size > 0 {
 		c.Header("Content-Length", strconv.FormatInt(stream.Size, 10))
+		c.Status(http.StatusOK)
+	} else {
+		c.Status(http.StatusOK)
 	}
-	c.Status(http.StatusOK)
+
+	// HEAD 只回头部，供播放器探测长度与是否支持区间。
+	if c.Request.Method == http.MethodHead {
+		return
+	}
 
 	// 边转发边计费：并发传输期间新请求就能看到最新用量，越过上限后不再取流。
-	writer := flushWriter{writer: c.Writer, meter: g.meter, ctx: context.WithoutCancel(c.Request.Context())}
+	writer := flushWriter{writer: c.Writer, meter: g.meter, ctx: context.WithoutCancel(ctx)}
 	_, copyErr := io.Copy(writer, stream.Body)
 	if copyErr != nil {
 		// 客户端断开或上游中断：连接已不可用，这里只记录一次固定说明。
@@ -212,6 +310,21 @@ func (g *imageGateway) handle(c *gin.Context) {
 			g.logger.Print("图片转发中断")
 		}
 	}
+}
+
+// openStream 按是否请求区间打开上游流；上游不支持区间时退回整段响应。
+func (g *imageGateway) openStream(ctx context.Context, fileID string, r storage.ByteRange, ranged bool) (storage.Stream, bool, error) {
+	if !ranged {
+		stream, err := g.streams.OpenStream(ctx, fileID)
+		return stream, false, err
+	}
+	ranger := g.streams.(storage.RangeStreamer)
+	stream, err := ranger.OpenStreamRange(ctx, fileID, r)
+	if errors.Is(err, storage.ErrRangeUnsupported) {
+		stream, err = g.streams.OpenStream(ctx, fileID)
+		return stream, false, err
+	}
+	return stream, true, err
 }
 
 // flushWriter 每次写入后立即刷新，保证慢流时首段能及时到达客户端。

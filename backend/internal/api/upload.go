@@ -12,12 +12,13 @@ import (
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
 )
 
-// 允许上传的图片类型，与前端过滤规则一致。
-var allowedImageTypes = map[string]bool{
+// 允许上传的媒体类型，与前端过滤规则一致。
+var allowedMediaTypes = map[string]bool{
 	"image/jpeg": true,
 	"image/png":  true,
 	"image/webp": true,
 	"image/gif":  true,
+	"video/mp4":  true,
 }
 
 // uploadImageHandler 把单张图片流式写入临时目录，并记录上传状态。
@@ -63,15 +64,16 @@ func uploadImageHandler(deps Deps) gin.HandlerFunc {
 		if index := strings.IndexByte(mimeType, ';'); index > 0 {
 			mimeType = strings.TrimSpace(mimeType[:index])
 		}
-		if !allowedImageTypes[mimeType] {
-			c.JSON(http.StatusUnsupportedMediaType, gin.H{"error": "不支持的图片类型"})
+		if !allowedMediaTypes[mimeType] {
+			c.JSON(http.StatusUnsupportedMediaType, gin.H{"error": "不支持的媒体类型"})
 			return
 		}
 
-		saved, saveErr := posts.SaveImageStream(deps.DataDir, postID, sortOrder, reader, posts.LimitForMode(post.UploadMode))
+		saved, saveErr := posts.SaveImageStream(deps.DataDir, postID, sortOrder, reader,
+			posts.LimitForMedia(post.UploadMode, mimeType))
 		switch {
 		case errors.Is(saveErr, posts.ErrImageTooLarge):
-			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "图片超过大小限制"})
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "媒体超过大小限制"})
 			return
 		case saveErr != nil:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存图片失败"})

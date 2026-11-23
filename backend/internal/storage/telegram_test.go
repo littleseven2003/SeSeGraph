@@ -83,6 +83,20 @@ func newFakeAPI(t *testing.T) *fakeAPI {
 			}
 		}
 
+		if strings.Contains(api.method, "sendVideo") {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": true,
+				"result": map[string]any{
+					"message_id": 33,
+					"video": map[string]any{
+						"file_id":   "video-file-id",
+						"file_size": len(api.content),
+						"mime_type": "video/mp4",
+					},
+				},
+			})
+			return
+		}
 		if strings.Contains(api.method, "sendDocument") {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ok": true,
@@ -710,5 +724,50 @@ func TestTelegramChatInfoFailures(t *testing.T) {
 	}
 	if _, err := denied.ChatInfo(context.Background()); !errors.Is(err, ErrUpstream) {
 		t.Errorf("上游拒绝错误 = %v，期望 ErrUpstream", err)
+	}
+}
+
+func TestTelegramSendVideo(t *testing.T) {
+	api := newFakeAPI(t)
+	provider := newTestProvider(t, api, TelegramConfig{})
+
+	content := []byte("fake-mp4-payload")
+	result, err := provider.Upload(context.Background(), UploadRequest{
+		FileName: "clip.mp4",
+		MIMEType: "video/mp4",
+		Mode:     ModeVideo,
+		Size:     int64(len(content)),
+		Reader:   strings.NewReader(string(content)),
+	})
+	if err != nil {
+		t.Fatalf("上传失败: %v", err)
+	}
+	if api.method != "sendVideo" {
+		t.Errorf("请求方法 = %q，期望 sendVideo", api.method)
+	}
+	if api.fileName != "clip.mp4" || string(api.content) != string(content) {
+		t.Errorf("文件字段不符: name=%q size=%d", api.fileName, len(api.content))
+	}
+	if result.FileID != "video-file-id" || result.MIMEType != "video/mp4" || result.MessageID != 33 {
+		t.Errorf("返回结果不符: %+v", result)
+	}
+}
+
+func TestTelegramRejectsVideoOverTwentyMegabytes(t *testing.T) {
+	api := newFakeAPI(t)
+	provider := newTestProvider(t, api, TelegramConfig{})
+
+	_, err := provider.Upload(context.Background(), UploadRequest{
+		FileName: "big.mp4",
+		MIMEType: "video/mp4",
+		Mode:     ModeVideo,
+		Size:     MaxVideoBytes + 1,
+		Reader:   strings.NewReader("payload"),
+	})
+	if !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("错误 = %v，期望 ErrTooLarge", err)
+	}
+	if api.requests.Load() != 0 {
+		t.Errorf("超限时不应发起请求，实际 %d 次", api.requests.Load())
 	}
 }

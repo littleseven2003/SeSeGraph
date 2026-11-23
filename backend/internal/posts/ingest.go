@@ -16,6 +16,10 @@ const (
 	MaxPhotoBytes = 10 << 20
 	// MaxDocumentBytes 是 document 模式下单张原图的上限。
 	MaxDocumentBytes = 20 << 20
+	// MaxVideoBytes 是短视频的上限，与 Telegram 云端 getFile 的 20MB 硬限制一致。
+	MaxVideoBytes = 20000000
+	// MimeVideoMP4 是唯一支持的视频类型。
+	MimeVideoMP4 = "video/mp4"
 )
 
 var (
@@ -24,6 +28,14 @@ var (
 	// ErrWriteInterrupted 表示写入过程中断，半成品已清理。
 	ErrWriteInterrupted = errors.New("写入图片失败")
 )
+
+// LimitForMedia 返回单张媒体的上限：MP4 一律按 20,000,000 字节，其余按画质模式。
+func LimitForMedia(mode, mimeType string) int64 {
+	if mimeType == MimeVideoMP4 {
+		return MaxVideoBytes
+	}
+	return LimitForMode(mode)
+}
 
 // LimitForMode 返回指定画质模式的单张图片上限。
 func LimitForMode(mode string) int64 {

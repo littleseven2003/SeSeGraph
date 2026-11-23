@@ -102,6 +102,8 @@ func NewRouter(deps Deps) *gin.Engine {
 	// 公开图片网关：短码即凭证，不经过管理会话。
 	gateway := newImageGateway(deps.Posts, deps.Streams, deps.ImageConcurrency, deps.Logger, deps.Traffic)
 	router.GET("/i/:short_code", gateway.handle)
+	// HEAD 供浏览器与播放器探测长度和区间支持，不返回正文。
+	router.HEAD("/i/:short_code", gateway.handle)
 
 	// 公开订阅源：默认关闭，启用且配置有效 HTTPS 地址时才提供。
 	router.GET("/api/site", siteHandler(deps))

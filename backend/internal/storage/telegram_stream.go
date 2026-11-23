@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -59,6 +60,11 @@ func (t *Telegram) getFilePath(ctx context.Context, fileID string) (string, int6
 
 // openDownload 按文件路径打开下载流，返回的响应体由调用方负责关闭。
 func (t *Telegram) openDownload(ctx context.Context, path string) (*http.Response, error) {
+	return t.openDownloadRange(ctx, path, -1, -1)
+}
+
+// openDownloadRange 在 openDownload 基础上带上区间请求头；start 为负表示整段。
+func (t *Telegram) openDownloadRange(ctx context.Context, path string, start, end int64) (*http.Response, error) {
 	path = strings.TrimLeft(strings.TrimSpace(path), "/")
 	if path == "" {
 		return nil, ErrFileUnavailable
@@ -68,6 +74,13 @@ func (t *Telegram) openDownload(ctx context.Context, path string) (*http.Respons
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, ErrUpstream
+	}
+	if start >= 0 {
+		spec := "bytes=" + strconv.FormatInt(start, 10) + "-"
+		if end >= start {
+			spec += strconv.FormatInt(end, 10)
+		}
+		req.Header.Set("Range", spec)
 	}
 
 	response, err := t.client.Do(req)
@@ -109,6 +122,8 @@ func imageTypeFromPath(path string) string {
 		return "image/webp"
 	case ".gif":
 		return "image/gif"
+	case ".mp4":
+		return "video/mp4"
 	default:
 		return ""
 	}
@@ -174,4 +189,116 @@ func (t *Telegram) OpenStream(ctx context.Context, fileID string) (Stream, error
 		size = response.ContentLength
 	}
 	return Stream{Body: response.Body, ContentType: contentType, Size: size}, nil
+}
+
+// Size 返回远端文件大小，供网关解析 Range 请求。
+func (t *Telegram) Size(ctx context.Context, fileID string) (int64, error) {
+	_, size, err := t.resolvePath(ctx, fileID)
+	return size, err
+}
+
+// OpenStreamRange 按字节区间取流：优先让上游返回 206；
+// 上游忽略 Range 时，只有总长可信且不超过视频上限才跳过前缀并限长输出。
+func (t *Telegram) OpenStreamRange(ctx context.Context, fileID string, r ByteRange) (Stream, error) {
+	if err := ctx.Err(); err != nil {
+		return Stream{}, err
+	}
+
+	path, size, err := t.resolvePath(ctx, fileID)
+	if err != nil {
+		return Stream{}, err
+	}
+	if size <= 0 {
+		return Stream{}, ErrRangeUnsupported
+	}
+	if r.Start < 0 || r.Start >= size {
+		return Stream{}, ErrFileUnavailable
+	}
+	end := int64(-1)
+	if r.Length >= 0 {
+		if r.Length == 0 {
+			return Stream{}, ErrRangeUnsupported
+		}
+		end = r.Start + r.Length - 1
+		if end >= size {
+			end = size - 1
+		}
+	}
+
+	response, err := t.openDownloadRange(ctx, path, r.Start, end)
+	if err != nil {
+		return Stream{}, err
+	}
+	if response.StatusCode == http.StatusNotFound {
+		_ = response.Body.Close()
+		t.cache.delete(fileID)
+
+		path, size, err = t.getFilePath(ctx, fileID)
+		if err != nil {
+			return Stream{}, err
+		}
+		if size <= 0 || r.Start >= size {
+			return Stream{}, ErrFileUnavailable
+		}
+		if r.Length >= 0 {
+			end = r.Start + r.Length - 1
+			if end >= size {
+				end = size - 1
+			}
+		}
+		t.cache.set(fileID, pathEntry{path: path, size: size, expires: t.now().Add(t.cache.ttl)}, t.now())
+
+		response, err = t.openDownloadRange(ctx, path, r.Start, end)
+		if err != nil {
+			return Stream{}, err
+		}
+		if response.StatusCode == http.StatusNotFound {
+			_ = response.Body.Close()
+			return Stream{}, ErrFileUnavailable
+		}
+	}
+
+	switch response.StatusCode {
+	case http.StatusPartialContent:
+	case http.StatusOK:
+		// 上游忽略 Range：总长可信且在视频上限内时跳过前缀，否则交给调用方整段返回。
+		if size <= 0 || size > MaxVideoBytes {
+			_ = response.Body.Close()
+			return Stream{}, ErrRangeUnsupported
+		}
+		if r.Start > 0 {
+			if _, err := io.CopyN(io.Discard, response.Body, r.Start); err != nil {
+				_ = response.Body.Close()
+				return Stream{}, errTransport
+			}
+		}
+		var body io.ReadCloser = response.Body
+		if r.Length >= 0 {
+			body = struct {
+				io.Reader
+				io.Closer
+			}{io.LimitReader(response.Body, r.Length), response.Body}
+		}
+		return Stream{Body: body, ContentType: streamContentType(response, path), Size: size}, nil
+	default:
+		_ = response.Body.Close()
+		return Stream{}, ErrUpstream
+	}
+
+	return Stream{Body: response.Body, ContentType: streamContentType(response, path), Size: size}, nil
+}
+
+// streamContentType 解析下载响应的内容类型，必要时按文件扩展名补全。
+func streamContentType(response *http.Response, path string) string {
+	contentType := strings.TrimSpace(response.Header.Get("Content-Type"))
+	switch strings.ToLower(contentType) {
+	case "", "application/octet-stream":
+		if guessed := imageTypeFromPath(path); guessed != "" {
+			contentType = guessed
+		}
+	}
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	return contentType
 }
