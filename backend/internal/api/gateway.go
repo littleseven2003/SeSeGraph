@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
@@ -18,6 +19,10 @@ import (
 const (
 	// DefaultImageConcurrency 是图片网关的默认并发上限，避免把 1 核小机器拖垮。
 	DefaultImageConcurrency = 25
+	// DefaultImageQueueDepth 是满额后允许排队等待的请求数，超出才立即拒绝。
+	DefaultImageQueueDepth = 100
+	// DefaultImageQueueWait 是单个请求排队等待空闲名额的最长时间。
+	DefaultImageQueueWait = 15 * time.Second
 	// imageCacheControl 是成功响应的强缓存头，图片内容按短码不可变。
 	imageCacheControl = "public, max-age=31536000, immutable"
 	// shortCodeMinLen 与 shortCodeMaxLen 限定合法短码长度。
@@ -124,25 +129,73 @@ type imageGateway struct {
 	streams     storage.StreamProvider
 	slots       chan struct{}
 	concurrency int
-	logger      *log.Logger
+	// waiting 限制同时排队的人数，避免无限堆积。
+	waiting chan struct{}
+	// wait 是单个请求排队等待空闲名额的上限。
+	wait   time.Duration
+	logger *log.Logger
 	// meter 统计出站流量并判断月度硬上限，可为空。
 	meter *traffic.Recorder
 }
 
 // newImageGateway 创建网关，并发上限非正时使用默认值。
-func newImageGateway(repo *posts.Repository, streams storage.StreamProvider, concurrency int, logger *log.Logger, meter *traffic.Recorder) *imageGateway {
+func newImageGateway(repo *posts.Repository, streams storage.StreamProvider, concurrency, queueDepth int, wait time.Duration, logger *log.Logger, meter *traffic.Recorder) *imageGateway {
 	if concurrency <= 0 {
 		concurrency = DefaultImageConcurrency
+	}
+	if queueDepth <= 0 {
+		queueDepth = DefaultImageQueueDepth
+	}
+	if wait <= 0 {
+		wait = DefaultImageQueueWait
 	}
 	return &imageGateway{
 		repo:        repo,
 		streams:     streams,
 		slots:       make(chan struct{}, concurrency),
 		concurrency: concurrency,
+		waiting:     make(chan struct{}, queueDepth),
+		wait:        wait,
 		logger:      logger,
 		meter:       meter,
 	}
 }
+
+// acquireResult 表示取流名额的获取结果：成功、客户端取消或拥塞拒绝。
+type acquireResult int
+
+const (
+	acquireOK acquireResult = iota
+	acquireCanceled
+	acquireRejected
+)
+
+// acquire 先占一个排队名额，再在队列上限时间内等待空闲取流名额。
+// 排队人数满额或等待超时才判定为拥塞；客户端断开立即退出，不占用名额。
+func (g *imageGateway) acquire(ctx context.Context) acquireResult {
+	select {
+	case g.waiting <- struct{}{}:
+		defer func() { <-g.waiting }()
+	case <-ctx.Done():
+		return acquireCanceled
+	default:
+		return acquireRejected
+	}
+
+	timer := time.NewTimer(g.wait)
+	defer timer.Stop()
+	select {
+	case g.slots <- struct{}{}:
+		return acquireOK
+	case <-ctx.Done():
+		return acquireCanceled
+	case <-timer.C:
+		return acquireRejected
+	}
+}
+
+// release 归还取流名额。
+func (g *imageGateway) release() { <-g.slots }
 
 // validShortCode 判断短码是否为 8–12 位 Base62 字符。
 func validShortCode(code string) bool {
@@ -204,17 +257,34 @@ func (g *imageGateway) handle(c *gin.Context) {
 		return
 	}
 
-	// 并发信号量满额时快速拒绝，避免低配实例堆积等待中的请求。
-	select {
-	case g.slots <- struct{}{}:
-	default:
+	// 满额时先进入有界排队，只有队列满或等待超时才返回拥塞，
+	// 避免多图页面瞬时并发把未取到的图片直接拒绝成裂图。
+	switch g.acquire(c.Request.Context()) {
+	case acquireCanceled:
+		return
+	case acquireRejected:
 		c.Header("Cache-Control", "no-store")
 		c.Header("Retry-After", "1")
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "图片请求过多，请稍后重试"})
 		return
 	}
-	defer func() { <-g.slots }()
+	defer g.release()
+
+	// 排队期间可能跨过月度上限，也可能被撤回：拿到名额后重新确认再取流。
+	if g.meter.OverLimit() {
+		notFoundWithStatus(c, http.StatusServiceUnavailable, "本月流量已超限，图片暂不可用")
+		return
+	}
+	if _, err := g.repo.PublicImage(c.Request.Context(), shortCode); err != nil {
+		if errors.Is(err, posts.ErrNotFound) {
+			notFound(c)
+			return
+		}
+		c.Header("Cache-Control", "no-store")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取图片失败"})
+		return
+	}
 
 	// 登记一次请求；并发传输中已越过上限时在这里再拦一次，确保不再向上游取流。
 	if !g.meter.Begin(c.Request.Context()) {

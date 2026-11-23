@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -84,6 +85,11 @@ type gatewayEnv struct {
 
 func newGatewayEnv(t *testing.T, concurrency int, streams storage.StreamProvider) *gatewayEnv {
 	t.Helper()
+	return newGatewayEnvOptions(t, concurrency, 0, 0, streams)
+}
+
+func newGatewayEnvOptions(t *testing.T, concurrency, queueDepth int, wait time.Duration, streams storage.StreamProvider) *gatewayEnv {
+	t.Helper()
 	handle, err := db.Open(filepath.Join(t.TempDir(), "gateway.db"))
 	if err != nil {
 		t.Fatalf("打开数据库失败: %v", err)
@@ -100,6 +106,8 @@ func newGatewayEnv(t *testing.T, concurrency int, streams storage.StreamProvider
 		Posts:            repository,
 		Streams:          streams,
 		ImageConcurrency: concurrency,
+		ImageQueueDepth:  queueDepth,
+		ImageQueueWait:   wait,
 		Logger:           log.New(io.Discard, "", 0),
 	})
 	server := httptest.NewServer(router)
@@ -413,15 +421,22 @@ func TestGatewayLimitsConcurrency(t *testing.T) {
 		}
 	}
 
-	// 名额已满：第三个请求立即得到 503，且不会进入上游。
-	response, body := getImage(t, env.server.URL+"/i/"+code)
-	if response.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("满额状态码 = %d，期望 503，响应: %s", response.StatusCode, body)
-	}
+	// 名额已满：第三个请求进入排队，不会立刻 503，也不会提前占用上游。
+	queued := make(chan int, 1)
+	go func() {
+		response, err := http.Get(env.server.URL + "/i/" + code)
+		if err != nil {
+			queued <- -1
+			return
+		}
+		_, _ = io.Copy(io.Discard, response.Body)
+		_ = response.Body.Close()
+		queued <- response.StatusCode
+	}()
 	select {
 	case <-started:
-		t.Fatal("满额时不应再有请求进入上游")
-	case <-time.After(100 * time.Millisecond):
+		t.Fatal("排队中的请求不应提前进入上游")
+	case <-time.After(150 * time.Millisecond):
 	}
 
 	close(release)
@@ -434,6 +449,14 @@ func TestGatewayLimitsConcurrency(t *testing.T) {
 		case <-time.After(3 * time.Second):
 			t.Fatal("请求未完成")
 		}
+	}
+	select {
+	case status := <-queued:
+		if status != http.StatusOK {
+			t.Errorf("排队请求状态码 = %d，期望 200", status)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("排队请求未完成")
 	}
 	mu.Lock()
 	observed := maxActive
@@ -957,5 +980,205 @@ func TestGatewayRangeStillHidesWithdrawnMedia(t *testing.T) {
 	response, _ := openRange(t, http.MethodGet, env.server.URL+"/i/"+code, "bytes=0-3")
 	if response.StatusCode != http.StatusNotFound {
 		t.Errorf("撤回后区间请求状态码 = %d，期望 404", response.StatusCode)
+	}
+}
+
+// blockingProvider 让上游取流一直挂起，直到 release 关闭，用于观察排队行为。
+type blockingProvider struct {
+	*fakeStreamProvider
+	opened  chan struct{}
+	release chan struct{}
+	count   int32
+}
+
+func (b *blockingProvider) OpenStream(ctx context.Context, _ string) (storage.Stream, error) {
+	atomic.AddInt32(&b.count, 1)
+	select {
+	case b.opened <- struct{}{}:
+	default:
+	}
+	select {
+	case <-b.release:
+	case <-ctx.Done():
+	}
+	return storage.Stream{Body: io.NopCloser(strings.NewReader("ok")), ContentType: "image/jpeg", Size: 2}, nil
+}
+
+func waitOpened(t *testing.T, opened chan struct{}, want int) {
+	t.Helper()
+	for index := 0; index < want; index++ {
+		select {
+		case <-opened:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("第 %d 个请求未进入上游", index+1)
+		}
+	}
+}
+
+// TestGatewayQueueWaitTimeoutRejects 验证排队超过上限时间才返回 503。
+func TestGatewayQueueWaitTimeoutRejects(t *testing.T) {
+	provider := &blockingProvider{fakeStreamProvider: &fakeStreamProvider{}, opened: make(chan struct{}, 4), release: make(chan struct{})}
+	env := newGatewayEnvOptions(t, 1, 4, 120*time.Millisecond, provider)
+	code := env.publishPost(t, "queue123456", "image/jpeg", "photo", true, false)
+
+	first := make(chan int, 1)
+	go func() {
+		response, err := http.Get(env.server.URL + "/i/" + code)
+		if err != nil {
+			first <- -1
+			return
+		}
+		_, _ = io.Copy(io.Discard, response.Body)
+		_ = response.Body.Close()
+		first <- response.StatusCode
+	}()
+	waitOpened(t, provider.opened, 1)
+
+	started := time.Now()
+	response, body := getImage(t, env.server.URL+"/i/"+code)
+	elapsed := time.Since(started)
+	if response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("状态码 = %d，期望 503，响应: %s", response.StatusCode, body)
+	}
+	if response.Header.Get("Retry-After") != "1" {
+		t.Errorf("Retry-After = %q，期望 1", response.Header.Get("Retry-After"))
+	}
+	if elapsed < 100*time.Millisecond {
+		t.Errorf("排队耗时 %v，应至少等待设定的 120ms", elapsed)
+	}
+	if got := atomic.LoadInt32(&provider.count); got != 1 {
+		t.Errorf("上游取流 %d 次，超时请求不应进入上游", got)
+	}
+
+	close(provider.release)
+	select {
+	case status := <-first:
+		if status != http.StatusOK {
+			t.Errorf("首请求状态码 = %d，期望 200", status)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("首请求未完成")
+	}
+}
+
+// TestGatewayQueueFullRejectsImmediately 验证排队人数满额时立即拒绝，不等待。
+func TestGatewayQueueFullRejectsImmediately(t *testing.T) {
+	provider := &blockingProvider{fakeStreamProvider: &fakeStreamProvider{}, opened: make(chan struct{}, 4), release: make(chan struct{})}
+	env := newGatewayEnvOptions(t, 1, 1, 2*time.Second, provider)
+	code := env.publishPost(t, "queuefull123", "image/jpeg", "photo", true, false)
+
+	first := make(chan int, 1)
+	go func() {
+		response, err := http.Get(env.server.URL + "/i/" + code)
+		if err != nil {
+			first <- -1
+			return
+		}
+		_, _ = io.Copy(io.Discard, response.Body)
+		_ = response.Body.Close()
+		first <- response.StatusCode
+	}()
+	waitOpened(t, provider.opened, 1)
+
+	// 第二个请求占满唯一的排队名额。
+	second := make(chan int, 1)
+	go func() {
+		response, err := http.Get(env.server.URL + "/i/" + code)
+		if err != nil {
+			second <- -1
+			return
+		}
+		_, _ = io.Copy(io.Discard, response.Body)
+		_ = response.Body.Close()
+		second <- response.StatusCode
+	}()
+	time.Sleep(150 * time.Millisecond)
+
+	started := time.Now()
+	response, body := getImage(t, env.server.URL+"/i/"+code)
+	if response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("状态码 = %d，期望 503，响应: %s", response.StatusCode, body)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Errorf("满队拒绝耗时 %v，应立即返回", elapsed)
+	}
+	if got := atomic.LoadInt32(&provider.count); got != 1 {
+		t.Errorf("上游取流 %d 次，满队请求不应进入上游", got)
+	}
+
+	close(provider.release)
+	for index, channel := range []chan int{first, second} {
+		select {
+		case status := <-channel:
+			if status != http.StatusOK {
+				t.Errorf("第 %d 个请求状态码 = %d，期望 200", index+1, status)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("第 %d 个请求未完成", index+1)
+		}
+	}
+}
+
+// TestGatewayCancelWhileWaitingLeavesQueue 验证排队中的客户端断开后立即退出，不占名额。
+func TestGatewayCancelWhileWaitingLeavesQueue(t *testing.T) {
+	provider := &blockingProvider{fakeStreamProvider: &fakeStreamProvider{}, opened: make(chan struct{}, 4), release: make(chan struct{})}
+	env := newGatewayEnvOptions(t, 1, 4, 2*time.Second, provider)
+	code := env.publishPost(t, "queuecancel1", "image/jpeg", "photo", true, false)
+
+	first := make(chan int, 1)
+	go func() {
+		response, err := http.Get(env.server.URL + "/i/" + code)
+		if err != nil {
+			first <- -1
+			return
+		}
+		_, _ = io.Copy(io.Discard, response.Body)
+		_ = response.Body.Close()
+		first <- response.StatusCode
+	}()
+	waitOpened(t, provider.opened, 1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	waiter, err := http.NewRequestWithContext(ctx, http.MethodGet, env.server.URL+"/i/"+code, nil)
+	if err != nil {
+		t.Fatalf("构造请求失败: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		response, err := http.DefaultClient.Do(waiter)
+		if err == nil {
+			_ = response.Body.Close()
+		}
+		done <- err
+	}()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("取消后请求应返回错误")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("取消后排队请求未退出")
+	}
+	if got := atomic.LoadInt32(&provider.count); got != 1 {
+		t.Errorf("上游取流 %d 次，取消的排队请求不应进入上游", got)
+	}
+
+	close(provider.release)
+	select {
+	case status := <-first:
+		if status != http.StatusOK {
+			t.Errorf("首请求状态码 = %d，期望 200", status)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("首请求未完成")
+	}
+
+	// 名额与排队位都已释放，新请求应直接成功。
+	after, body := getImage(t, env.server.URL+"/i/"+code)
+	if after.StatusCode != http.StatusOK {
+		t.Errorf("释放后状态码 = %d，响应: %s", after.StatusCode, body)
 	}
 }

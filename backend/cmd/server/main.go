@@ -259,6 +259,8 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		CommitProvider:   commitProvider,
 		SettingsLock:     settingsLock,
 		ImageConcurrency: readImageConcurrency(lookupEnv),
+		ImageQueueDepth:  readImageQueueDepth(lookupEnv),
+		ImageQueueWait:   readImageQueueWait(lookupEnv),
 		Traffic:          trafficMeter,
 		Backup:           backupManager,
 		BackupSchedule:   backupSchedule,
@@ -591,6 +593,38 @@ func readImageConcurrency(lookupEnv func(string) (string, bool)) int {
 		return 100
 	}
 	return value
+}
+
+// readImageQueueDepth 读取图片网关的排队人数上限，未配置时使用默认值。
+func readImageQueueDepth(lookupEnv func(string) (string, bool)) int {
+	raw, ok := lookupEnv("PROXY_QUEUE_DEPTH")
+	if !ok {
+		return api.DefaultImageQueueDepth
+	}
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || value <= 0 {
+		return api.DefaultImageQueueDepth
+	}
+	if value > 1000 {
+		return 1000
+	}
+	return value
+}
+
+// readImageQueueWait 读取单个请求的最长排队时间（秒），未配置时使用默认值。
+func readImageQueueWait(lookupEnv func(string) (string, bool)) time.Duration {
+	raw, ok := lookupEnv("PROXY_QUEUE_WAIT")
+	if !ok {
+		return api.DefaultImageQueueWait
+	}
+	seconds, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || seconds <= 0 {
+		return api.DefaultImageQueueWait
+	}
+	if seconds > 60 {
+		seconds = 60
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 // startUploadQueue 启动上传队列，返回停止函数。

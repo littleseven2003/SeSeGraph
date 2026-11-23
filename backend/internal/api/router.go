@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/auth"
@@ -38,6 +39,10 @@ type Deps struct {
 	Streams storage.StreamProvider
 	// ImageConcurrency 是图片网关的并发上限，非正时使用默认值。
 	ImageConcurrency int
+	// ImageQueueDepth 是满额后的排队人数上限，非正时使用默认值。
+	ImageQueueDepth int
+	// ImageQueueWait 是单个请求排队等待的最长时间，非正时使用默认值。
+	ImageQueueWait time.Duration
 	// Traffic 统计图片出站流量并按月度上限熔断，未装配时不计流量。
 	Traffic *traffic.Recorder
 	// Backup 生成并管理 SQLite 热备，未装配时备份接口不可用。
@@ -100,7 +105,8 @@ func NewRouter(deps Deps) *gin.Engine {
 	router.POST("/api/auth/logout", logoutHandler(deps))
 
 	// 公开图片网关：短码即凭证，不经过管理会话。
-	gateway := newImageGateway(deps.Posts, deps.Streams, deps.ImageConcurrency, deps.Logger, deps.Traffic)
+	gateway := newImageGateway(deps.Posts, deps.Streams, deps.ImageConcurrency,
+		deps.ImageQueueDepth, deps.ImageQueueWait, deps.Logger, deps.Traffic)
 	router.GET("/i/:short_code", gateway.handle)
 	// HEAD 供浏览器与播放器探测长度和区间支持，不返回正文。
 	router.HEAD("/i/:short_code", gateway.handle)
