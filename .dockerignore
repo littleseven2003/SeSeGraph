@@ -15,7 +15,9 @@ data
 README.md
 CHANGELOG.md
 LICENSE
+frontend/src/dev
 frontend/node_modules
+docs
 frontend/dist
 backend/internal/web/assets/static
 backend/internal/web/assets/index.html
