@@ -194,11 +194,25 @@ func buildBody(publicURL, description string, images []posts.Image) []telegraph.
 		}
 	}
 	for index, image := range images {
+		src := publicURL + imagePathPattern + image.ShortCode
+		if image.MimeType == posts.MimeVideoMP4 {
+			// 视频用 video 节点内嵌，同时给出可点击的备用链接，
+			// 兼容不允许内嵌播放的阅读环境。
+			nodes = append(nodes, telegraph.Node{
+				Tag: "figure",
+				Children: []any{
+					telegraph.Node{Tag: "video", Attrs: map[string]string{"src": src}},
+					telegraph.Node{Tag: "figcaption", Children: []any{fmt.Sprintf("第 %d 段视频", index+1)}},
+					telegraph.Link(src, "打开视频"),
+				},
+			})
+			continue
+		}
 		nodes = append(nodes, telegraph.Node{
 			Tag: "figure",
 			Children: []any{
 				telegraph.Node{Tag: "img", Attrs: map[string]string{
-					"src": publicURL + imagePathPattern + image.ShortCode,
+					"src": src,
 				}},
 				telegraph.Node{Tag: "figcaption", Children: []any{fmt.Sprintf("第 %d 张", index+1)}},
 			},

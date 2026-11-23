@@ -280,3 +280,31 @@ func TestPublisherSkipsWhenQueueEmpty(t *testing.T) {
 		t.Fatalf("空队列 processed=%v err=%v", processed, err)
 	}
 }
+
+func TestBuildBodyUsesVideoNodeForMP4(t *testing.T) {
+	nodes := buildBody("https://gallery.example.com", "", []posts.Image{
+		{SortOrder: 1, ShortCode: "img12345", MimeType: "image/jpeg"},
+		{SortOrder: 2, ShortCode: "vid12345", MimeType: posts.MimeVideoMP4},
+	})
+	if len(nodes) != 2 {
+		t.Fatalf("节点数 = %d，期望 2", len(nodes))
+	}
+	if nodes[0].Children[0].(telegraph.Node).Tag != "img" {
+		t.Errorf("静态图节点 = %+v", nodes[0].Children[0])
+	}
+	figure := nodes[1]
+	if figure.Tag != "figure" {
+		t.Fatalf("视频外层标签 = %q", figure.Tag)
+	}
+	video, ok := figure.Children[0].(telegraph.Node)
+	if !ok || video.Tag != "video" {
+		t.Fatalf("视频节点 = %+v", figure.Children[0])
+	}
+	if want := "https://gallery.example.com/i/vid12345"; video.Attrs["src"] != want {
+		t.Errorf("视频 src = %q，期望 %q", video.Attrs["src"], want)
+	}
+	link, ok := figure.Children[2].(telegraph.Node)
+	if !ok || link.Tag != "a" || link.Attrs["href"] != "https://gallery.example.com/i/vid12345" {
+		t.Errorf("备用链接 = %+v", figure.Children[2])
+	}
+}
