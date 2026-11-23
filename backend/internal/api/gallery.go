@@ -21,21 +21,23 @@ var thumbNamePattern = regexp.MustCompile(`^[0-9]+\.webp$`)
 
 // galleryItemResponse 是画廊卡片的接口结构。
 type galleryItemResponse struct {
-	ID             int64    `json:"id"`
-	Title          string   `json:"title"`
-	CoverThumbPath string   `json:"cover_thumb_path"`
-	CoverURL       string   `json:"cover_url"`
-	ImageCount     int      `json:"image_count"`
-	Status         string   `json:"status"`
-	PublishState   string   `json:"publish_state"`
-	Public         bool     `json:"public"`
-	Disabled       bool     `json:"disabled"`
-	Tags           []string `json:"tags"`
-	TelegraphURLs  []string `json:"telegraph_urls"`
-	PublishedAt    string   `json:"published_at"`
-	CreatedAt      string   `json:"created_at"`
-	UpdatedAt      string   `json:"updated_at"`
-	ViewsCount     int      `json:"views_count"`
+	ID    int64  `json:"id"`
+	Title string `json:"title"`
+	// DescriptionExcerpt 只给列表行展示，最多 240 字；详情使用完整 description。
+	DescriptionExcerpt string   `json:"description_excerpt"`
+	CoverThumbPath     string   `json:"cover_thumb_path"`
+	CoverURL           string   `json:"cover_url"`
+	ImageCount         int      `json:"image_count"`
+	Status             string   `json:"status"`
+	PublishState       string   `json:"publish_state"`
+	Public             bool     `json:"public"`
+	Disabled           bool     `json:"disabled"`
+	Tags               []string `json:"tags"`
+	TelegraphURLs      []string `json:"telegraph_urls"`
+	PublishedAt        string   `json:"published_at"`
+	CreatedAt          string   `json:"created_at"`
+	UpdatedAt          string   `json:"updated_at"`
+	ViewsCount         int      `json:"views_count"`
 	// ViewsUpdatedAt 为空表示尚未同步过，接口输出 null，前端据此隐藏浏览量。
 	ViewsUpdatedAt *string `json:"views_updated_at"`
 }
@@ -95,22 +97,23 @@ func toGalleryItem(item posts.GalleryItem) galleryItemResponse {
 		urls = []string{}
 	}
 	return galleryItemResponse{
-		ID:             item.ID,
-		Title:          item.Title,
-		CoverThumbPath: item.CoverThumbPath,
-		CoverURL:       coverURL(item.CoverThumbPath),
-		ImageCount:     item.ImageCount,
-		Status:         item.Status,
-		PublishState:   item.PublishState,
-		Public:         item.IsPublic,
-		Disabled:       item.IsDisabled,
-		Tags:           tags,
-		TelegraphURLs:  urls,
-		PublishedAt:    item.PublishedAt,
-		CreatedAt:      item.CreatedAt,
-		UpdatedAt:      item.UpdatedAt,
-		ViewsCount:     item.ViewsCount,
-		ViewsUpdatedAt: optionalTimestamp(item.ViewsUpdatedAt),
+		ID:                 item.ID,
+		Title:              item.Title,
+		DescriptionExcerpt: item.DescriptionExcerpt,
+		CoverThumbPath:     item.CoverThumbPath,
+		CoverURL:           coverURL(item.CoverThumbPath),
+		ImageCount:         item.ImageCount,
+		Status:             item.Status,
+		PublishState:       item.PublishState,
+		Public:             item.IsPublic,
+		Disabled:           item.IsDisabled,
+		Tags:               tags,
+		TelegraphURLs:      urls,
+		PublishedAt:        item.PublishedAt,
+		CreatedAt:          item.CreatedAt,
+		UpdatedAt:          item.UpdatedAt,
+		ViewsCount:         item.ViewsCount,
+		ViewsUpdatedAt:     optionalTimestamp(item.ViewsUpdatedAt),
 	}
 }
 

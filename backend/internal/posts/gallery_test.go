@@ -3,6 +3,7 @@ package posts
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -313,5 +314,38 @@ func TestMarkPublishedKeepsFirstPublishedAt(t *testing.T) {
 	}
 	if len(page.Items) != 1 || page.Items[0].PublishedAt != "2026-11-01T08:00:00Z" {
 		t.Errorf("列表发布时间 = %+v", page.Items)
+	}
+}
+
+func TestListGalleryCapsDescriptionExcerpt(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+	long := strings.Repeat("长描述", 120)
+
+	id, err := repo.Create(ctx, Post{Title: "长描述", Description: long})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+
+	page, err := repo.ListGallery(ctx, GalleryQuery{})
+	if err != nil {
+		t.Fatalf("读取画廊失败: %v", err)
+	}
+	var excerpt string
+	for _, item := range page.Items {
+		if item.ID == id {
+			excerpt = item.DescriptionExcerpt
+		}
+	}
+	if got := len([]rune(excerpt)); got != 240 {
+		t.Errorf("列表说明长度 = %d，期望截到 240 字", got)
+	}
+
+	detail, err := repo.GalleryDetail(ctx, id)
+	if err != nil {
+		t.Fatalf("读取详情失败: %v", err)
+	}
+	if detail.Description != long {
+		t.Error("详情应返回完整说明")
 	}
 }

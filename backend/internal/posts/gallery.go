@@ -61,19 +61,21 @@ func (q GalleryQuery) Normalize() GalleryQuery {
 
 // GalleryItem 是画廊卡片需要的字段，不含说明等正文内容。
 type GalleryItem struct {
-	ID             int64
-	Title          string
-	CoverThumbPath string
-	ImageCount     int
-	Status         string
-	PublishState   string
-	IsPublic       bool
-	IsDisabled     bool
-	TelegraphURLs  []string
-	Tags           []string
-	PublishedAt    string
-	CreatedAt      string
-	UpdatedAt      string
+	ID    int64
+	Title string
+	// DescriptionExcerpt 是列表展示用的一段说明，最多 240 字，详情仍读全文。
+	DescriptionExcerpt string
+	CoverThumbPath     string
+	ImageCount         int
+	Status             string
+	PublishState       string
+	IsPublic           bool
+	IsDisabled         bool
+	TelegraphURLs      []string
+	Tags               []string
+	PublishedAt        string
+	CreatedAt          string
+	UpdatedAt          string
 	// ViewsCount 是上次同步到的累计浏览量，ViewsUpdatedAt 为空表示尚未同步。
 	ViewsCount     int
 	ViewsUpdatedAt string
@@ -164,7 +166,8 @@ func (r *Repository) ListGallery(ctx context.Context, query GalleryQuery) (*Gall
 
 	pageArgs := append(append([]any{}, args...), query.PageSize, (query.Page-1)*query.PageSize)
 	rows, err := r.handle.QueryContext(ctx,
-		`SELECT p.id, p.title, p.cover_thumb_path, p.image_count, p.status, p.publish_state,
+		`SELECT p.id, p.title, COALESCE(substr(p.description, 1, 240), ''),
+		        p.cover_thumb_path, p.image_count, p.status, p.publish_state,
 		        p.is_public, p.is_disabled, p.telegraph_urls,
 		        COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', p.published_at), ''),
 		        strftime('%Y-%m-%dT%H:%M:%SZ', p.created_at),
@@ -182,7 +185,7 @@ func (r *Repository) ListGallery(ctx context.Context, query GalleryQuery) (*Gall
 		var item GalleryItem
 		var public, disabled int
 		var urls string
-		if err := rows.Scan(&item.ID, &item.Title, &item.CoverThumbPath, &item.ImageCount, &item.Status,
+		if err := rows.Scan(&item.ID, &item.Title, &item.DescriptionExcerpt, &item.CoverThumbPath, &item.ImageCount, &item.Status,
 			&item.PublishState, &public, &disabled, &urls, &item.PublishedAt,
 			&item.CreatedAt, &item.UpdatedAt, &item.ViewsCount, &item.ViewsUpdatedAt); err != nil {
 			return nil, errors.New("读取画廊失败")

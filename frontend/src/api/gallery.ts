@@ -4,6 +4,8 @@ import { ApiError } from './client.ts'
 export interface GalleryItem {
   id: number
   title: string
+  /** 列表展示用的一段说明，最多 240 字；详情用 description 读全文。 */
+  description_excerpt: string
   cover_url: string
   cover_thumb_path: string
   image_count: number

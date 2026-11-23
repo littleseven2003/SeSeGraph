@@ -102,11 +102,11 @@ const copyLabel = computed(() => {
 
       <!-- 窄屏只保留描述、浏览量与状态；卷号、日期与张数收进详情抽屉，避免挤压操作区。 -->
       <p
-        v-if="item.description !== ''"
+        v-if="item.description_excerpt !== ''"
         class="mt-0.5 line-clamp-2 break-words text-xs leading-snug text-muted md:hidden"
-        :title="item.description"
+        :title="item.description_excerpt"
       >
-        {{ item.description }}
+        {{ item.description_excerpt }}
       </p>
       <div class="mt-1.5 flex min-w-0 items-center gap-2 overflow-hidden text-xs text-muted md:mt-1.5">
         <span class="tnum hidden shrink-0 md:inline">{{ volume }}</span>
@@ -132,11 +132,11 @@ const copyLabel = computed(() => {
 
     <!-- 桌面端独立描述列：最多两行，空描述用极轻占位符收住列宽。 -->
     <p
-      v-if="item.description !== ''"
+      v-if="item.description_excerpt !== ''"
       class="hidden line-clamp-2 break-words text-xs leading-[1.6] text-muted md:block"
-      :title="item.description"
+      :title="item.description_excerpt"
     >
-      {{ item.description }}
+      {{ item.description_excerpt }}
     </p>
     <p v-else class="hidden select-none text-xs text-muted/45 md:block" aria-hidden="true">—</p>
 
