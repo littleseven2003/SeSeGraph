@@ -166,6 +166,8 @@ const resuming = computed(() => {
 })
 // 续传时沿用旧任务元数据，文件与任务不匹配时解锁，允许重新选择或放弃。
 const locked = computed(() => busy.value || (postId.value > 0 && tiles.value.length > 0 && resuming.value))
+// 封面只跟压缩/建任务阶段互斥；上传开始后仍可更换封面。
+const coverLocked = computed(() => submitting.value && phase.value !== 'uploading')
 const viewingTask = computed(() => snapshot.value !== null && tiles.value.length === 0)
 const phaseText = computed(() => {
   if (serverProgress.value?.status === 'completed') {
@@ -223,6 +225,22 @@ async function bootstrap(): Promise<void> {
     clearTask(storage)
     snapshot.value = null
     resetToDefaultMode()
+  }
+  // 从任务列表直达：没有本地快照时按任务编号加载服务端进度，等用户重选原文件。
+  if (saved === null && postId.value === 0) {
+    const resumeID = Number(new URLSearchParams(window.location.search).get('resume') ?? '')
+    if (Number.isInteger(resumeID) && resumeID > 0) {
+      try {
+        const progress = await fetchProgress(resumeID)
+        postId.value = progress.id
+        serverProgress.value = progress
+        applyServerProgress(progress)
+        phase.value = progress.status === 'uploading' ? 'idle' : progress.status === 'failed' ? 'failed' : 'queued'
+        message.value = `已载入任务 #${progress.id}，请重新选择同一批文件后继续上传`
+      } catch {
+        message.value = '未能读取该任务，请回任务列表重试'
+      }
+    }
   }
   ready.value = true
 }
@@ -694,13 +712,16 @@ function onSelectCover(id: string): void {
   coverId.value = id
   void refreshCover()
   // 任务已创建时同步把新封面写给服务端；提交压缩期间先不改，避免与提交冲突。
-  if (postId.value === 0 || submitting.value) return
+  if (postId.value === 0 || coverLocked.value) return
   const tile = tiles.value.find((item) => item.id === id)
   if (tile === undefined) return
   void (async () => {
     try {
       const cover = await makeCover(tile.posterBlob ?? tile.blob)
       await changeCover(postId.value, tile.sortOrder, cover.dataUrl)
+      if (serverProgress.value !== null) {
+        serverProgress.value = { ...serverProgress.value, cover_sort_order: tile.sortOrder }
+      }
       message.value = '封面已更新'
     } catch (error) {
       // 失败时回到服务端实际封面，不让界面显示一份没生效的选择。
@@ -930,6 +951,11 @@ async function publish(): Promise<void> {
     return
   }
 
+  if (serverProgress.value !== null && serverProgress.value.control_state !== 'running') {
+    pushError(serverProgress.value.control_state === 'stopped' ? '任务已停止，不能再继续上传' : '任务已暂停，请先继续任务')
+    return
+  }
+
   submitting.value = true
   try {
     const frozen = freezeSubmitStrategy(mode.value, autoCompress.value)
@@ -973,6 +999,8 @@ async function runUpload(): Promise<void> {
       return
     }
 
+    // 上传一开始就展示服务端进度，暂停与停止入口在首轮传输中即可用。
+    applyServerProgress(progress)
     phase.value = 'uploading'
     // 用开始上传时的列表生成队列，中途任何列表变化都不会影响已排定的请求。
     const queue = planUploadQueue(tiles.value.slice(), planned.plan.pending)
@@ -992,8 +1020,17 @@ async function runUpload(): Promise<void> {
     if (failure !== null) {
       const item = queue[failure.index]
       if (uploadAbort?.signal.aborted === true) {
-        // 用户主动暂停或停止：在途项回到待上传，保留已完成的项。
-        statuses.value = { ...statuses.value, [item.sortOrder]: 'pending' }
+        // 用户主动暂停或停止：清掉本轮控制器，按服务端状态恢复全部图片项。
+        uploadAbort = null
+        await refreshServerProgress()
+        const restored: Record<number, UploadStatus> = {}
+        for (const tile of tiles.value) restored[tile.sortOrder] = 'pending'
+        for (const image of serverProgress.value?.images ?? []) {
+          if (image.status === 'uploaded') restored[image.sort_order] = 'uploaded'
+          else if (image.status === 'stored') restored[image.sort_order] = 'stored'
+        }
+        statuses.value = restored
+        phase.value = 'idle'
         return
       }
       phase.value = 'failed'
@@ -1139,7 +1176,7 @@ onBeforeUnmount(() => {
               :cover-id="coverId"
               :statuses="statuses"
               :disabled="working || locked"
-              :cover-disabled="submitting"
+              :cover-disabled="coverLocked"
               @move="onMove"
               @remove="onRemove"
               @select-cover="onSelectCover"

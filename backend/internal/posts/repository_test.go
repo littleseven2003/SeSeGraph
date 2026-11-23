@@ -560,6 +560,11 @@ func TestSavePublishPathsAndMarkPublished(t *testing.T) {
 		t.Errorf("链接 = %s", urls)
 	}
 
+	// 失败标记只作用于正在发布的记录；重新领取后再记失败。
+	if _, err := repo.handle.ExecContext(ctx,
+		`UPDATE posts SET publish_state = 'publishing' WHERE id = ?`, postID); err != nil {
+		t.Fatalf("重置发布状态失败: %v", err)
+	}
 	if err := repo.MarkPublishFailed(ctx, postID, "失败"); err != nil {
 		t.Fatalf("标记失败失败: %v", err)
 	}

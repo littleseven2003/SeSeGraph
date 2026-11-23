@@ -133,12 +133,10 @@ func (p *Publisher) ProcessOnce(ctx context.Context) (bool, error) {
 
 	if err := p.publish(ctx, postID, pageAPI); err != nil {
 		switch {
-		case errors.Is(err, errPublishPaused):
-			// 暂停：放回待发布，恢复后复用已建页面继续。
-			_ = p.repo.ResetPublishPending(ctx, postID)
-			return true, nil
-		case errors.Is(err, errPublishStopped):
-			_ = p.repo.MarkPublishFailed(ctx, postID, "任务已停止")
+		case errors.Is(err, errPublishPaused), errors.Is(err, errPublishStopped),
+			errors.Is(err, posts.ErrPublishStateChanged):
+			// 暂停或停止：按当前状态原子交还，恢复早于交还也会回到待发布。
+			_ = p.repo.ReleasePublish(ctx, postID)
 			return true, nil
 		default:
 			_ = p.repo.MarkPublishFailed(ctx, postID, publishErrText)

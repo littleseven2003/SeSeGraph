@@ -54,10 +54,13 @@ func publishPostHandler(deps Deps) gin.HandlerFunc {
 		}
 
 		// 首次发布时原子冻结链接生成方式与随机短码；重试沿用已冻结值。
+		// 旧版本已建过页面的任务（有 telegraph_paths）重试保持按标题口径，与后续设置隔离。
 		mode := settings.PathModeTitle
-		if deps.Settings != nil {
-			if effective, err := deps.Settings.Effective(c.Request.Context()); err == nil {
-				mode = effective.TelegraphPathMode.Value
+		if info, infoErr := deps.Posts.PublishInfo(c.Request.Context(), postID); infoErr == nil && len(info.Paths) == 0 {
+			if deps.Settings != nil {
+				if effective, err := deps.Settings.Effective(c.Request.Context()); err == nil {
+					mode = effective.TelegraphPathMode.Value
+				}
 			}
 		}
 		slug := ""

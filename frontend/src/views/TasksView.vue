@@ -140,6 +140,13 @@ onBeforeUnmount(() => {
               <p class="mt-0.5 text-xs text-muted">更新于 {{ updatedText(task.updated_at) }}</p>
             </div>
             <div class="flex shrink-0 items-center gap-2">
+              <router-link
+                v-if="task.stored_count < task.image_count || ['uploading', 'queued', 'failed'].includes(task.status)"
+                :to="{ name: 'workbench', query: { resume: task.id } }"
+                class="inline-flex h-9 items-center rounded-full border border-line px-3 text-xs font-medium text-muted transition hover:border-ink/25 hover:text-ink"
+              >
+                继续上传
+              </router-link>
               <button
                 v-if="canPause(task)"
                 type="button"

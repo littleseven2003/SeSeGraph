@@ -474,14 +474,22 @@ func (r *Repository) RequestPublishWithPath(ctx context.Context, postID int64, m
 	return nil
 }
 
-// ResetPublishPending 把暂停中的发布放回待发布，恢复后复用已建页面。
-func (r *Repository) ResetPublishPending(ctx context.Context, postID int64) error {
-	_, err := r.handle.ExecContext(ctx,
-		`UPDATE posts SET publish_state = ?, publish_error = '', updated_at = CURRENT_TIMESTAMP
-		 WHERE id = ? AND publish_state = ? AND control_state = ?`,
-		PublishPending, postID, PublishPublishing, ControlPaused)
+// ReleasePublish 原子交还发布领取：暂停与"暂停后立刻恢复"都回到待发布，
+// 停止则记为失败；只处理仍处于 publishing 的记录，已完成结果不会被覆盖。
+func (r *Repository) ReleasePublish(ctx context.Context, postID int64) error {
+	result, err := r.handle.ExecContext(ctx,
+		`UPDATE posts SET publish_state = CASE WHEN COALESCE(control_state, 'running') = ? THEN ? ELSE ? END,
+		        publish_error = CASE WHEN COALESCE(control_state, 'running') = ? THEN '' ELSE ? END,
+		        updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND publish_state = ? AND pending_delete = 0`,
+		ControlStopped, PublishFailed, PublishPending,
+		ControlStopped, "任务已停止",
+		postID, PublishPublishing)
 	if err != nil {
-		return errors.New("放回待发布失败")
+		return errors.New("交还发布任务失败")
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return nil
 	}
 	return nil
 }
@@ -522,8 +530,9 @@ func (r *Repository) RecoverPublish(ctx context.Context) (int64, error) {
 // MarkPublishFailed 记录发布失败，保留已创建的页面路径供重试复用。
 func (r *Repository) MarkPublishFailed(ctx context.Context, postID int64, message string) error {
 	if _, err := r.handle.ExecContext(ctx,
-		`UPDATE posts SET publish_state = ?, publish_error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		PublishFailed, message, postID); err != nil {
+		`UPDATE posts SET publish_state = ?, publish_error = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND publish_state = ? AND COALESCE(control_state, 'running') <> ?`,
+		PublishFailed, message, postID, PublishPublishing, ControlStopped); err != nil {
 		return errors.New("更新发布状态失败")
 	}
 	return nil

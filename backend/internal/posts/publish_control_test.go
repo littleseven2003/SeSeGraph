@@ -37,6 +37,9 @@ func TestRequestPublishFreezesSlugOnce(t *testing.T) {
 	}
 
 	// 发布失败后重试，即使传入不同设置也沿用已冻结值。
+	if _, ok, err := repo.ClaimPublishable(ctx); err != nil || !ok {
+		t.Fatalf("领取发布失败: %v / %v", ok, err)
+	}
 	if err := repo.MarkPublishFailed(ctx, id, "上游失败"); err != nil {
 		t.Fatalf("标记发布失败失败: %v", err)
 	}
@@ -96,5 +99,108 @@ func TestPauseAllowsPublishStage(t *testing.T) {
 	state, _, err := repo.Control(ctx, id)
 	if err != nil || state != ControlRunning {
 		t.Fatalf("恢复状态 = %q / %v", state, err)
+	}
+}
+
+// TestReleasePublishAfterResume 验证暂停后立刻恢复时发布仍被原子交还，不会卡在 publishing。
+func TestReleasePublishAfterResume(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+	id := storedPost(t, repo)
+	if err := repo.RequestPublish(ctx, id); err != nil {
+		t.Fatalf("发起发布失败: %v", err)
+	}
+	if _, ok, err := repo.ClaimPublishable(ctx); err != nil || !ok {
+		t.Fatalf("领取发布失败: %v / %v", ok, err)
+	}
+	if err := repo.Pause(ctx, id); err != nil {
+		t.Fatalf("暂停失败: %v", err)
+	}
+	// 恢复抢先执行：交还时控制状态已是 running，仍应回到 pending。
+	if err := repo.Resume(ctx, id); err != nil {
+		t.Fatalf("恢复失败: %v", err)
+	}
+	if err := repo.ReleasePublish(ctx, id); err != nil {
+		t.Fatalf("交还失败: %v", err)
+	}
+	info, err := repo.PublishInfo(ctx, id)
+	if err != nil {
+		t.Fatalf("读取发布信息失败: %v", err)
+	}
+	if info.State != PublishPending {
+		t.Errorf("交还后状态 = %q，期望 pending", info.State)
+	}
+}
+
+// TestReleasePublishAfterStopFails 验证停止后交还发布记为失败，不会重新开放领取。
+func TestReleasePublishAfterStopFails(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+	id := storedPost(t, repo)
+	if err := repo.RequestPublish(ctx, id); err != nil {
+		t.Fatalf("发起发布失败: %v", err)
+	}
+	if _, ok, err := repo.ClaimPublishable(ctx); err != nil || !ok {
+		t.Fatalf("领取发布失败: %v / %v", ok, err)
+	}
+	if err := repo.Stop(ctx, id); err != nil {
+		t.Fatalf("停止失败: %v", err)
+	}
+	if err := repo.ReleasePublish(ctx, id); err != nil {
+		t.Fatalf("交还失败: %v", err)
+	}
+	info, err := repo.PublishInfo(ctx, id)
+	if err != nil {
+		t.Fatalf("读取发布信息失败: %v", err)
+	}
+	if info.State != PublishFailed {
+		t.Errorf("停止后交还状态 = %q，期望 failed", info.State)
+	}
+	if _, ok, err := repo.ClaimPublishable(ctx); err != nil || ok {
+		t.Errorf("停止后发布仍被领取: ok=%v err=%v", ok, err)
+	}
+}
+
+// TestReleasePublishRacesResume 验证交还与恢复真并发时发布不会卡在 publishing。
+func TestReleasePublishRacesResume(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+
+	for round := 0; round < 20; round++ {
+		id := storedPost(t, repo)
+		if err := repo.RequestPublish(ctx, id); err != nil {
+			t.Fatalf("发起发布失败: %v", err)
+		}
+		if _, ok, err := repo.ClaimPublishable(ctx); err != nil || !ok {
+			t.Fatalf("领取发布失败: %v / %v", ok, err)
+		}
+		if err := repo.Pause(ctx, id); err != nil {
+			t.Fatalf("暂停失败: %v", err)
+		}
+
+		start := make(chan struct{})
+		done := make(chan error, 2)
+		go func() {
+			<-start
+			done <- repo.Resume(ctx, id)
+		}()
+		go func() {
+			<-start
+			done <- repo.ReleasePublish(ctx, id)
+		}()
+		close(start)
+		for index := 0; index < 2; index++ {
+			if err := <-done; err != nil {
+				t.Fatalf("并发操作失败: %v", err)
+			}
+		}
+
+		info, err := repo.PublishInfo(ctx, id)
+		if err != nil {
+			t.Fatalf("读取发布信息失败: %v", err)
+		}
+		if info.State != PublishPending {
+			t.Fatalf("第 %d 轮并发后状态 = %q，期望 pending", round+1, info.State)
+		}
 	}
 }
