@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ApiError } from '../api/client.ts'
 import {
+  createTelegraphAccount,
   fetchBackupStatus,
   fetchSettings,
   fetchTraffic,
   saveSettings,
   testConnection,
   triggerBackup,
+  updateAdminCredentials,
   SettingsError,
   type BackupStatus,
   type ConnectionResult,
@@ -30,6 +33,10 @@ import {
   FIELD_TELEGRAM_CHANNEL,
   FIELD_TELEGRAM_TOKEN,
   FIELD_TELEGRAPH_AUTHOR,
+  FIELD_TELEGRAPH_TOKEN,
+  credentialErrors,
+  credentialFieldError,
+  hasCredentialErrors,
   hasPatch,
   PROXY_MODES,
   proxyCustomNeedsURL,
@@ -41,6 +48,12 @@ import {
   backupScheduleText,
   saveFailureText,
   tokenPlaceholder,
+  telegraphAccountDisabled,
+  telegraphAccountHint,
+  telegraphAccountState,
+  type CredentialErrors,
+  type CredentialField,
+  type CredentialForm,
   formatTrafficBytes,
   trafficState,
   trafficStateText,
@@ -62,6 +75,21 @@ const backupNote = ref('')
 const backing = ref(false)
 const checking = ref(false)
 const checkError = ref('')
+const telegraphSubmitting = ref(false)
+const telegraphError = ref('')
+const telegraphNote = ref('')
+const credentialForm = reactive<CredentialForm>({
+  currentPassword: '',
+  username: '',
+  newPassword: '',
+  confirmPassword: '',
+})
+const credentialFieldErrors = ref<CredentialErrors>({})
+const credentialSubmitting = ref(false)
+const credentialError = ref('')
+const credentialNote = ref('')
+const router = useRouter()
+let reloginTimer = 0
 const result = ref<ConnectionResult | null>(null)
 // activeSection 跟随滚动更新，左侧目录用它显示当前所在分组。
 const activeSection = ref('upstream')
@@ -72,6 +100,7 @@ const SETTING_NAV = [
   { id: 'defaults', label: '发帖默认值' },
   { id: 'check', label: '连通性自检' },
   { id: 'ops', label: '流量与备份' },
+  { id: 'account', label: '账号安全' },
 ]
 
 // fieldErrorText 给字段就近的报错文案，避免只在底部提示。
@@ -110,6 +139,82 @@ function applyView(next: SettingsView): void {
 
 function managed(field: string): boolean {
   return view.value !== null && view.value.env_managed.includes(field)
+}
+
+function telegraphState(): ReturnType<typeof telegraphAccountState> {
+  return view.value === null ? 'ready' : telegraphAccountState(view.value)
+}
+
+async function requestTelegraphAccount(): Promise<void> {
+  if (view.value === null || telegraphSubmitting.value || telegraphAccountDisabled(telegraphState())) return
+  telegraphSubmitting.value = true
+  telegraphError.value = ''
+  telegraphNote.value = ''
+  try {
+    const result = await createTelegraphAccount(form.authorName)
+    if (view.value !== null) {
+      view.value = {
+        ...view.value,
+        telegraph: {
+          ...view.value.telegraph,
+          token_set: result.configured,
+          token_source: result.source === '' ? 'stored' : result.source,
+          author_name: result.author_name === '' ? view.value.telegraph.author_name : result.author_name,
+        },
+      }
+    }
+    telegraphNote.value = result.configured ? '已申请匿名账户，访问令牌保存在服务端' : '账户已存在，沿用现有配置'
+  } catch (cause) {
+    telegraphError.value = cause instanceof SettingsError ? cause.message : '申请账户失败，请稍后重试'
+  } finally {
+    telegraphSubmitting.value = false
+  }
+}
+
+function credentialErrorText(field: CredentialField): string {
+  return credentialFieldErrors.value[field] ?? ''
+}
+
+async function submitCredentials(): Promise<void> {
+  if (credentialSubmitting.value) return
+  credentialError.value = ''
+  credentialNote.value = ''
+  const errors = credentialErrors(credentialForm)
+  credentialFieldErrors.value = errors
+  if (hasCredentialErrors(errors)) {
+    credentialError.value = '请检查标红的字段'
+    return
+  }
+  credentialSubmitting.value = true
+  try {
+    await updateAdminCredentials({
+      current_password: credentialForm.currentPassword,
+      username: credentialForm.username.trim(),
+      new_password: credentialForm.newPassword,
+    })
+    credentialForm.currentPassword = ''
+    credentialForm.username = ''
+    credentialForm.newPassword = ''
+    credentialForm.confirmPassword = ''
+    credentialNote.value = '账号已更新，请使用新凭据重新登录'
+    reloginTimer = window.setTimeout(() => {
+      void router.push({ name: 'login' })
+    }, 1200)
+  } catch (cause) {
+    if (cause instanceof SettingsError) {
+      credentialError.value = cause.message
+      const mapped: CredentialErrors = {}
+      for (const field of cause.fields) {
+        const key = credentialFieldError(field)
+        if (key !== null) mapped[key] = cause.message
+      }
+      credentialFieldErrors.value = mapped
+    } else {
+      credentialError.value = '修改账号失败，请稍后重试'
+    }
+  } finally {
+    credentialSubmitting.value = false
+  }
 }
 
 async function loadTraffic(): Promise<void> {
@@ -341,6 +446,7 @@ function selectSection(id: string): void {
 }
 
 onBeforeUnmount(() => {
+  window.clearTimeout(reloginTimer)
   window.clearTimeout(pendingTimer)
   pendingJump = ''
   window.removeEventListener('scroll', syncActiveFromScroll)
@@ -545,6 +651,22 @@ onBeforeUnmount(() => {
                         <p class="text-xs text-muted">上游地址</p>
                         <p class="mt-0.5 text-sm">{{ endpointText(view.telegraph.api_base_source) }}</p>
                       </div>
+                    </div>
+
+                    <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-canvas px-3 py-2.5">
+                      <div class="min-w-0">
+                        <p class="text-xs text-muted">{{ telegraphAccountHint(telegraphState(), telegraphSubmitting) }}</p>
+                        <p v-if="telegraphError !== ''" class="mt-1 text-xs text-danger">{{ telegraphError }}</p>
+                        <p v-else-if="telegraphNote !== ''" class="mt-1 text-xs text-accent">{{ telegraphNote }}</p>
+                      </div>
+                      <button
+                        type="button"
+                        :disabled="telegraphAccountDisabled(telegraphState()) || telegraphSubmitting"
+                        class="h-11 shrink-0 rounded-full border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-surface hover:text-ink disabled:opacity-60"
+                        @click="requestTelegraphAccount"
+                      >
+                        {{ telegraphSubmitting ? '申请中…' : '申请账户' }}
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -815,6 +937,106 @@ onBeforeUnmount(() => {
                       <p class="mt-1 text-sm">{{ backupLatestText(backup) }}</p>
                     </template>
                     <p v-else class="text-xs text-muted">尚未读取备份状态。</p>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section id="account" class="scroll-mt-36">
+              <div class="flex items-center gap-2">
+                <span class="tnum rounded border border-line bg-surface px-1.5 py-0.5 text-xs font-medium leading-none text-muted">05</span>
+                <h2 class="text-base font-semibold tracking-tight">账号安全</h2>
+              </div>
+              <p class="mt-1 text-xs text-muted">修改网站管理员账号名或密码，成功后需要重新登录。</p>
+
+              <div class="mt-3 space-y-3">
+                <div class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+                  <div class="border-b border-line/70 px-5 py-4">
+                    <h3 class="text-sm font-semibold">修改管理员用户名与密码</h3>
+                    <p class="mt-1 text-xs text-muted">先验证当前密码；用户名或新密码留空表示不修改，至少改动一项。</p>
+                  </div>
+                  <div class="space-y-4 px-5 py-4">
+                    <label class="block">
+                      <span class="text-xs font-medium text-muted">当前密码</span>
+                      <input
+                        v-model="credentialForm.currentPassword"
+                        type="password"
+                        autocomplete="current-password"
+                        :disabled="credentialSubmitting"
+                        placeholder="用于确认是本人操作"
+                        class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface disabled:opacity-60"
+                        :class="credentialErrorText('current_password') !== '' ? 'border-danger' : ''"
+                      />
+                      <p v-if="credentialErrorText('current_password') !== ''" class="mt-1 text-xs text-danger">
+                        {{ credentialErrorText('current_password') }}
+                      </p>
+                    </label>
+
+                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <label class="block">
+                        <span class="text-xs font-medium text-muted">新用户名</span>
+                        <input
+                          v-model="credentialForm.username"
+                          type="text"
+                          autocomplete="username"
+                          :disabled="credentialSubmitting"
+                          placeholder="留空则不修改"
+                          class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface disabled:opacity-60"
+                          :class="credentialErrorText('username') !== '' ? 'border-danger' : ''"
+                        />
+                        <p v-if="credentialErrorText('username') !== ''" class="mt-1 text-xs text-danger">
+                          {{ credentialErrorText('username') }}
+                        </p>
+                      </label>
+                      <label class="block">
+                        <span class="text-xs font-medium text-muted">新密码</span>
+                        <input
+                          v-model="credentialForm.newPassword"
+                          type="password"
+                          autocomplete="new-password"
+                          :disabled="credentialSubmitting"
+                          placeholder="至少 12 个字符"
+                          class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface disabled:opacity-60"
+                          :class="credentialErrorText('new_password') !== '' ? 'border-danger' : ''"
+                        />
+                        <p v-if="credentialErrorText('new_password') !== ''" class="mt-1 text-xs text-danger">
+                          {{ credentialErrorText('new_password') }}
+                        </p>
+                      </label>
+                    </div>
+
+                    <label class="block">
+                      <span class="text-xs font-medium text-muted">确认新密码</span>
+                      <input
+                        v-model="credentialForm.confirmPassword"
+                        type="password"
+                        autocomplete="new-password"
+                        :disabled="credentialSubmitting"
+                        placeholder="再次输入新密码"
+                        class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface disabled:opacity-60"
+                        :class="credentialErrorText('confirm_password') !== '' ? 'border-danger' : ''"
+                      />
+                      <p v-if="credentialErrorText('confirm_password') !== ''" class="mt-1 text-xs text-danger">
+                        {{ credentialErrorText('confirm_password') }}
+                      </p>
+                    </label>
+
+                    <div class="flex flex-wrap items-center justify-between gap-3">
+                      <p
+                        class="text-xs"
+                        :class="credentialError !== '' ? 'text-danger' : credentialNote !== '' ? 'text-accent' : 'text-muted'"
+                      >
+                        {{ credentialError !== '' ? credentialError : credentialNote !== '' ? credentialNote : '修改成功后当前登录会失效，需要用新凭据重新登录。' }}
+                      </p>
+                      <button
+                        type="button"
+                        :disabled="credentialSubmitting"
+                        class="h-11 shrink-0 rounded-full bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+                        @click="submitCredentials"
+                      >
+                        {{ credentialSubmitting ? '提交中…' : '保存账号修改' }}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>

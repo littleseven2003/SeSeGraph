@@ -15,6 +15,7 @@ export const ENV_MANAGED_HINT = '由环境变量提供，界面不可修改'
 export const FIELD_TELEGRAM_TOKEN = 'telegram.token'
 export const FIELD_TELEGRAM_CHANNEL = 'telegram.channel_id'
 export const FIELD_TELEGRAPH_AUTHOR = 'telegraph.author_name'
+export const FIELD_TELEGRAPH_TOKEN = 'telegraph.token'
 export const FIELD_PROXY_URL = 'proxy.url'
 export const FIELD_PROXY_MODE = 'proxy.mode'
 export const FIELD_PROXY_TELEGRAM = 'proxy.telegram'
@@ -260,4 +261,97 @@ export function backupLatestText(status: BackupStatus): string {
     ? status.latest.created_at
     : created.toLocaleString('zh-CN', { hour12: false })
   return status.latest.name + ' · ' + formatTrafficBytes(status.latest.size) + ' · ' + stamp
+}
+
+/** TelegraphAccountState 描述建号入口的可用状态。 */
+export type TelegraphAccountState = 'managed' | 'configured' | 'ready'
+
+/** telegraphAccountState 判断建号入口的状态：环境托管、已配置或可申请。 */
+export function telegraphAccountState(view: SettingsView): TelegraphAccountState {
+  if (view.env_managed.includes(FIELD_TELEGRAPH_TOKEN) || view.telegraph.token_source === 'env') {
+    return 'managed'
+  }
+  if (view.telegraph.token_set) return 'configured'
+  return 'ready'
+}
+
+/** telegraphAccountHint 说明建号入口当前为何不可点或可点。 */
+export function telegraphAccountHint(state: TelegraphAccountState, submitting: boolean): string {
+  switch (state) {
+    case 'managed':
+      return '访问令牌由环境变量提供，界面不再申请'
+    case 'configured':
+      return '已配置访问令牌，无需重复申请'
+    default:
+      return submitting ? '正在申请匿名账户…' : '未配置时可按当前作者名一键申请匿名账户'
+  }
+}
+
+/** telegraphAccountDisabled 只在未配置且没有托管时允许申请。 */
+export function telegraphAccountDisabled(state: TelegraphAccountState): boolean {
+  return state !== 'ready'
+}
+
+/** 新用户名可用的字符与长度。 */
+export const USERNAME_PATTERN = /^[A-Za-z0-9._-]{1,64}$/
+/** 新密码的最短字符数与 bcrypt 的字节上限。 */
+export const NEW_PASSWORD_MIN = 12
+export const NEW_PASSWORD_MAX_BYTES = 72
+
+/** CredentialForm 是管理员账号安全表单的取值。 */
+export interface CredentialForm {
+  currentPassword: string
+  username: string
+  newPassword: string
+  confirmPassword: string
+}
+
+/** CredentialField 是表单字段的错误键。 */
+export type CredentialField = 'current_password' | 'username' | 'new_password' | 'confirm_password'
+
+/** CredentialErrors 保存字段级错误文案。 */
+export type CredentialErrors = Partial<Record<CredentialField, string>>
+
+/** credentialErrors 校验管理员凭据表单，返回字段级提示。 */
+export function credentialErrors(form: CredentialForm): CredentialErrors {
+  const errors: CredentialErrors = {}
+  if (form.currentPassword === '') {
+    errors.current_password = '请输入当前密码'
+  }
+  const username = form.username.trim()
+  if (username !== '' && !USERNAME_PATTERN.test(username)) {
+    errors.username = '用户名需为 1–64 位字母、数字、点、下划线或短横线'
+  }
+  if (form.newPassword !== '') {
+    if (Array.from(form.newPassword).length < NEW_PASSWORD_MIN) {
+      errors.new_password = '新密码至少 12 个字符'
+    } else if (new TextEncoder().encode(form.newPassword).length > NEW_PASSWORD_MAX_BYTES) {
+      errors.new_password = '新密码不超过 72 字节'
+    } else if (form.confirmPassword !== form.newPassword) {
+      errors.confirm_password = '两次输入的新密码不一致'
+    }
+  } else if (form.confirmPassword !== '') {
+    errors.confirm_password = '请先填写新密码'
+  }
+  if (username === '' && form.newPassword === '' && errors.current_password === undefined) {
+    errors.username = '用户名和新密码至少修改一项'
+  }
+  return errors
+}
+
+/** hasCredentialErrors 判断校验结果是否包含任何字段错误。 */
+export function hasCredentialErrors(errors: CredentialErrors): boolean {
+  return Object.keys(errors).length > 0
+}
+
+/** credentialFieldError 把后端字段名映射到表单字段。 */
+export function credentialFieldError(field: string): CredentialField | null {
+  switch (field) {
+    case 'current_password':
+    case 'username':
+    case 'new_password':
+      return field
+    default:
+      return null
+  }
 }

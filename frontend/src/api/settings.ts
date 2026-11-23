@@ -193,3 +193,64 @@ export async function triggerBackup(): Promise<BackupResult> {
 export async function testConnection(): Promise<ConnectionResult> {
   return (await settingsRequest('/api/settings/test-connection', { method: 'POST' })).json() as Promise<ConnectionResult>
 }
+
+/** TelegraphAccountResult 是申请匿名账户后的状态。 */
+export interface TelegraphAccountResult {
+  configured: boolean
+  source: string
+  author_name: string
+  author_url: string
+}
+
+/** AdminCredentialInput 是修改管理员凭据的请求体，密码留空表示不改。 */
+export interface AdminCredentialInput {
+  current_password: string
+  username: string
+  new_password: string
+}
+
+/** AdminCredentialResult 是修改成功后的账号名与重新登录标记。 */
+export interface AdminCredentialResult {
+  username: string
+  reauthenticate: boolean
+}
+
+/** createTelegraphAccount 用当前作者名申请匿名 Telegraph 账户。 */
+export async function createTelegraphAccount(authorName: string): Promise<TelegraphAccountResult> {
+  const response = await fetch('/api/settings/telegraph/create-account', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ author_name: authorName }),
+  })
+  if (!response.ok) {
+    let parsed = { message: '', fields: [] as string[] }
+    try {
+      parsed = errorResponse(await response.json())
+    } catch {
+      // 响应不是 JSON 时保留统一说明
+    }
+    throw new SettingsError(response.status, parsed.message || '申请账户失败，请稍后重试', parsed.fields)
+  }
+  return (await response.json()) as TelegraphAccountResult
+}
+
+/** updateAdminCredentials 校验当前密码后修改账号名或密码。 */
+export async function updateAdminCredentials(input: AdminCredentialInput): Promise<AdminCredentialResult> {
+  const response = await fetch('/api/settings/admin-credentials', {
+    method: 'PUT',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  if (!response.ok) {
+    let parsed = { message: '', fields: [] as string[] }
+    try {
+      parsed = errorResponse(await response.json())
+    } catch {
+      // 响应不是 JSON 时保留统一说明
+    }
+    throw new SettingsError(response.status, parsed.message || '修改账号失败，请稍后重试', parsed.fields)
+  }
+  return (await response.json()) as AdminCredentialResult
+}
