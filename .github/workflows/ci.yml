@@ -1,6 +1,7 @@
 name: CI
 
-# 候选验证：分支推送与合并请求都跑测试、四平台交叉编译和双架构镜像构建。
+# 候选验证：分支推送与合并请求都跑测试、四平台交叉编译、镜像与两套 Compose。
+# 推送到分支时额外发布候选镜像标签，用于首次建立 GHCR 包并供发布前匿名拉取复核。
 on:
   push:
     branches:
@@ -25,6 +26,7 @@ jobs:
   test:
     name: 测试与类型检查
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -52,7 +54,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.27'
           cache-dependency-path: backend/go.sum
 
       - name: 后端静态检查
@@ -67,6 +69,7 @@ jobs:
     name: 四平台交叉编译
     needs: test
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -82,7 +85,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.27'
           cache-dependency-path: backend/go.sum
 
       - name: 构建前端并交叉编译
@@ -98,23 +101,19 @@ jobs:
           retention-days: 3
 
   image:
-    name: 双架构镜像构建
+    name: 镜像与编排校验
     needs: test
     runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
 
       - uses: docker/setup-qemu-action@v3
 
       - uses: docker/setup-buildx-action@v3
-
-      - name: 双架构构建（不推送）
-        run: |
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            --build-arg VERSION=ci \
-            --build-arg COMMIT="${GITHUB_SHA::7}" \
-            -t sesegraph:ci .
 
       - name: 构建本机架构镜像
         run: |
@@ -126,6 +125,7 @@ jobs:
 
       - name: 运行容器并检查健康接口
         run: |
+          set -eu
           docker run -d --name sesegraph-ci -p 18080:8080 -e DATA_DIR=/app/data sesegraph:ci
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:18080/api/health > /tmp/health.json; then break; fi
@@ -136,3 +136,83 @@ jobs:
           grep -q '"version":"ci"' /tmp/health.json
           grep -q "\"commit\":\"${GITHUB_SHA::7}\"" /tmp/health.json
           docker rm -f sesegraph-ci
+
+      - name: 校验两套 Compose 配置
+        env:
+          DOMAIN: example.com
+          SESEGRAPH_IMAGE: sesegraph:ci
+        run: |
+          set -eu
+          docker compose -f docker-compose.yml config -q
+          docker compose -f docker-compose.yml -f docker-compose.build.yml config -q
+          docker compose -f docker-compose.standalone.yml config -q
+
+      - name: 启动 Compose 主栈的应用服务
+        env:
+          DOMAIN: example.com
+          SESEGRAPH_IMAGE: sesegraph:ci
+        run: |
+          set -eu
+          docker compose -f docker-compose.yml up -d sesegraph
+          for i in $(seq 1 40); do
+            if docker compose -f docker-compose.yml exec -T sesegraph \
+              wget -q -O - http://127.0.0.1:8080/api/health > /tmp/compose-health.json; then break; fi
+            sleep 1
+          done
+          cat /tmp/compose-health.json
+          grep -q '"status":"ok"' /tmp/compose-health.json
+          docker compose -f docker-compose.yml down
+
+      - name: 启动单容器编排并校验重建后数据保留
+        env:
+          SESEGRAPH_IMAGE: sesegraph:ci
+          PUBLIC_URL: https://gallery.example.com
+        run: |
+          set -eu
+          COMPOSE="docker compose -f docker-compose.standalone.yml"
+          wait_health() {
+            for i in $(seq 1 40); do
+              if curl -fsS http://127.0.0.1:8080/api/health > /tmp/standalone-health.json; then return 0; fi
+              sleep 1
+            done
+            cat /tmp/standalone-health.json >&2 || true
+            return 1
+          }
+          hash_data() {
+            (cd data && ls sesegraph.db* 2>/dev/null | sort | xargs -r sha256sum) | sha256sum | awk '{print $1}'
+          }
+          $COMPOSE up -d
+          wait_health
+          cat /tmp/standalone-health.json
+          grep -q '"status":"ok"' /tmp/standalone-health.json
+          test -f data/sesegraph.db
+          test "$(stat -c %u data/sesegraph.db)" = "1000"
+          $COMPOSE stop sesegraph
+          before="$(hash_data)"
+          $COMPOSE up -d --force-recreate
+          wait_health
+          $COMPOSE stop sesegraph
+          after="$(hash_data)"
+          echo "重建前 ${before}"
+          echo "重建后 ${after}"
+          test "$before" = "$after"
+          $COMPOSE down
+
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 发布候选镜像标签
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VERSION=ci
+            COMMIT=${{ github.sha }}
+          tags: ghcr.io/${{ github.repository_owner }}/sesegraph:ci-${{ github.sha }}
