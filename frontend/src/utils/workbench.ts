@@ -28,6 +28,8 @@ export interface WorkbenchImage {
   animated?: boolean
   /** 动图类型，用于角标文案 */
   animatedKind?: 'gif' | 'other'
+  /** 本次提交压缩失败，角标显示具体原因 */
+  compressFailed?: boolean
   /** 原图 MIME，恢复原图时使用 */
   sourceMime?: string
 }

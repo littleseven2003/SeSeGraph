@@ -57,55 +57,51 @@ const compressLabel = computed(() => (props.autoCompress ? '自动压缩：开' 
       </div>
     </div>
 
-    <div v-else class="min-w-0">
-      <p class="text-xs font-medium text-ink">画质模式</p>
-      <p class="mt-0.5 text-xs text-muted">{{ limitText }}</p>
-    </div>
-
-    <p v-if="props.layout === 'stack'" class="text-xs text-muted">{{ limitText }}</p>
-
-    <button
-      type="button"
-      role="switch"
-      :aria-checked="props.autoCompress"
-      :aria-label="compressLabel"
-      class="flex h-11 items-center gap-2 rounded-full px-2 text-xs text-muted transition disabled:opacity-50"
-      :disabled="props.disabled"
-      @click="emit('toggle-compress', !props.autoCompress)"
-    >
-      <span class="whitespace-nowrap">自动压缩</span>
-      <span
-        class="relative inline-flex h-6 w-10 items-center rounded-full transition"
-        :class="props.autoCompress ? 'bg-accent' : 'bg-line'"
-      >
-        <span
-          class="absolute h-4 w-4 rounded-full bg-surface shadow transition"
-          :class="props.autoCompress ? 'left-5' : 'left-1'"
-        />
-      </span>
-    </button>
-
-    <div
-      v-if="props.layout !== 'stack'"
-      class="flex rounded-full bg-canvas p-1"
-      role="group"
-      aria-label="画质模式"
-    >
-        <button
-          v-for="option in options"
-          :key="option.value"
-          type="button"
-          class="h-11 rounded-full px-3.5 text-xs font-medium transition disabled:opacity-50"
-          :class="
-            props.mode === option.value
-              ? 'bg-accent text-white'
-              : 'text-muted hover:bg-surface hover:text-ink'
-          "
-          :disabled="props.disabled"
-          @click="emit('select', option.value)"
-        >
-          {{ option.label }}
-        </button>
+    <div v-else class="flex min-w-0 flex-col gap-2">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div class="min-w-0">
+          <p class="text-xs font-medium text-ink">画质模式</p>
+        </div>
+        <div class="flex rounded-full bg-canvas p-1" role="group" aria-label="画质模式">
+          <button
+            v-for="option in options"
+            :key="option.value"
+            type="button"
+            class="h-11 rounded-full px-3.5 text-xs font-medium transition disabled:opacity-50"
+            :class="
+              props.mode === option.value
+                ? 'bg-accent text-white'
+                : 'text-muted hover:bg-surface hover:text-ink'
+            "
+            :disabled="props.disabled"
+            @click="emit('select', option.value)"
+          >
+            {{ option.label }}
+          </button>
+        </div>
       </div>
+      <button
+        type="button"
+        role="switch"
+        :aria-checked="props.autoCompress"
+        :aria-label="compressLabel"
+        class="flex h-11 items-center justify-between gap-2 rounded-xl px-1 text-xs text-muted transition disabled:opacity-50"
+        :disabled="props.disabled"
+        @click="emit('toggle-compress', !props.autoCompress)"
+      >
+        <span class="whitespace-nowrap">自动压缩</span>
+        <span
+          class="relative inline-flex h-6 w-10 items-center rounded-full transition"
+          :class="props.autoCompress ? 'bg-accent' : 'bg-line'"
+        >
+          <span
+            class="absolute h-4 w-4 rounded-full bg-surface shadow transition"
+            :class="props.autoCompress ? 'left-5' : 'left-1'"
+          />
+        </span>
+      </button>
+      <p class="text-xs text-muted">{{ limitText }}</p>
+    </div>
+    <p v-if="props.layout === 'stack'" class="text-xs text-muted">{{ limitText }}</p>
   </div>
 </template>

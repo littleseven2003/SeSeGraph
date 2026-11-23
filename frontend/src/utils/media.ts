@@ -368,12 +368,14 @@ export function evaluateMedia(input: {
   compressed: boolean
   animated?: boolean
   animatedKind?: 'gif' | 'other'
+  failed?: boolean
 }, mode: UploadMode, autoCompress: boolean): MediaEvaluation {
   if (input.kind === 'video') {
     return input.size <= MAX_VIDEO_BYTES ? { state: 'ok', label: '满足' } : { state: 'blocked', label: '超 20MB' }
   }
   const limit = mode === 'document' ? DOCUMENT_LIMIT_BYTES : PHOTO_LIMIT_BYTES
   if (input.size <= limit) return { state: 'ok', label: '满足' }
+  if (input.failed) return { state: 'blocked', label: '压缩失败' }
   if (input.compressed) return { state: 'compressed', label: '已压缩' }
   // 动图先于开关判定：任何开关状态都不能压平动效。
   if (input.animated) {

@@ -41,6 +41,8 @@ function badgeOf(item: WorkbenchTile): { state: string; label: string } {
       size: item.sourceSize ?? item.size,
       compressed: item.compressedFrom !== undefined,
       animated: item.animated,
+      animatedKind: item.animatedKind,
+      failed: item.compressFailed,
     },
     props.mode,
     props.autoCompress,
@@ -150,7 +152,6 @@ function moveBy(index: number, delta: number): void {
         <p class="tnum mt-0.5 text-xs text-muted">
           <template v-if="item.compressedFrom">
             {{ formatBytes(item.compressedFrom) }} → {{ formatBytes(item.size) }}
-            <span class="ml-1 rounded bg-accent-soft px-1.5 py-0.5 text-[11px] font-medium text-accent">已压缩</span>
           </template>
           <template v-else>
             {{ formatBytes(item.size) }}<span v-if="item.kind === 'video' && item.duration"> · {{ formatDuration(item.duration) }}</span>

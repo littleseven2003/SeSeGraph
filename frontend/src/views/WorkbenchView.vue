@@ -329,6 +329,8 @@ async function compressForSubmit(): Promise<string> {
         size: tile.sourceSize ?? tile.size,
         compressed: false,
         animated: tile.animated,
+        animatedKind: tile.animatedKind,
+        failed: tile.compressFailed,
       },
       mode.value,
       autoCompress.value,
@@ -372,6 +374,8 @@ async function compressForSubmit(): Promise<string> {
           }
         }
       } catch (error) {
+        const position = updated.findIndex((item) => item.id === tile.id)
+        if (position >= 0) updated[position] = { ...updated[position], compressFailed: true }
         failures.push(`${tile.name} 压缩失败：${error instanceof Error ? error.message : '请重试'}`)
       }
     }
@@ -471,6 +475,8 @@ function announceStatus(): void {
         size: tile.sourceSize ?? tile.size,
         compressed: tile.compressedFrom !== undefined,
         animated: tile.animated,
+        animatedKind: tile.animatedKind,
+        failed: tile.compressFailed,
       },
       mode.value,
       autoCompress.value,
