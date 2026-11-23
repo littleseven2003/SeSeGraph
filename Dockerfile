@@ -12,7 +12,7 @@ COPY frontend/ ./
 RUN pnpm build
 
 # 阶段二：静态编译后端并嵌入前端产物
-FROM golang:1.22-alpine AS build
+FROM golang:1.27-alpine AS build
 WORKDIR /app/backend
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
@@ -24,8 +24,8 @@ RUN CGO_ENABLED=0 go build -trimpath \
     -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
     -o /out/sesegraph ./cmd/server
 
-# 阶段三：运行层
-FROM alpine:3.20
+# 阶段三：运行层（Alpine 3.22 仍在安全维护期内）
+FROM alpine:3.22
 RUN apk add --no-cache ca-certificates tzdata \
     && addgroup -S -g 1000 sesegraph \
     && adduser -S -u 1000 -G sesegraph -h /app sesegraph \

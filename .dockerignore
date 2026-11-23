@@ -16,6 +16,10 @@ README.md
 CHANGELOG.md
 LICENSE
 frontend/src/dev
+# 本地临时素材与个人样屏，不入镜像
+.local
+.local/
+deploy/*.local.conf
 frontend/node_modules
 docs
 frontend/dist
