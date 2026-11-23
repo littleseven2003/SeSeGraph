@@ -103,6 +103,7 @@ function moveBy(index: number, delta: number): void {
     <li
       v-for="(item, index) in props.items"
       :key="item.id"
+      :id="`tile-${item.id}`"
       class="group relative overflow-hidden rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.06)] transition"
       :class="[
         item.id === props.coverId ? 'border-brand ring-1 ring-brand/30' : 'border-line',

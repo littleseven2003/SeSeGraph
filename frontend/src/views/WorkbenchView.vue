@@ -334,7 +334,19 @@ async function compressForSubmit(): Promise<string> {
     else if (verdict.state === 'pending') pending.push(tile)
   }
   if (blocked.length > 0) {
-    return `有 ${blocked.length} 项超出当前模式上限且无法自动压缩，请调整模式、开启压缩或移除后再提交（如 ${blocked[0]}）`
+    // 定位第一张被拦的卡片，光有汇总数字不够。
+    const first = tiles.value.find((tile) => {
+      const verdict = evaluateMedia(
+        { kind: tile.kind ?? 'image', size: tile.sourceSize ?? tile.size, compressed: false, animated: tile.animated, animatedKind: tile.animatedKind },
+        mode.value,
+        autoCompress.value,
+      )
+      return verdict.state === 'blocked'
+    })
+    if (first) {
+      document.getElementById(`tile-${first.id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }
+    return `有 ${blocked.length} 项超出当前模式上限且无法自动压缩，请调整模式、开启压缩或移除后再提交（已定位：${blocked[0]}）`
   }
   if (pending.length === 0) return ''
   const updated = tiles.value.slice()
