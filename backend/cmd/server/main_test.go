@@ -206,7 +206,7 @@ func TestEnvBootstrapCreatesAdminWithoutLoggingPassword(t *testing.T) {
 	}
 
 	service := auth.NewService(store)
-	if err := service.Authenticate(context.Background(), "admin", password); err != nil {
+	if _, err := service.Authenticate(context.Background(), "admin", password); err != nil {
 		t.Errorf("环境变量初始化的账号应可登录: %v", err)
 	}
 }
@@ -243,10 +243,10 @@ func TestEnvBootstrapKeepsExistingAdmin(t *testing.T) {
 	defer store.Close()
 
 	service := auth.NewService(store)
-	if err := service.Authenticate(context.Background(), "admin", "first-password"); err != nil {
+	if _, err := service.Authenticate(context.Background(), "admin", "first-password"); err != nil {
 		t.Errorf("应保留首次初始化的账号: %v", err)
 	}
-	if err := service.Authenticate(context.Background(), "intruder", "second-password"); err == nil {
+	if _, err := service.Authenticate(context.Background(), "intruder", "second-password"); err == nil {
 		t.Error("不应被后一次环境变量覆盖")
 	}
 }

@@ -36,51 +36,61 @@ func NewSessions(secret []byte, ttl time.Duration, secure bool) *Sessions {
 	return &Sessions{secret: secret, ttl: ttl, secure: secure}
 }
 
-// Issue 为账号签发会话令牌。
-func (s *Sessions) Issue(username string) string {
+// Issue 为账号签发带会话版本的令牌。
+func (s *Sessions) Issue(username string, version int) string {
 	expires := time.Now().Add(s.ttl).Unix()
 	payload := base64.RawURLEncoding.EncodeToString([]byte(username)) +
-		"|" + strconv.FormatInt(expires, 10)
+		"|" + strconv.FormatInt(expires, 10) +
+		"|" + strconv.Itoa(version)
 	return payload + "." + s.sign(payload)
 }
 
-// Verify 校验令牌并返回账号名。
-func (s *Sessions) Verify(token string) (string, error) {
+// Verify 校验令牌并返回账号名与会话版本。
+// 升级前签发的两段令牌没有版本字段，按版本 0 处理，改密后自然失效。
+func (s *Sessions) Verify(token string) (string, int, error) {
 	if token == "" {
-		return "", ErrInvalidSession
+		return "", 0, ErrInvalidSession
 	}
 	payload, signature, found := strings.Cut(token, ".")
 	if !found || payload == "" || signature == "" {
-		return "", ErrInvalidSession
+		return "", 0, ErrInvalidSession
 	}
 	if !hmac.Equal([]byte(signature), []byte(s.sign(payload))) {
-		return "", ErrInvalidSession
+		return "", 0, ErrInvalidSession
 	}
 
-	encodedName, expiresText, found := strings.Cut(payload, "|")
-	if !found {
-		return "", ErrInvalidSession
+	parts := strings.Split(payload, "|")
+	if len(parts) < 2 || len(parts) > 3 {
+		return "", 0, ErrInvalidSession
 	}
-	expires, err := strconv.ParseInt(expiresText, 10, 64)
+	version := 0
+	if len(parts) == 3 {
+		parsed, err := strconv.Atoi(parts[2])
+		if err != nil || parsed < 0 {
+			return "", 0, ErrInvalidSession
+		}
+		version = parsed
+	}
+	expires, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil {
-		return "", ErrInvalidSession
+		return "", 0, ErrInvalidSession
 	}
 	if time.Now().Unix() >= expires {
-		return "", ErrInvalidSession
+		return "", 0, ErrInvalidSession
 	}
 
-	nameBytes, err := base64.RawURLEncoding.DecodeString(encodedName)
+	nameBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil || len(nameBytes) == 0 {
-		return "", ErrInvalidSession
+		return "", 0, ErrInvalidSession
 	}
-	return string(nameBytes), nil
+	return string(nameBytes), version, nil
 }
 
-// SetCookie 把登录状态写入 HttpOnly Cookie。
-func (s *Sessions) SetCookie(w http.ResponseWriter, username string) {
+// SetCookie 把登录状态写入 HttpOnly Cookie，令牌带当前会话版本。
+func (s *Sessions) SetCookie(w http.ResponseWriter, username string, version int) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     CookieName,
-		Value:    s.Issue(username),
+		Value:    s.Issue(username, version),
 		Path:     "/",
 		MaxAge:   int(s.ttl.Seconds()),
 		HttpOnly: true,
@@ -102,11 +112,11 @@ func (s *Sessions) ClearCookie(w http.ResponseWriter) {
 	})
 }
 
-// AuthenticateRequest 读取请求 Cookie 并返回登录账号名。
-func (s *Sessions) AuthenticateRequest(r *http.Request) (string, error) {
+// AuthenticateRequest 读取请求 Cookie 并返回登录账号名与会话版本。
+func (s *Sessions) AuthenticateRequest(r *http.Request) (string, int, error) {
 	cookie, err := r.Cookie(CookieName)
 	if err != nil {
-		return "", ErrInvalidSession
+		return "", 0, ErrInvalidSession
 	}
 	return s.Verify(cookie.Value)
 }

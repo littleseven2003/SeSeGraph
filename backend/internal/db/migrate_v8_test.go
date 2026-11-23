@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// TestMigrateAddsViewsColumns 验证 v7 旧库升级到 v8 后补上浏览量字段：
+// TestMigrateAddsViewsColumns 验证 v7 旧库升级到当前版本后补上浏览量字段：
 // 已有记录默认 0 且时间戳为空，表示尚未同步。
 func TestMigrateAddsViewsColumns(t *testing.T) {
 	handle, err := Open(filepath.Join(t.TempDir(), "legacy-v7.db"))
@@ -56,8 +56,8 @@ func TestMigrateAddsViewsColumns(t *testing.T) {
 	if err := handle.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("读取版本失败: %v", err)
 	}
-	if version != 8 || SchemaVersion != 8 {
-		t.Fatalf("版本 = %d，SchemaVersion = %d，期望 8", version, SchemaVersion)
+	if version != 9 || SchemaVersion != 9 {
+		t.Fatalf("版本 = %d，SchemaVersion = %d，期望 9", version, SchemaVersion)
 	}
 
 	var count int
