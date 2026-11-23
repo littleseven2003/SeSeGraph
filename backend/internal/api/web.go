@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"io/fs"
 	"net/http"
 	"path"
@@ -10,9 +11,13 @@ import (
 )
 
 // spaHandler 提供嵌入的前端页面：命中的静态文件直出，其余路径回退到入口页。
-func spaHandler(webFS fs.FS) gin.HandlerFunc {
+// rssURL 非空时在入口页注入订阅源自动发现链接；为空表示订阅未启用。
+func spaHandler(webFS fs.FS, rssURL string) gin.HandlerFunc {
 	fileServer := http.FileServer(http.FS(webFS))
 	index, indexErr := fs.ReadFile(webFS, "index.html")
+	if indexErr == nil && rssURL != "" {
+		index = injectRSSLink(index, rssURL)
+	}
 
 	return func(c *gin.Context) {
 		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
@@ -55,6 +60,22 @@ func spaHandler(webFS fs.FS) gin.HandlerFunc {
 		c.Set(routeLabelKey, routeLabelSPA)
 		c.Data(http.StatusOK, "text/html; charset=utf-8", index)
 	}
+}
+
+// injectRSSLink 在入口页 head 结束前插入订阅发现链接，标题与站内保持一致。
+func injectRSSLink(index []byte, rssURL string) []byte {
+	link := `<link rel="alternate" type="application/rss+xml" title="SeSe 图册" href="` +
+		htmlEscapeAttr(rssURL) + `" />`
+	if bytes.Contains(index, []byte(`type="application/rss+xml"`)) {
+		return index
+	}
+	return bytes.Replace(index, []byte("</head>"), []byte("  "+link+"\n  </head>"), 1)
+}
+
+// htmlEscapeAttr 转义放入属性的值，避免地址里的特殊字符破坏 HTML。
+func htmlEscapeAttr(value string) string {
+	replacer := strings.NewReplacer("&", "&amp;", `"`, "&quot;", "<", "&lt;", ">", "&gt;")
+	return replacer.Replace(value)
 }
 
 func fileExists(webFS fs.FS, name string) bool {

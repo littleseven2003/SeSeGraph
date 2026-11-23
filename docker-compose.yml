@@ -44,6 +44,8 @@ services:
       # 浏览量同步：默认 30 分钟一轮，手动刷新冷却 60 秒
       VIEWS_SYNC_MINUTES: ${VIEWS_SYNC_MINUTES:-30}
       VIEWS_COOLDOWN_SECONDS: ${VIEWS_COOLDOWN_SECONDS:-60}
+      # 站点订阅：默认关闭，启用且 PUBLIC_URL 为 HTTPS 时提供 /rss.xml
+      RSS_ENABLED: ${RSS_ENABLED:-false}
       # 月度流量看护：留空或 0 表示不启用
       TRAFFIC_ALERT_GB: ${TRAFFIC_ALERT_GB:-}
       TRAFFIC_LIMIT_GB: ${TRAFFIC_LIMIT_GB:-}

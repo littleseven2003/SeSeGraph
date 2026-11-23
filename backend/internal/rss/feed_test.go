@@ -85,3 +85,14 @@ func TestMarshalEmptyFeedIsValid(t *testing.T) {
 		t.Errorf("空订阅不应有条目: %d", len(parsed.Channel.Items))
 	}
 }
+
+func TestSanitizeTextDropsMarkupAndTelegramURLs(t *testing.T) {
+	raw := "第一行 <b>粗体</b>\n\n第二行 https://api.telegram.org/file/bot123456:ABCdefGHIjklMNOpqrSTUvwxYZ/photo.jpg 结束"
+	got := SanitizeText(raw)
+	if strings.Contains(got, "<") || strings.Contains(got, "api.telegram.org") || strings.Contains(got, "bot123456") {
+		t.Errorf("清洗后仍含标签或 Telegram 直链: %q", got)
+	}
+	if !strings.Contains(got, "第一行 粗体") || !strings.Contains(got, "第二行 结束") {
+		t.Errorf("清洗结果不符: %q", got)
+	}
+}

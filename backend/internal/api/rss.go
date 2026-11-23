@@ -15,12 +15,32 @@ import (
 // rssMaxItems 与订阅查询上限保持一致。
 const rssMaxItems = 50
 
+// subscriptionURL 返回对外订阅地址；未启用或公开地址不合法时为空。
+func subscriptionURL(deps Deps) string {
+	if !deps.RSSEnabled {
+		return ""
+	}
+	base := publicBaseURL(deps.PublicURL)
+	if base == "" {
+		return ""
+	}
+	return base + "/rss.xml"
+}
+
+// siteHandler 汇报站点级公开配置，供前端按启用状态渲染入口。
+func siteHandler(deps Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("Cache-Control", "no-cache")
+		c.JSON(http.StatusOK, gin.H{"rss_url": subscriptionURL(deps)})
+	}
+}
+
 // rssHandler 输出站点图集的 RSS 2.0 订阅源。
 // 只有启用且配置了合法 HTTPS 公开地址时才提供；内容只含公开字段。
 func rssHandler(deps Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		base := publicBaseURL(deps.PublicURL)
-		if !deps.RSSEnabled || base == "" || deps.Posts == nil {
+		if deps.Posts == nil || subscriptionURL(deps) == "" {
 			c.Status(http.StatusNotFound)
 			return
 		}
@@ -45,7 +65,7 @@ func rssHandler(deps Deps) gin.HandlerFunc {
 			}
 			feed.Items = append(feed.Items, rss.Item{
 				Title:       item.Title,
-				Description: item.Description,
+				Description: rss.SanitizeText(item.Description),
 				Link:        item.Link,
 				GUID:        item.Link,
 				Published:   published,

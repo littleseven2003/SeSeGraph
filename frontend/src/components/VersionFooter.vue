@@ -4,7 +4,7 @@ import { fetchHealth } from '../api/client'
 
 const version = ref('')
 const failed = ref(false)
-const rssReady = ref(false)
+const rssURL = ref('')
 
 onMounted(async () => {
   try {
@@ -12,11 +12,15 @@ onMounted(async () => {
   } catch {
     failed.value = true
   }
-  // 订阅入口只在站点实际提供 RSS 时出现，避免指向 404。
+  // 订阅入口跟随后端启用状态，地址统一由 /api/site 提供，兼容子路径部署。
   try {
-    rssReady.value = (await fetch('/rss.xml', { method: 'HEAD' })).ok
+    const response = await fetch('/api/site')
+    if (response.ok) {
+      const site = (await response.json()) as { rss_url?: string }
+      rssURL.value = typeof site.rss_url === 'string' ? site.rss_url : ''
+    }
   } catch {
-    rssReady.value = false
+    rssURL.value = ''
   }
 })
 </script>
@@ -54,8 +58,8 @@ onMounted(async () => {
         </a>
 
         <a
-          v-if="rssReady"
-          href="/rss.xml"
+          v-if="rssURL !== ''"
+          :href="rssURL"
           target="_blank"
           rel="noreferrer noopener"
           class="inline-flex items-center gap-1 rounded-full border border-line bg-canvas/80 px-2.5 py-0.5 text-xs transition hover:border-brand/40 hover:text-brand-strong"

@@ -104,6 +104,7 @@ func NewRouter(deps Deps) *gin.Engine {
 	router.GET("/i/:short_code", gateway.handle)
 
 	// 公开订阅源：默认关闭，启用且配置有效 HTTPS 地址时才提供。
+	router.GET("/api/site", siteHandler(deps))
 	router.GET("/rss.xml", rssHandler(deps))
 	router.HEAD("/rss.xml", rssHandler(deps))
 
@@ -134,7 +135,7 @@ func NewRouter(deps Deps) *gin.Engine {
 	admin.POST("/posts/:id/views/refresh", refreshViewsHandler(deps))
 
 	if deps.WebFS != nil {
-		router.NoRoute(spaHandler(deps.WebFS))
+		router.NoRoute(spaHandler(deps.WebFS, subscriptionURL(deps)))
 	}
 
 	return router

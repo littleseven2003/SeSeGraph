@@ -2,8 +2,47 @@ package rss
 
 import (
 	"encoding/xml"
+	"regexp"
+	"strings"
 	"time"
 )
+
+// htmlTagPattern 匹配说明里的 HTML 标签，订阅只输出纯文本。
+var htmlTagPattern = regexp.MustCompile(`<[^>]*>`)
+
+// telegramURLPattern 匹配 Telegram 文件直链，这类地址可能含 Bot 令牌，不能进入订阅。
+var telegramURLPattern = regexp.MustCompile(`https?://api\.telegram\.org/\S+`)
+
+// botTokenPattern 兜底匹配形如 123456:ABC-DEF 的令牌片段。
+var botTokenPattern = regexp.MustCompile(`\b\d{6,}:[A-Za-z0-9_-]{30,}\b`)
+
+// SanitizeText 把说明转为订阅可用的纯文本：去掉 HTML 标签、Telegram 文件直链与令牌片段，
+// 并压缩多余空白。段落之间的单个空行保留。
+func SanitizeText(raw string) string {
+	text := htmlTagPattern.ReplaceAllString(raw, "")
+	text = telegramURLPattern.ReplaceAllString(text, "")
+	text = botTokenPattern.ReplaceAllString(text, "")
+	lines := strings.Split(text, "\n")
+	cleaned := make([]string, 0, len(lines))
+	blank := false
+	for _, line := range lines {
+		line = strings.Join(strings.Fields(line), " ")
+		if line == "" {
+			if blank || len(cleaned) == 0 {
+				continue
+			}
+			blank = true
+			cleaned = append(cleaned, "")
+			continue
+		}
+		blank = false
+		cleaned = append(cleaned, line)
+	}
+	for len(cleaned) > 0 && cleaned[len(cleaned)-1] == "" {
+		cleaned = cleaned[:len(cleaned)-1]
+	}
+	return strings.Join(cleaned, "\n")
+}
 
 // Item 是订阅源中的一条图集记录。
 type Item struct {
