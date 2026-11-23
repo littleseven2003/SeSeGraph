@@ -111,9 +111,9 @@ const copyLabel = computed(() => {
       >
         {{ excerpt }}
       </p>
-      <div class="mt-1.5 flex min-w-0 items-center gap-2 overflow-hidden text-xs text-muted md:mt-1.5">
+      <div class="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
         <span class="tnum hidden shrink-0 md:inline">{{ volume }}</span>
-        <span v-if="publishedDate !== ''" class="tnum hidden shrink-0 md:inline">{{ publishedDate }}</span>
+        <span v-if="publishedDate !== ''" class="tnum shrink-0">{{ publishedDate }}</span>
         <span class="tnum hidden shrink-0 md:inline">{{ item.image_count }}P</span>
         <span v-if="showViews" class="inline-flex shrink-0 items-center gap-1 tnum" :title="viewsTitle">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-3.5 w-3.5" aria-hidden="true">
@@ -127,6 +127,8 @@ const copyLabel = computed(() => {
           :class="chipClass"
           >{{ status.label }}</span
         >
+        <!-- 窄屏保留一个标签，桌面端展示两个。 -->
+        <span v-if="item.tags.length > 0" class="max-w-[6rem] truncate md:hidden">#{{ item.tags[0] }}</span>
         <span class="hidden min-w-0 flex-wrap items-center gap-1 md:flex">
           <span v-for="tag in item.tags.slice(0, 2)" :key="tag" class="max-w-[8rem] truncate">#{{ tag }}</span>
         </span>
@@ -136,7 +138,7 @@ const copyLabel = computed(() => {
     <!-- 桌面端独立描述列：最多两行，空描述用极轻占位符收住列宽。 -->
     <p
       v-if="excerpt !== ''"
-      class="hidden line-clamp-2 break-words text-xs leading-[1.6] text-muted md:block"
+      class="hidden line-clamp-2 break-words text-xs leading-[1.6] text-muted md:line-clamp-2"
       :title="excerpt"
     >
       {{ excerpt }}
@@ -144,13 +146,13 @@ const copyLabel = computed(() => {
     <p v-else class="hidden select-none text-xs text-muted/45 md:block" aria-hidden="true">—</p>
 
     <span
-      class="hidden shrink-0 items-center gap-1.5 rounded-full border px-2 py-1 text-xs font-medium leading-none md:inline-flex"
+      class="hidden shrink-0 items-center gap-1.5 justify-self-start rounded-full border px-2 py-1 text-xs font-medium leading-none md:inline-flex"
       :class="chipClass"
     >
       {{ status.label }}
     </span>
 
-    <div class="flex shrink-0 items-center gap-1.5">
+    <div class="flex shrink-0 items-center justify-end gap-1.5">
       <button
         v-if="shareUrl !== ''"
         type="button"
