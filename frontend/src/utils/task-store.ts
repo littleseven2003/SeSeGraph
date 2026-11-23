@@ -13,6 +13,9 @@ export interface TaskSnapshot {
   imageCount: number
   files: SnapshotFile[]
   createdAt: number
+  /** 建立任务时的画质模式与压缩策略，续传沿用 */
+  mode?: 'photo' | 'document'
+  autoCompress?: boolean
 }
 
 // 最小化的存储接口，便于在测试中替换。

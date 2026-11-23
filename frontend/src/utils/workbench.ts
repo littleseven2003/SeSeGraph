@@ -22,6 +22,12 @@ export interface WorkbenchImage {
   compressedFrom?: number
   /** 视频首帧封面，用于生成缩略图 */
   posterBlob?: Blob
+  /** 未压缩的原图/原视频，切换模式或开关时以此为基准重新判定 */
+  sourceBlob?: Blob
+  /** 是否为无法压缩的动图 */
+  animated?: boolean
+  /** 原图 MIME，恢复原图时使用 */
+  sourceMime?: string
 }
 
 let sequence = 0

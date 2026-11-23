@@ -11,6 +11,7 @@ import {
   limitForMedia,
   mediaKind,
   needsCompression,
+  selectionSummary,
   sizeCompare,
 } from '../src/utils/media.ts'
 
@@ -74,4 +75,26 @@ test('压缩汇总与体积对比文案', () => {
 test('mimeForName 覆盖 MP4', () => {
   assert.equal(mimeForName('clip.mp4'), 'video/mp4')
   assert.equal(mimeForName('photo.jpg'), 'image/jpeg')
+})
+
+test('checkMediaFile 恢复图片扩展名白名单', () => {
+  for (const name of ['a.txt', 'IMG_0001.HEIC', 'shot.dng', 'pic.avif']) {
+    assert.match(checkMediaFile({ name, size: 1000 }, 'photo') ?? '', /不是支持的格式/)
+  }
+  assert.equal(checkMediaFile({ name: 'a.JPG', size: 1000 }, 'photo'), null)
+  assert.equal(checkMediaFile({ name: 'a.webp', size: 1000 }, 'photo'), null)
+  // 40 张正常 JPG 全部放行，不会被体积或格式规则拦下。
+  const folder = Array.from({ length: 40 }, (_, index) => ({ name: `IMG_${index + 1}.jpg`, size: 8_000_000 }))
+  assert.equal(folder.filter((file) => checkMediaFile(file, 'photo') !== null).length, 0)
+})
+
+test('selectionSummary 汇总读取、加入与跳过原因', () => {
+  const text = selectionSummary({
+    read: 42,
+    added: 40,
+    unread: [],
+    skipped: [{ label: '超过 20MB', names: ['big.jpg'] }],
+  })
+  assert.match(text, /读取 42 个文件：加入 40 项/)
+  assert.match(text, /跳过 1 个：超过 20MB 1 个（如 big\.jpg）/)
 })

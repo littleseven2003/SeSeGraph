@@ -1,12 +1,14 @@
 // 短视频与超大静态图的前端预处理规则，与后端上限保持一致。
-import { baseName, extensionOf, formatBytes, isVideoName, limitForMode, type UploadMode } from './image.ts'
+import { baseName, extensionOf, formatBytes, isImageName, isVideoName, limitForMode, type UploadMode } from './image.ts'
 
 // 单段视频上限，与 Telegram 云端 getFile 的 20MB 硬限制一致。
 export const MAX_VIDEO_BYTES = 20000000
 // photo 模式下超过该体积的静态图先压缩再上传。
 export const PHOTO_COMPRESS_THRESHOLD = 10000000
+// 选图阶段只拦超 50MB 的静态图，具体上限在模式与开关确定后再判定。
+export const MEDIA_IMPORT_MAX_BYTES = 50000000
 // 压缩输入的安全上限：避免把整块内存交给超大原图。
-export const COMPRESS_MAX_INPUT_BYTES = 64 * 1024 * 1024
+export const COMPRESS_MAX_INPUT_BYTES = 50 * 1000 * 1000
 export const COMPRESS_MAX_INPUT_PIXELS = 40000000
 // 压缩产物的宽高之和与长宽比上限。
 export const COMPRESS_MAX_DIMENSION_SUM = 10000
@@ -33,8 +35,12 @@ export function needsCompression(mode: UploadMode, name: string, size: number): 
 }
 
 // checkMediaFile 返回不放行的原因，放行时返回 null。
+// 先按扩展名白名单过滤，避免无法解码的格式进入列表或被压缩流程绕过。
 export function checkMediaFile(file: { name: string; size: number }, mode: UploadMode): string | null {
   const name = baseName(file.name)
+  if (!isImageName(file.name) && !isVideoName(file.name)) {
+    return `${name} 不是支持的格式（仅支持 JPG、PNG、WebP、GIF 与 MP4）`
+  }
   if (isVideoName(file.name)) {
     if (file.size > MAX_VIDEO_BYTES) {
       return `${name} 超过 20MB 上限，短视频请先压缩或裁剪`
@@ -242,4 +248,89 @@ export function compressionSummary(results: CompressResult[]): string {
 // 供界面显示的体积对比。
 export function sizeCompare(fromSize: number, toSize: number): string {
   return `${formatBytes(fromSize)} → ${formatBytes(toSize)}`
+}
+
+// checkImportFile 只做选图阶段的格式与原始体积拦截：
+// 静态图与动图需小于 50,000,000 字节，MP4 不超过 20,000,000 字节。
+export function checkImportFile(file: { name: string; size: number }): string | null {
+  if (isVideoName(file.name)) {
+    return file.size <= MAX_VIDEO_BYTES ? null : `${baseName(file.name)} 超过 20MB 上限`
+  }
+  if (!isImageName(file.name)) {
+    return `${baseName(file.name)} 不是支持的格式（仅支持 JPG、PNG、WebP、GIF 与 MP4）`
+  }
+  if (file.size >= MEDIA_IMPORT_MAX_BYTES) {
+    return `${baseName(file.name)} 超过 50MB，请先压缩后再导入`
+  }
+  return null
+}
+
+// 选择结果的统计，用于在界面上说明读取、加入与跳过，而不是只留下最后一条错误。
+export interface SkipGroup {
+  label: string
+  names: string[]
+}
+
+export interface SelectionTally {
+  read: number
+  added: number
+  unread: string[]
+  skipped: SkipGroup[]
+}
+
+// selectionSummary 汇总一次导入：读取多少、加入多少、跳过多少与代表原因。
+export function selectionSummary(tally: SelectionTally): string {
+  const skipped = tally.skipped.reduce((sum, group) => sum + group.names.length, 0)
+  const parts = [`读取 ${tally.read} 个文件：加入 ${tally.added} 项`]
+  if (skipped > 0) {
+    const groups = tally.skipped
+      .filter((group) => group.names.length > 0)
+      .map((group) => `${group.label} ${group.names.length} 个（如 ${group.names[0]}）`)
+      .join('，')
+    parts.push(`跳过 ${skipped} 个：${groups}`)
+  }
+  if (tally.unread.length > 0) {
+    parts.push(`无法读取 ${tally.unread.length} 个（如 ${tally.unread[0]}）`)
+  }
+  return parts.join('；')
+}
+
+// 卡片发布状态：满足、待压缩、已压缩、无法满足。
+export type MediaState = 'ok' | 'pending' | 'compressed' | 'blocked'
+
+export interface MediaEvaluation {
+  state: MediaState
+  /** 角标文案 */
+  label: string
+}
+
+// evaluateMedia 按当前模式与自动压缩开关判定单张静态图/视频是否满足发布要求。
+// 判定只看原始体积与是否已压缩，切换模式或开关都可以重算，不会改动原图。
+export function evaluateMedia(input: {
+  kind: 'image' | 'video'
+  size: number
+  compressed: boolean
+  animated?: boolean
+}, mode: UploadMode, autoCompress: boolean): MediaEvaluation {
+  if (input.kind === 'video') {
+    return input.size <= MAX_VIDEO_BYTES ? { state: 'ok', label: '满足' } : { state: 'blocked', label: '超 20MB' }
+  }
+  const limit = limitForMode(mode)
+  if (input.size <= limit) return { state: 'ok', label: '满足' }
+  if (input.compressed) return { state: 'compressed', label: '已压缩' }
+  if (!autoCompress) return { state: 'blocked', label: `超 ${limit === limitForMode('photo') ? 10 : 20}MB` }
+  if (input.animated) return { state: 'blocked', label: 'GIF 超限' }
+  return { state: 'pending', label: '待压缩' }
+}
+
+// AUTO_COMPRESS_STORAGE_KEY 记录用户对自动压缩开关的选择，默认开启。
+export const AUTO_COMPRESS_STORAGE_KEY = 'sesegraph.workbench.compress'
+
+export function readAutoCompress(storage: { getItem(key: string): string | null } | null): boolean {
+  if (!storage) return true
+  return storage.getItem(AUTO_COMPRESS_STORAGE_KEY) !== 'off'
+}
+
+export function saveAutoCompress(storage: { setItem(key: string, value: string): void } | null, enabled: boolean): void {
+  storage?.setItem(AUTO_COMPRESS_STORAGE_KEY, enabled ? 'on' : 'off')
 }

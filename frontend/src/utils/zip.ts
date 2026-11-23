@@ -1,6 +1,6 @@
 // 在浏览器内解压 ZIP：先读中央目录筛选条目并检查限制，只展开命中的图片与说明文件。
 import { unzipSync } from 'fflate'
-import { baseName, isMediaName } from './image.ts'
+import { baseName, isMediaName, isVideoName } from './image.ts'
 import { sortByNaturalName } from './natural.ts'
 
 // 默认识别的元信息文件名，匹配时不区分大小写。
@@ -12,6 +12,8 @@ export interface ArchiveLimits {
   maxImages: number
   /** 单张图片展开后的上限 */
   maxImageBytes: number
+  /** 单段视频的上限，与 Telegram 云端 getFile 一致 */
+  maxVideoBytes: number
   /** 全部图片展开后的总上限 */
   maxTotalBytes: number
   /** 说明文件展开后的上限，与图片限制相互独立 */
@@ -21,6 +23,7 @@ export interface ArchiveLimits {
 export const DEFAULT_ARCHIVE_LIMITS: ArchiveLimits = {
   maxImages: 500,
   maxImageBytes: 20 * 1024 * 1024,
+  maxVideoBytes: 20000000,
   maxTotalBytes: 512 * 1024 * 1024,
   maxMetaBytes: 64 * 1024,
 }
@@ -83,6 +86,7 @@ export function unpackZip(data: Uint8Array, options: ArchiveOptions = {}): Unpac
   let totalBytes = 0
   let overCount = 0
   let oversizeName = ''
+  let oversizeLimit = limits.maxImageBytes
   let overTotal = false
 
   // 第一遍：只登记条目，不展开任何数据。
@@ -95,8 +99,13 @@ export function unpackZip(data: Uint8Array, options: ArchiveOptions = {}): Unpac
           return false
         }
         const size = file.originalSize
-        if (size > limits.maxImageBytes) {
-          if (oversizeName === '') oversizeName = baseName(file.name)
+        // 视频按 20,000,000 字节限制，静态图上限由调用方按画质模式传入。
+        const limit = isVideoName(file.name) ? limits.maxVideoBytes : limits.maxImageBytes
+        if (size > limit) {
+          if (oversizeName === '') {
+            oversizeName = baseName(file.name)
+            oversizeLimit = limit
+          }
           return false
         }
         if (totalBytes + size > limits.maxTotalBytes) {
@@ -131,7 +140,7 @@ export function unpackZip(data: Uint8Array, options: ArchiveOptions = {}): Unpac
   if (oversizeName !== '') {
     return {
       ok: false,
-      error: `${oversizeName} 超过 ${formatSize(limits.maxImageBytes)} 上限，请压缩后重试`,
+      error: `${oversizeName} 超过 ${formatSize(oversizeLimit)} 上限，请压缩后重试`,
     }
   }
   if (overTotal) {

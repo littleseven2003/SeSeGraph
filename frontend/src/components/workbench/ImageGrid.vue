@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { formatBytes } from '../../utils/image.ts'
-import { formatDuration } from '../../utils/media.ts'
+import { evaluateMedia, formatDuration } from '../../utils/media.ts'
+import type { UploadMode } from '../../utils/image.ts'
 import type { UploadStatus } from '../../utils/upload.ts'
 import type { WorkbenchTile } from '../../utils/workbench.ts'
 
@@ -12,6 +13,8 @@ const props = defineProps<{
   /** 各序号的上传状态，未出现表示待上传 */
   statuses?: Record<number, UploadStatus>
   disabled?: boolean
+  mode: UploadMode
+  autoCompress: boolean
 }>()
 
 const STATUS_TEXT: Record<UploadStatus, string> = {
@@ -26,6 +29,27 @@ const STATUS_CLASS: Record<UploadStatus, string> = {
   uploading: 'bg-brand text-brand-ink',
   uploaded: 'bg-accent text-white',
   failed: 'bg-danger text-white',
+}
+
+// badgeOf 按当前模式与自动压缩开关实时判定合规状态。
+function badgeOf(item: WorkbenchTile): { state: string; label: string } {
+  return evaluateMedia(
+    {
+      kind: item.kind ?? 'image',
+      size: item.sourceSize ?? item.size,
+      compressed: item.compressedFrom !== undefined,
+      animated: item.animated,
+    },
+    props.mode,
+    props.autoCompress,
+  )
+}
+
+const BADGE_CLASS: Record<string, string> = {
+  ok: 'bg-accent-soft text-accent',
+  compressed: 'bg-accent text-white',
+  pending: 'bg-warn-soft text-warn',
+  blocked: 'bg-danger text-white',
 }
 
 function statusOf(sortOrder: number): UploadStatus {
@@ -80,6 +104,7 @@ function moveBy(index: number, delta: number): void {
       class="group relative overflow-hidden rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.06)] transition"
       :class="[
         item.id === props.coverId ? 'border-brand ring-1 ring-brand/30' : 'border-line',
+        badgeOf(item).state === 'blocked' ? 'ring-1 ring-danger/45' : '',
         overIndex === index ? 'border-brand' : '',
       ]"
       :draggable="!props.disabled"
@@ -128,6 +153,12 @@ function moveBy(index: number, delta: number): void {
             {{ formatBytes(item.size) }}<span v-if="item.kind === 'video' && item.duration"> · {{ formatDuration(item.duration) }}</span>
           </template>
         </p>
+        <span
+          class="mt-1 inline-block rounded px-1.5 py-0.5 text-[11px] font-medium"
+          :class="BADGE_CLASS[badgeOf(item).state]"
+          :title="`${badgeOf(item).label}（当前 ${props.mode === 'photo' ? '10MB' : '20MB'} 上限）`"
+          >{{ badgeOf(item).label }}</span
+        >
       </div>
 
       <div class="flex items-center justify-between gap-1 border-t border-line px-1.5 py-1.5">

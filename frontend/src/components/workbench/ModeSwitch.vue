@@ -3,19 +3,29 @@ import { computed } from 'vue'
 import { limitForMode, type UploadMode } from '../../utils/image.ts'
 
 // 画质模式切换：空态、桌面右栏与手机顶栏共用同一套按钮与说明。
-const props = defineProps<{ mode: UploadMode; disabled?: boolean; layout?: 'row' | 'stack' }>()
-const emit = defineEmits<{ (event: 'select', mode: UploadMode): void }>()
+const props = defineProps<{
+  mode: UploadMode
+  disabled?: boolean
+  layout?: 'row' | 'stack'
+  autoCompress: boolean
+}>()
+const emit = defineEmits<{
+  (event: 'select', mode: UploadMode): void
+  (event: 'toggle-compress', enabled: boolean): void
+}>()
 
 const options: { value: UploadMode; label: string }[] = [
   { value: 'photo', label: 'photo 省流量' },
   { value: 'document', label: 'document 原图' },
 ]
 
-const limitText = computed(() =>
-  props.mode === 'document'
-    ? '原图上限 20MB，视频统一走短视频通道'
-    : '单图上限 10MB，超限静态图将自动压缩（GIF 除外）；视频上限 20MB',
-)
+const limitText = computed(() => {
+  if (!props.autoCompress) return '已关闭自动压缩，超限文件需切换模式或移除后才能提交'
+  return props.mode === 'document'
+    ? '原图上限 20MB，超限静态图自动压缩（GIF 除外）；视频上限 20MB'
+    : '单图上限 10MB，超限静态图自动压缩（GIF 除外）；视频上限 20MB'
+})
+const compressLabel = computed(() => (props.autoCompress ? '自动压缩：开' : '自动压缩：关'))
 </script>
 
 <template>
@@ -53,6 +63,27 @@ const limitText = computed(() =>
     </div>
 
     <p v-if="props.layout === 'stack'" class="text-xs text-muted">{{ limitText }}</p>
+
+    <button
+      type="button"
+      role="switch"
+      :aria-checked="props.autoCompress"
+      :aria-label="compressLabel"
+      class="flex h-11 items-center gap-2 rounded-full px-2 text-xs text-muted transition disabled:opacity-50"
+      :disabled="props.disabled"
+      @click="emit('toggle-compress', !props.autoCompress)"
+    >
+      <span class="whitespace-nowrap">自动压缩</span>
+      <span
+        class="relative inline-flex h-6 w-10 items-center rounded-full transition"
+        :class="props.autoCompress ? 'bg-accent' : 'bg-line'"
+      >
+        <span
+          class="absolute h-4 w-4 rounded-full bg-surface shadow transition"
+          :class="props.autoCompress ? 'left-5' : 'left-1'"
+        />
+      </span>
+    </button>
 
     <div
       v-if="props.layout !== 'stack'"

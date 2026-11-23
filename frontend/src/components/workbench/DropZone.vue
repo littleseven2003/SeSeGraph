@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { collectEntryFiles, type CollectedFiles } from '../../utils/entries.ts'
 
 // 选图入口：ZIP 压缩包、本地文件夹或多张图片，支持拖拽。
 const props = defineProps<{ disabled?: boolean; compact?: boolean }>()
 const emit = defineEmits<{
   (event: 'zip', file: File): void
-  (event: 'images', files: File[]): void
+  (event: 'images', files: File[], unread?: string[]): void
   (event: 'error', message: string): void
 }>()
 
@@ -35,37 +36,7 @@ function takeImages(event: Event): void {
   const input = event.target as HTMLInputElement
   const files = Array.from(input.files ?? [])
   input.value = ''
-  if (files.length > 0) emit('images', files)
-}
-
-// 递归读取拖入的目录，收集其中的文件。
-async function readEntry(entry: FileSystemEntry, collected: File[]): Promise<void> {
-  if (entry.isFile) {
-    const file = await new Promise<File | null>((resolve) => {
-      ;(entry as FileSystemFileEntry).file(
-        (value) => resolve(value),
-        () => resolve(null),
-      )
-    })
-    if (file) collected.push(file)
-    return
-  }
-  if (!entry.isDirectory) return
-  const reader = (entry as FileSystemDirectoryEntry).createReader()
-  const readBatch = (): Promise<FileSystemEntry[]> =>
-    new Promise((resolve) => {
-      reader.readEntries(
-        (entries) => resolve(entries),
-        () => resolve([]),
-      )
-    })
-  let batch = await readBatch()
-  while (batch.length > 0) {
-    for (const child of batch) {
-      await readEntry(child, collected)
-    }
-    batch = await readBatch()
-  }
+  if (files.length > 0) emit('images', files, [])
 }
 
 async function onDrop(event: DragEvent): Promise<void> {
@@ -73,7 +44,7 @@ async function onDrop(event: DragEvent): Promise<void> {
   if (props.disabled) return
   const transfer = event.dataTransfer
   if (!transfer) return
-  const collected: File[] = []
+  const result: CollectedFiles = { files: [], failed: [] }
   const entries: FileSystemEntry[] = []
   for (const item of Array.from(transfer.items)) {
     const entry = item.webkitGetAsEntry?.()
@@ -81,13 +52,20 @@ async function onDrop(event: DragEvent): Promise<void> {
   }
   if (entries.length > 0) {
     for (const entry of entries) {
-      await readEntry(entry, collected)
+      await collectEntryFiles(entry, result)
+    }
+    // 部分条目可能拿不到 entry，用 files 里尚未收录的同名同体积文件补回，避免静默少读。
+    for (const file of Array.from(transfer.files)) {
+      if (!result.files.some((item) => item.name === file.name && item.size === file.size)) {
+        result.files.push(file)
+      }
     }
   } else {
-    collected.push(...Array.from(transfer.files))
+    result.files.push(...Array.from(transfer.files))
   }
+  const collected = result.files
   if (collected.length === 0) {
-    emit('error', '没有读取到可用的文件')
+    emit('error', result.failed.length > 0 ? `有 ${result.failed.length} 个文件读取失败，请重新拖入或改用选择器` : '没有读取到可用的文件')
     return
   }
   const zip = collected.find((file) => file.name.toLowerCase().endsWith('.zip'))
@@ -99,7 +77,7 @@ async function onDrop(event: DragEvent): Promise<void> {
     emit('zip', zip)
     return
   }
-  emit('images', collected)
+  emit('images', collected, result.failed)
 }
 </script>
 
