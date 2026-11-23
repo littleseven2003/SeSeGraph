@@ -176,7 +176,8 @@ test('三处界面只在已发布且同步后展示浏览量，详情提供刷�
 
   const row = readFileSync(new URL('../src/components/gallery/PostRow.vue', import.meta.url), 'utf8')
   assert.ok(row.includes('showsViews(props.item)'), '列表行共用同一条规则')
-  assert.ok(row.includes('hidden shrink-0 sm:inline'), '窄屏让出日期与张数，避免压到操作区')
+  assert.ok(row.includes('hidden shrink-0 md:inline'), '窄屏让出卷号、日期与张数，避免压到操作区')
+  assert.ok(row.includes('line-clamp-2'), '描述栏最多两行')
   assert.ok(row.includes('items-center gap-2 overflow-hidden'), '元信息行不外溢到按钮上')
 
   const drawer = readFileSync(new URL('../src/components/gallery/DetailDrawer.vue', import.meta.url), 'utf8')

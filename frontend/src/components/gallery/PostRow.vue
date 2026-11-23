@@ -70,10 +70,13 @@ const copyLabel = computed(() => {
 </script>
 
 <template>
-  <div class="flex items-center gap-3 py-3 sm:gap-4" :class="showBlur ? 'is-blurred' : ''">
+  <div
+    class="-mx-4 grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 px-4 py-3.5 transition-colors hover:bg-canvas/60 md:grid-cols-[4.5rem_minmax(13rem,1.2fr)_minmax(11rem,1.4fr)_5.25rem_6.75rem] md:items-center md:gap-4 lg:grid-cols-[5rem_minmax(15rem,1.15fr)_minmax(16rem,1.5fr)_5.25rem_6.75rem]"
+    :class="showBlur ? 'is-blurred' : ''"
+  >
     <button
       type="button"
-      class="relative block h-12 w-16 shrink-0 overflow-hidden rounded-lg bg-canvas"
+      class="relative block h-12 w-16 shrink-0 overflow-hidden rounded-lg bg-canvas md:h-14 md:w-20"
       :aria-label="`打开《${item.title}》详情`"
       data-reveal="cover"
       @click="onCoverOpen"
@@ -94,13 +97,21 @@ const copyLabel = computed(() => {
       </span>
     </button>
 
-    <div class="min-w-0 flex-1">
-      <p class="truncate text-sm font-semibold">{{ item.title }}</p>
-      <!-- 窄屏只保留浏览量、状态与右侧操作热区，卷号、日期与张数让位，避免压到按钮上。 -->
-      <div class="mt-1 flex min-w-0 items-center gap-2 overflow-hidden text-xs text-muted">
-        <span class="tnum hidden shrink-0 sm:inline">{{ volume }}</span>
-        <span v-if="publishedDate !== ''" class="tnum hidden shrink-0 sm:inline">{{ publishedDate }}</span>
-        <span class="tnum hidden shrink-0 sm:inline">{{ item.image_count }}P</span>
+    <div class="min-w-0">
+      <p class="truncate text-sm font-semibold" :title="item.title">{{ item.title }}</p>
+
+      <!-- 窄屏只保留描述、浏览量与状态；卷号、日期与张数收进详情抽屉，避免挤压操作区。 -->
+      <p
+        v-if="item.description !== ''"
+        class="mt-0.5 line-clamp-2 break-words text-xs leading-snug text-muted md:hidden"
+        :title="item.description"
+      >
+        {{ item.description }}
+      </p>
+      <div class="mt-1.5 flex min-w-0 items-center gap-2 overflow-hidden text-xs text-muted md:mt-1.5">
+        <span class="tnum hidden shrink-0 md:inline">{{ volume }}</span>
+        <span v-if="publishedDate !== ''" class="tnum hidden shrink-0 md:inline">{{ publishedDate }}</span>
+        <span class="tnum hidden shrink-0 md:inline">{{ item.image_count }}P</span>
         <span v-if="showViews" class="inline-flex shrink-0 items-center gap-1 tnum" :title="viewsTitle">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-3.5 w-3.5" aria-hidden="true">
             <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" stroke-linecap="round" stroke-linejoin="round" />
@@ -109,18 +120,28 @@ const copyLabel = computed(() => {
           {{ viewsText }}
         </span>
         <span
-          class="inline-flex shrink-0 items-center rounded-full border px-1.5 py-0.5 text-[11px] font-medium leading-none sm:hidden"
+          class="inline-flex shrink-0 items-center rounded-full border px-1.5 py-0.5 text-[11px] font-medium leading-none md:hidden"
           :class="chipClass"
           >{{ status.label }}</span
         >
-        <span class="hidden min-w-0 flex-wrap items-center gap-1 sm:flex">
+        <span class="hidden min-w-0 flex-wrap items-center gap-1 md:flex">
           <span v-for="tag in item.tags.slice(0, 2)" :key="tag" class="max-w-[8rem] truncate">#{{ tag }}</span>
         </span>
       </div>
     </div>
 
+    <!-- 桌面端独立描述列：最多两行，空描述用极轻占位符收住列宽。 -->
+    <p
+      v-if="item.description !== ''"
+      class="hidden line-clamp-2 break-words text-xs leading-[1.6] text-muted md:block"
+      :title="item.description"
+    >
+      {{ item.description }}
+    </p>
+    <p v-else class="hidden select-none text-xs text-muted/45 md:block" aria-hidden="true">—</p>
+
     <span
-      class="hidden shrink-0 items-center gap-1.5 rounded-full border px-2 py-1 text-xs font-medium leading-none sm:inline-flex"
+      class="hidden shrink-0 items-center gap-1.5 rounded-full border px-2 py-1 text-xs font-medium leading-none md:inline-flex"
       :class="chipClass"
     >
       {{ status.label }}
@@ -141,6 +162,25 @@ const copyLabel = computed(() => {
             <rect x="9" y="9" width="11" height="11" rx="2" />
             <path d="M15 5.5A2.5 2.5 0 0 0 12.5 3H6a2 2 0 0 0-2 2v7.5A2.5 2.5 0 0 0 6.5 15" stroke-linecap="round" />
           </template>
+          <path v-else-if="copyState === 'copied'" d="M5 12.5l4.5 4.5L19 7" stroke-linecap="round" stroke-linejoin="round" />
+          <template v-else>
+            <path d="M12 8v5" stroke-linecap="round" />
+            <circle cx="12" cy="16.5" r="0.9" fill="currentColor" stroke="none" />
+          </template>
+        </svg>
+      </button>
+
+      <button
+        type="button"
+        class="inline-flex h-11 items-center rounded-full bg-ink px-3.5 text-xs font-medium text-white transition hover:bg-ink/90"
+        @click="onRowOpen"
+      >
+        打开
+      </button>
+    </div>
+    <span role="status" aria-live="polite" class="sr-only">{{ copyState === 'idle' ? '' : copyLabel }}</span>
+  </div>
+</template>
           <path v-else-if="copyState === 'copied'" d="M5 12.5l4.5 4.5L19 7" stroke-linecap="round" stroke-linejoin="round" />
           <template v-else>
             <path d="M12 8v5" stroke-linecap="round" />
