@@ -1,6 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  freezeSubmitStrategy,
+  submitBlocked,
   appendSelection,
   assignSortOrders,
   discardBlocked,
@@ -148,4 +150,24 @@ test('续传重选按新批次计算配额，旧列表不占额度', () => {
   const accepted = (base: number) => Array.from({ length: 500 }, (_, index) => index).filter((index) => base + index < 500).length
   assert.equal(accepted(quotaUsed(499, true)), 500)
   assert.equal(accepted(quotaUsed(499, false)), 1)
+})
+
+test('提交锁拒绝双击并在完成后释放', () => {
+  const state = { busy: false, submitting: false }
+  assert.equal(submitBlocked(state), false)
+  state.submitting = true
+  assert.equal(submitBlocked(state), true)
+  state.submitting = false
+  assert.equal(submitBlocked(state), false)
+  state.busy = true
+  assert.equal(submitBlocked(state), true)
+})
+
+test('冻结策略不受后续切换影响', () => {
+  let mode: 'photo' | 'document' = 'photo'
+  let autoCompress = true
+  const frozen = freezeSubmitStrategy(mode, autoCompress)
+  mode = 'document'
+  autoCompress = false
+  assert.deepEqual(frozen, { mode: 'photo', autoCompress: true })
 })

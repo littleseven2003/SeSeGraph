@@ -137,3 +137,16 @@ export function discardBlocked(phase: WorkbenchPhase): boolean {
 export function quotaUsed(existingCount: number, replace: boolean): number {
   return replace ? 0 : existingCount
 }
+
+// 提交入口的共用判定：阶段忙碌或已有提交在跑时一律拒绝，避免双击重复建任务。
+export function submitBlocked(state: { busy: boolean; submitting: boolean }): boolean {
+  return state.busy || state.submitting
+}
+
+// freezeSubmitStrategy 在入口一次取定策略，后续压缩与上传都只认这份快照。
+export function freezeSubmitStrategy(mode: 'photo' | 'document', autoCompress: boolean): {
+  mode: 'photo' | 'document'
+  autoCompress: boolean
+} {
+  return { mode, autoCompress }
+}

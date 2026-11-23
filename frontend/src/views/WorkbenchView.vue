@@ -66,8 +66,10 @@ import {
   moveItem,
   planUploadQueue,
   removeItem,
+  freezeSubmitStrategy,
   selectCover,
   sortByName,
+  submitBlocked,
   totalBytes,
   validatePublishInput,
   type WorkbenchTile,
@@ -835,7 +837,7 @@ async function ensureTask(): Promise<number | null> {
 // 发布：建任务 → 按服务端进度补传 → 提交入队，快照保留以便刷新后查看与重试。
 async function publish(): Promise<void> {
   // 提交锁覆盖压缩与上传整段：双击、换模式、排序都不能插进来。
-  if (busy.value || submitting.value) return
+  if (submitBlocked({ busy: busy.value, submitting: submitting.value })) return
   message.value = ''
   if (tiles.value.length === 0) {
     pushError('请先选择图片或视频')
@@ -857,8 +859,9 @@ async function publish(): Promise<void> {
   }
 
   submitting.value = true
-  const frozenMode = mode.value
-  const frozenCompress = autoCompress.value
+  const frozen = freezeSubmitStrategy(mode.value, autoCompress.value)
+  const frozenMode = frozen.mode
+  const frozenCompress = frozen.autoCompress
   let compressionProblem = ''
   try {
     compressionProblem = await compressForSubmit(frozenMode, frozenCompress)
