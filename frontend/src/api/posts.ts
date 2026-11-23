@@ -8,6 +8,8 @@ export interface CreatePostPayload {
   upload_mode: 'photo' | 'document'
   image_count: number
   cover_thumbnail: string
+  /** 封面来源序号，发布时会把这张图放到 Telegraph 第一位。 */
+  cover_sort_order?: number
   tags: string[]
 }
 
@@ -107,6 +109,17 @@ export async function uploadImage(postId: number, sortOrder: number, blob: Blob,
     clearTimeout(timer)
   }
   return (await response.json()) as UploadedImage
+}
+
+// changeCover 更换封面：序号必填，缩略图可选（已发布帖先改远端再回写本地）。
+export async function changeCover(postId: number, sortOrder: number, thumbnail?: string): Promise<void> {
+  const body: { sort_order: number; cover_thumbnail?: string } = { sort_order: sortOrder }
+  if (thumbnail !== undefined && thumbnail !== '') body.cover_thumbnail = thumbnail
+  await adminRequest(`/api/posts/${postId}/cover`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
 }
 
 // commitPost 校验图片齐备并进入上传队列。

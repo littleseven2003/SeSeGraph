@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { setPostDisabled, updatePost, type PostDetail } from '../../api/gallery.ts'
+import { changeCover } from '../../api/posts.ts'
 import { ApiError } from '../../api/client.ts'
 import { copyText } from '../../utils/clipboard.ts'
 import { detailUploadModeLabel } from '../../utils/media.ts'
+import { makeCover } from '../../utils/cover.ts'
 import {
   DEFAULT_SHARE_TEMPLATE,
   SHARE_PLACEHOLDERS,
@@ -60,6 +62,9 @@ const toggleError = ref('')
 const confirmDelete = ref(false)
 // 视频条目按需展开播放器，避免打开抽屉就加载整段视频。
 const playingCode = ref('')
+// 更换封面时先生成新的缩略图；已发布帖由后端先改远端再回写本地。
+const coverBusy = ref(false)
+const coverError = ref('')
 
 function togglePlay(code: string): void {
   playingCode.value = playingCode.value === code ? '' : code
@@ -283,6 +288,37 @@ onMounted(() => {
   closeButton.value?.focus()
 })
 
+// onCoverChange 按所选序号更换封面：能从本站网关取到原图时顺带生成新缩略图。
+async function onCoverChange(event: Event): Promise<void> {
+  const select = event.target as HTMLSelectElement
+  const order = Number(select.value)
+  if (!Number.isInteger(order) || order <= 0) return
+  if (props.detail === null || coverBusy.value || props.detail.cover_sort_order === order) return
+
+  coverBusy.value = true
+  coverError.value = ''
+  try {
+    let thumbnail: string | undefined
+    const image = props.detail.images.find((item) => item.sort_order === order)
+    if (image !== undefined && props.detail.public_base_url !== '') {
+      const base = props.detail.public_base_url.replace(/\/$/, '')
+      try {
+        const response = await fetch(`${base}/i/${image.short_code}`, { credentials: 'same-origin' })
+        if (response.ok) thumbnail = (await makeCover(await response.blob())).dataUrl
+      } catch {
+        thumbnail = undefined
+      }
+    }
+    await changeCover(props.detail.id, order, thumbnail)
+    emit('saved')
+  } catch (cause) {
+    coverError.value = cause instanceof ApiError ? cause.message : '更换封面失败，请稍后重试'
+    select.value = String(props.detail.cover_sort_order)
+  } finally {
+    coverBusy.value = false
+  }
+}
+
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
   if (copiedTimer !== undefined) window.clearTimeout(copiedTimer)
@@ -455,6 +491,23 @@ watch(
             <span class="whitespace-nowrap rounded px-1.5 py-0.5 text-xs font-medium" :class="toneClass">{{ status.label }}</span>
             <span class="text-xs text-muted tnum">{{ detail.image_count }} 张图</span>
             <span class="text-xs text-muted">{{ detailUploadModeLabel(detail.upload_mode) }}</span>
+            <label class="inline-flex items-center gap-1 text-xs text-muted">
+              <span>封面</span>
+              <select
+                :value="String(detail.cover_sort_order)"
+                :disabled="coverBusy || detail.pending_delete"
+                class="h-7 rounded-lg border border-line bg-canvas px-1.5 text-xs outline-none transition focus:border-ink/40 disabled:opacity-60"
+                aria-label="更换封面"
+                @change="onCoverChange"
+              >
+                <option value="0">未设置</option>
+                <option v-for="image in detail.images" :key="image.sort_order" :value="String(image.sort_order)">
+                  第 {{ image.sort_order }} 张
+                </option>
+              </select>
+              <span v-if="coverBusy" class="text-muted">更新中…</span>
+              <span v-else-if="coverError !== ''" class="text-danger">{{ coverError }}</span>
+            </label>
             <span
               v-if="showViews"
               class="inline-flex items-center gap-1 text-xs text-muted tnum"

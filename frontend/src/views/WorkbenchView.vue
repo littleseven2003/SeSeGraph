@@ -818,6 +818,7 @@ async function ensureTask(): Promise<number | null> {
     upload_mode: mode.value,
     image_count: tiles.value.length,
     cover_thumbnail: coverDataUrl.value,
+    cover_sort_order: coverTile.value?.sortOrder ?? 0,
     tags: draft.value.tags,
   })
   postId.value = created.id

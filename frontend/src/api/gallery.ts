@@ -59,6 +59,8 @@ export interface PostDetail extends GalleryItem {
   telegraph_paths: string[]
   images: GalleryImage[]
   public_base_url: string
+  /** 当前封面来源序号，0 表示未选择封面。 */
+  cover_sort_order: number
 }
 
 export interface TagCount {
