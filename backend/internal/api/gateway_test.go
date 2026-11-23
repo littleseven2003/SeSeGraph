@@ -778,7 +778,7 @@ func openRange(t *testing.T, method, url, header string) (*http.Response, []byte
 
 // newSwitcherProvider 用真实 Switcher 包一个指向测试文件服务的提供方，
 // 验证生产入口的固定快照与区间能力，而不是靠测试替身直接满足接口。
-func newSwitcherProvider(t *testing.T, body []byte) storage.StreamProvider {
+func newSwitcherProvider(t *testing.T, body []byte, ignoreRange bool) storage.StreamProvider {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/getFile") {
@@ -789,7 +789,7 @@ func newSwitcherProvider(t *testing.T, body []byte) storage.StreamProvider {
 			return
 		}
 		header := r.Header.Get("Range")
-		if strings.HasPrefix(header, "bytes=") {
+		if strings.HasPrefix(header, "bytes=") && !ignoreRange {
 			spec := strings.TrimPrefix(header, "bytes=")
 			startText, endText, _ := strings.Cut(spec, "-")
 			start, _ := strconv.Atoi(startText)
@@ -822,7 +822,7 @@ func newSwitcherProvider(t *testing.T, body []byte) storage.StreamProvider {
 
 func TestGatewayRangeThroughSwitcher(t *testing.T) {
 	body := []byte("0123456789")
-	env := newGatewayEnv(t, 4, newSwitcherProvider(t, body))
+	env := newGatewayEnv(t, 4, newSwitcherProvider(t, body, false))
 	code := env.publishPost(t, "", "video/mp4", "photo", true, false)
 
 	response, got := openRange(t, http.MethodGet, env.server.URL+"/i/"+code, "bytes=1-3")
@@ -831,6 +831,23 @@ func TestGatewayRangeThroughSwitcher(t *testing.T) {
 	}
 	if response.Header.Get("Content-Range") != "bytes 1-3/10" || string(got) != "123" {
 		t.Errorf("区间响应 = %q / %q", response.Header.Get("Content-Range"), got)
+	}
+}
+
+func TestGatewayRangeThroughSwitcherIgnoresUpstream(t *testing.T) {
+	body := []byte("0123456789")
+	env := newGatewayEnv(t, 4, newSwitcherProvider(t, body, true))
+	code := env.publishPost(t, "", "video/mp4", "photo", true, false)
+
+	response, got := openRange(t, http.MethodGet, env.server.URL+"/i/"+code, "bytes=3-6")
+	if response.StatusCode != http.StatusPartialContent {
+		t.Fatalf("状态码 = %d，期望 206", response.StatusCode)
+	}
+	if response.Header.Get("Content-Range") != "bytes 3-6/10" {
+		t.Errorf("Content-Range = %q", response.Header.Get("Content-Range"))
+	}
+	if response.Header.Get("Content-Length") != "4" || string(got) != "3456" {
+		t.Errorf("长度/正文不符: %q / %q", response.Header.Get("Content-Length"), got)
 	}
 }
 
