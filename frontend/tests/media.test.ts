@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { mimeForName } from '../src/utils/image.ts'
 import {
+  detailUploadModeLabel,
   COMPRESS_MAX_DIMENSION_SUM,
   evaluateMedia,
   isAnimatedImage,
@@ -208,4 +209,10 @@ test('WebP 坏块长度不会卡死', async () => {
   const started = Date.now()
   assert.equal(await isAnimatedImage(blob, 'x.webp'), false)
   assert.ok(Date.now() - started < 1000)
+})
+
+test('详情抽屉按帖子保存值显示具体画质模式', () => {
+  assert.equal(detailUploadModeLabel('photo'), '省流量模式')
+  assert.equal(detailUploadModeLabel('document'), '原图模式')
+  assert.equal(detailUploadModeLabel(''), '省流量模式')
 })

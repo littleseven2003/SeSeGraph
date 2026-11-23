@@ -365,6 +365,12 @@ export interface MediaEvaluation {
 }
 
 // evaluateMedia 按当前模式与自动压缩开关判定单张静态图/视频是否满足发布要求。
+// detailUploadModeLabel 返回详情抽屉的画质模式文案。
+// 这里按帖子保存的值显示具体模式，不用「画质模式」这类类别名。
+export function detailUploadModeLabel(mode: string): string {
+  return mode === 'document' ? '原图模式' : '省流量模式'
+}
+
 // 判定只看原始体积与是否已压缩，切换模式或开关都可以重算，不会改动原图。
 export function evaluateMedia(input: {
   kind: 'image' | 'video'

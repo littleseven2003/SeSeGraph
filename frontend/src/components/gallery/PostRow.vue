@@ -74,7 +74,7 @@ const copyLabel = computed(() => {
 
 <template>
   <div
-    class="-mx-4 grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 px-4 py-3.5 transition-colors hover:bg-canvas/60 md:grid-cols-[4.5rem_minmax(13rem,1.2fr)_minmax(11rem,1.4fr)_5.25rem_6.75rem] md:items-center md:gap-4 lg:grid-cols-[5rem_minmax(15rem,1.15fr)_minmax(16rem,1.5fr)_5.25rem_6.75rem]"
+    class="-mx-4 grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 px-4 py-3.5 transition-colors hover:bg-canvas/60 md:grid-cols-[4.25rem_minmax(11rem,1.2fr)_minmax(9rem,1.4fr)_8.5rem_6.5rem] md:items-center md:gap-4 lg:grid-cols-[5rem_minmax(15rem,1.15fr)_minmax(16rem,1.5fr)_9rem_6.75rem]"
     :class="showBlur ? 'is-blurred' : ''"
   >
     <button
@@ -123,7 +123,7 @@ const copyLabel = computed(() => {
           {{ viewsText }}
         </span>
         <span
-          class="inline-flex shrink-0 items-center rounded-full border px-1.5 py-0.5 text-[11px] font-medium leading-none md:hidden"
+          class="inline-flex shrink-0 items-center whitespace-nowrap rounded-full border px-1.5 py-0.5 text-[11px] font-medium leading-none md:hidden"
           :class="chipClass"
           >{{ status.label }}</span
         >
@@ -146,7 +146,7 @@ const copyLabel = computed(() => {
     <p v-else class="hidden select-none text-xs text-muted/45 md:block" aria-hidden="true">—</p>
 
     <span
-      class="hidden shrink-0 items-center gap-1.5 justify-self-start rounded-full border px-2 py-1 text-xs font-medium leading-none md:inline-flex"
+      class="hidden shrink-0 items-center gap-1.5 justify-self-start whitespace-nowrap rounded-full border px-2 py-1 text-xs font-medium leading-none md:inline-flex"
       :class="chipClass"
     >
       {{ status.label }}

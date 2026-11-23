@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { setPostDisabled, updatePost, type PostDetail } from '../../api/gallery.ts'
 import { ApiError } from '../../api/client.ts'
 import { copyText } from '../../utils/clipboard.ts'
+import { detailUploadModeLabel } from '../../utils/media.ts'
 import {
   DEFAULT_SHARE_TEMPLATE,
   SHARE_PLACEHOLDERS,
@@ -451,9 +452,9 @@ watch(
           </p>
 
           <div class="flex flex-wrap items-center gap-2">
-            <span class="rounded px-1.5 py-0.5 text-xs font-medium" :class="toneClass">{{ status.label }}</span>
+            <span class="whitespace-nowrap rounded px-1.5 py-0.5 text-xs font-medium" :class="toneClass">{{ status.label }}</span>
             <span class="text-xs text-muted tnum">{{ detail.image_count }} 张图</span>
-            <span class="text-xs text-muted">{{ detail.upload_mode === 'document' ? '原图模式' : '画质模式' }}</span>
+            <span class="text-xs text-muted">{{ detailUploadModeLabel(detail.upload_mode) }}</span>
             <span
               v-if="showViews"
               class="inline-flex items-center gap-1 text-xs text-muted tnum"
