@@ -196,3 +196,16 @@ test('WebP 按 VP8X 动画位判定', async () => {
   assert.equal(await isAnimatedImage(build(0x00), 'b.webp'), false)
   assert.equal(await isAnimatedImage(new Blob([new Uint8Array(1)]), 'c.gif'), true)
 })
+
+test('WebP 坏块长度不会卡死', async () => {
+  const riff = new Uint8Array(12)
+  riff.set([0x52, 0x49, 0x46, 0x46], 0)
+  riff.set([0x57, 0x45, 0x42, 0x50], 8)
+  const junk = new Uint8Array(12)
+  junk.set([0x4a, 0x55, 0x4e, 0x4b], 0) // JUNK
+  junk.set([0xf8, 0xff, 0xff, 0xff], 4) // 长度按无符号读取为超大值
+  const blob = new Blob([riff, junk] as BlobPart[], { type: 'image/webp' })
+  const started = Date.now()
+  assert.equal(await isAnimatedImage(blob, 'x.webp'), false)
+  assert.ok(Date.now() - started < 1000)
+})

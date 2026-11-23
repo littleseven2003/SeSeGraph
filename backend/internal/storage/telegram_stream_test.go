@@ -86,6 +86,18 @@ func (f *fakeFileAPI) handle(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(f.body[start : end+1])
 		return
 	}
+	if f.rangeMode == "short" {
+		start, end, ok := parseRangeForTest(r.Header.Get("Range"), int64(len(f.body)))
+		if !ok {
+			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		w.Header().Set("Content-Type", f.contentType)
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end-1, len(f.body)))
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(f.body[start:end])
+		return
+	}
 	if f.rangeMode == "bad" {
 		w.Header().Set("Content-Type", f.contentType)
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes 0-%d/%d", len(f.body)-1, len(f.body)+5))
@@ -562,5 +574,16 @@ func TestOpenStreamRangeRefreshesPathOn404(t *testing.T) {
 	}
 	if getCalls, downloadCalls := api.counts(); getCalls != 1 || downloadCalls != 2 {
 		t.Errorf("调用次数 = getFile %d / download %d，期望 1 / 2", getCalls, downloadCalls)
+	}
+}
+
+func TestOpenStreamRangeRejectsEndMismatch(t *testing.T) {
+	api := newFakeFileAPI(t)
+	api.body = []byte("0123456789")
+	api.rangeMode = "short"
+	provider := newDownloadProvider(t, api, nil)
+
+	if _, err := provider.OpenStreamRange(context.Background(), "file-1", ByteRange{Start: 2, Length: 4}); !errors.Is(err, ErrUpstream) {
+		t.Fatalf("结束字节不一致错误 = %v，期望 ErrUpstream", err)
 	}
 }

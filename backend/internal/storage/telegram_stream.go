@@ -215,6 +215,7 @@ func (t *Telegram) OpenStreamRange(ctx context.Context, fileID string, r ByteRan
 		return Stream{}, ErrFileUnavailable
 	}
 	end := int64(-1)
+	normalizedEnd := int64(-1)
 	if r.Length >= 0 {
 		if r.Length == 0 {
 			return Stream{}, ErrRangeUnsupported
@@ -223,6 +224,7 @@ func (t *Telegram) OpenStreamRange(ctx context.Context, fileID string, r ByteRan
 		if end >= size {
 			end = size - 1
 		}
+		normalizedEnd = end
 	}
 
 	response, err := t.openDownloadRange(ctx, path, r.Start, end)
@@ -266,7 +268,11 @@ func (t *Telegram) OpenStreamRange(ctx context.Context, fileID string, r ByteRan
 			return Stream{}, ErrUpstream
 		}
 		// 上游区间必须落在请求起点，且总长与 getFile 一致，否则拒绝而不是写出错位的 206。
-		if start != r.Start || total != size || end < start || end >= size {
+		expectedEnd := normalizedEnd
+		if r.Length < 0 {
+			expectedEnd = size - 1
+		}
+		if start != r.Start || total != size || end != expectedEnd {
 			_ = response.Body.Close()
 			return Stream{}, ErrUpstream
 		}

@@ -130,13 +130,17 @@ async function webpHasAnimation(blob: Blob): Promise<boolean> {
     const header = await readBytes(blob, offset, offset + 8)
     if (header.length < 8) return false
     const type = fourCC(header, 0)
-    const length = header[4] | header[5] << 8 | header[6] << 16 | header[7] << 24
+    // RIFF 块长度按无符号小端读取，0xFFFFFFF8 这类值不能被当成负数。
+    const length = header[4] + header[5] * 256 + header[6] * 65536 + header[7] * 16777216
     if (type === 'ANIM' || type === 'ANMF') return true
     if (type === 'VP8X' && length > 0) {
       const flag = await readBytes(blob, offset + 8, offset + 9)
       if (flag.length > 0 && (flag[0] & 0x02) !== 0) return true
     }
-    offset += 8 + length + (length % 2)
+    const next = offset + 8 + length + (length % 2)
+    // 块长度越过文件或没有推进时立即结束，避免坏文件把循环卡在同一偏移。
+    if (next <= offset || next > blob.size) return false
+    offset = next
   }
   return false
 }
