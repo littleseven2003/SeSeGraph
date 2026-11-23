@@ -33,6 +33,7 @@ jobs:
     outputs:
       version: ${{ steps.check.outputs.version }}
       commit: ${{ steps.check.outputs.commit }}
+      sha: ${{ steps.check.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -64,8 +65,9 @@ jobs:
             echo "拒绝：检出提交与标签指向不一致" >&2
             exit 1
           fi
-          if ! git merge-base --is-ancestor "$TAG_COMMIT" origin/main; then
-            echo "拒绝：${VERSION} 没有指向 main 上的提交" >&2
+          MAIN_TIP="$(git rev-parse refs/remotes/origin/main)"
+          if [ "$TAG_COMMIT" != "$MAIN_TIP" ]; then
+            echo "拒绝：${VERSION} 不是 main 当前的定版提交（main 为 ${MAIN_TIP:0:7}）" >&2
             exit 1
           fi
           if ! grep -q "^## \[${VERSION}\]" CHANGELOG.md; then
@@ -74,6 +76,7 @@ jobs:
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "commit=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   binaries:
     name: 四平台二进制
@@ -85,7 +88,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.guard.outputs.version }}
+          ref: ${{ needs.guard.outputs.sha }}
 
       - uses: pnpm/action-setup@v4
         with:
@@ -103,7 +106,7 @@ jobs:
           cache-dependency-path: backend/go.sum
 
       - name: 交叉编译四个平台
-        run: make cross VERSION="${{ needs.guard.outputs.version }}" COMMIT="${{ needs.guard.outputs.commit }}"
+        run: make cross VERSION="${{ needs.guard.outputs.version }}" COMMIT="${{ needs.guard.outputs.sha }}"
 
       - name: 生成发布资产与校验和
         run: |
@@ -122,7 +125,7 @@ jobs:
         run: |
           set -eu
           VERSION="${{ needs.guard.outputs.version }}"
-          COMMIT="${{ needs.guard.outputs.commit }}"
+          COMMIT="${{ needs.guard.outputs.sha }}"
           chmod +x "dist-release/sesegraph-${VERSION}-linux-amd64"
           DATA_DIR="$(mktemp -d)" LISTEN_ADDR=127.0.0.1:18081 \
             "./dist-release/sesegraph-${VERSION}-linux-amd64" &
@@ -153,7 +156,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.guard.outputs.version }}
+          ref: ${{ needs.guard.outputs.sha }}
 
       - uses: docker/setup-qemu-action@v3
 
@@ -173,13 +176,13 @@ jobs:
           push: true
           build-args: |
             VERSION=${{ needs.guard.outputs.version }}
-            COMMIT=${{ needs.guard.outputs.commit }}
+            COMMIT=${{ needs.guard.outputs.sha }}
           tags: |
             ${{ env.IMAGE }}:${{ needs.guard.outputs.version }}
           labels: |
             org.opencontainers.image.title=SeSeGraph
             org.opencontainers.image.version=${{ needs.guard.outputs.version }}
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.revision=${{ needs.guard.outputs.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
 
       - name: 校验版本镜像双架构清单
@@ -205,7 +208,7 @@ jobs:
           done
           cat /tmp/image-health.json
           grep -q '"version":"${{ needs.guard.outputs.version }}"' /tmp/image-health.json
-          grep -q '"commit":"${{ needs.guard.outputs.commit }}"' /tmp/image-health.json
+          grep -q '"commit":"${{ needs.guard.outputs.sha }}"' /tmp/image-health.json
           docker rm -f sesegraph-release
 
       - name: 校验匿名拉取
@@ -219,14 +222,22 @@ jobs:
             exit 1
           fi
 
-      - name: 重新登录发布账号
-        uses: docker/login-action@v3
+  latest:
+    name: 推进 latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [guard, binaries, image]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 推进 latest 并复核清单
+      - name: 四平台产物与版本镜像验证通过后推进 latest
         run: |
           set -eu
           VERSION="${{ needs.guard.outputs.version }}"
@@ -242,13 +253,13 @@ jobs:
     name: 创建 GitHub Release
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [guard, binaries, image]
+    needs: [guard, binaries, image, latest]
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.guard.outputs.version }}
+          ref: ${{ needs.guard.outputs.sha }}
           fetch-depth: 0
 
       - uses: actions/download-artifact@v4
@@ -273,9 +284,9 @@ jobs:
             echo ""
             echo "### 部署"
             echo ""
-            echo '- Compose：`SESEGRAPH_IMAGE='"${IMAGE}:${VERSION}"' docker compose up -d`'
-            echo '- 单容器：`docker run -d -p 8080:8080 -v ./data:/app/data '"${IMAGE}:${VERSION}"'`'
-            echo '- 校验和见 `SHA256SUMS`；数据目录 `/app/data` 需保留，升级前先备份。'
+            echo "- 部署步骤：${{ github.server_url }}/${{ github.repository }}/blob/${VERSION}/README.md 的「快速开始」，Compose、单容器与原生三种方式都有完整命令；单容器需先授权数据目录，并用权限 0600 的环境文件传入凭据。"
+            echo "- 镜像：\`${IMAGE}:${VERSION}\`（linux/amd64、linux/arm64），升级前先备份数据目录。"
+            echo '- 校验和见 `SHA256SUMS`。'
           } >> release-notes.md
           cat release-notes.md
 
