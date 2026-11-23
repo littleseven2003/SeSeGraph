@@ -14,6 +14,7 @@ import {
 } from '../api/gallery'
 import {
   createLatestGuard,
+  deleteFailureText,
   pageWindow,
   readBlurPreference,
   readViewPreference,
@@ -240,16 +241,11 @@ async function onDelete(): Promise<void> {
     closeDetail()
     await loadList(page.value)
   } catch (cause) {
-    if (cause instanceof ApiError) {
-      deleteError.value =
-        cause.status === 409
-          ? '任务正在进行中，稍后再试'
-          : cause.status === 502
-            ? '远端页面撤回未完成，已保留待删除记录，可重试'
-            : cause.message
-    } else {
-      deleteError.value = '删除失败，请稍后重试'
-    }
+    // 服务端已区分远端撤回失败与本地文件清理失败，两种都是 502，按原文展示。
+    deleteError.value =
+      cause instanceof ApiError
+        ? deleteFailureText(cause.status, cause.message)
+        : '删除失败，请稍后重试'
     // 失败或部分完成后刷新抽屉与列表，让待删除状态和短码停用立即可见。
     await loadDetail()
     await loadList(page.value)

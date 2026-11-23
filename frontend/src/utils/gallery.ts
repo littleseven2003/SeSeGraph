@@ -409,6 +409,13 @@ export function validateMetadata(draft: MetadataDraft): string {
   return ''
 }
 
+/** deleteFailureText 保留服务端给出的删除失败原因，远端撤回与本地文件清理都按原文展示。 */
+export function deleteFailureText(status: number, message: string): string {
+  const detail = message.trim()
+  if (detail !== '' && detail !== '请求失败，请稍后重试') return detail
+  return status === 409 ? '任务正在进行中，稍后再试' : '删除失败，请稍后重试'
+}
+
 /** updateFailureText 把接口错误转成编辑表单里可读的提示。 */
 export function updateFailureText(status: number, message: string): string {
   if (status === 409) {

@@ -11,6 +11,7 @@ import {
   formatViewsExact,
   showsViews,
   createLatestGuard,
+  deleteFailureText,
   focusStep,
   imageShareUrl,
   metadataFromDetail,
@@ -513,4 +514,18 @@ test('打开详情抽屉不产生新的图片请求', () => {
   assert.ok(source.includes('imageShareUrl'), '单图信息沿用列表已有的外链判断')
   assert.ok(source.includes('已撤回访问，恢复后可分享整帖'), '撤回态提示恢复后才能分享')
   assert.ok(source.includes('发布完成并生成链接后可分享整帖'), '未发布时提示先发布')
+})
+
+test('deleteFailureText 保留服务端区分的删除失败原因', () => {
+  assert.equal(
+    deleteFailureText(502, '远端页面撤回未完成，已保留待删除记录，可稍后重试'),
+    '远端页面撤回未完成，已保留待删除记录，可稍后重试',
+  )
+  assert.equal(
+    deleteFailureText(502, '本地文件清理失败，已保留待删除记录，可稍后重试'),
+    '本地文件清理失败，已保留待删除记录，可稍后重试',
+  )
+  assert.equal(deleteFailureText(409, '任务正在进行中，完成或失败后再删除'), '任务正在进行中，完成或失败后再删除')
+  assert.equal(deleteFailureText(500, '请求失败，请稍后重试'), '删除失败，请稍后重试')
+  assert.equal(deleteFailureText(409, ''), '任务正在进行中，稍后再试')
 })
