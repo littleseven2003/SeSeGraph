@@ -45,13 +45,16 @@ jobs:
           REQUESTED: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
         run: |
           set -eu
-          VERSION="$REQUESTED"
+          VERSION="$(printf '%s' "$REQUESTED" | tr -d '[:space:]')"
           # 只放行 vX.Y.Z，预发布与构建元数据不进入发布流程。
           if ! printf '%s' "$VERSION" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
             echo "拒绝：${VERSION} 不是正式 SemVer 标签" >&2
             exit 1
           fi
           git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          if ! git rev-parse -q --verify "refs/tags/${VERSION}" > /dev/null; then
+            git fetch --no-tags origin "refs/tags/${VERSION}:refs/tags/${VERSION}"
+          fi
           if [ "$(git cat-file -t "refs/tags/${VERSION}")" != "tag" ]; then
             echo "拒绝：${VERSION} 不是附注标签" >&2
             exit 1
@@ -215,6 +218,13 @@ jobs:
             echo "匿名拉取失败：请由包管理员在仓库 Packages 页把 sesegraph 设为 public 后重跑" >&2
             exit 1
           fi
+
+      - name: 重新登录发布账号
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 推进 latest 并复核清单
         run: |
