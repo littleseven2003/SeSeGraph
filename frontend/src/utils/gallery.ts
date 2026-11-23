@@ -87,6 +87,8 @@ export function statusLabel(status: string, publishState: string, disabled = fal
       return { label: '正在存入频道', tone: 'progress' }
     case 'failed':
       return { label: '部分存图失败', tone: 'error' }
+    case 'stopped':
+      return { label: '已停止', tone: 'error' }
     case 'completed':
       return { label: '待发布', tone: 'idle' }
     default:

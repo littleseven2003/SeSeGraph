@@ -200,6 +200,11 @@ func (p *Publisher) publish(ctx context.Context, postID int64, pageAPI PageAPI) 
 		}
 	}
 
+	// 收尾前再确认任务未被停止或暂停：停止后不再把发布标记为成功。
+	if state, _, stateErr := p.repo.Control(ctx, postID); stateErr == nil && state != posts.ControlRunning {
+		return errors.New("任务已停止")
+	}
+
 	return p.repo.MarkPublished(ctx, postID, paths, urls)
 }
 

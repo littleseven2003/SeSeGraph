@@ -1298,10 +1298,17 @@ func (r *Repository) Pause(ctx context.Context, postID int64) error {
 func (r *Repository) Resume(ctx context.Context, postID int64) error {
 	result, err := r.handle.ExecContext(ctx,
 		`UPDATE posts SET control_state = ?, upload_round = upload_round + 1,
-		        status = CASE WHEN status IN (?, ?, ?) THEN ? ELSE status END,
+		        status = CASE
+		            WHEN status IN (?, ?, ?) THEN
+		                CASE WHEN (SELECT COUNT(*) FROM post_images
+		                           WHERE post_id = posts.id AND status IN (?, ?)) >= image_count
+		                     THEN ? ELSE ? END
+		            ELSE status END,
 		        updated_at = CURRENT_TIMESTAMP
 		 WHERE id = ? AND control_state = ?`,
-		ControlRunning, StatusUploading, StatusQueued, StatusPublishing, StatusUploading, postID, ControlPaused)
+		ControlRunning, StatusUploading, StatusQueued, StatusPublishing,
+		ImageStatusUploaded, ImageStatusStored, StatusQueued, StatusUploading,
+		postID, ControlPaused)
 	if err != nil {
 		return errors.New("恢复任务失败")
 	}
@@ -1311,13 +1318,14 @@ func (r *Repository) Resume(ctx context.Context, postID int64) error {
 // Stop 停止任务：终态，短码立即关闭，未完成的公开发布标记为失败。
 func (r *Repository) Stop(ctx context.Context, postID int64) error {
 	result, err := r.handle.ExecContext(ctx,
-		`UPDATE posts SET control_state = ?, is_public = 0,
+		`UPDATE posts SET control_state = ?,
+		        is_public = CASE WHEN publish_state = ? THEN is_public ELSE 0 END,
 		        status = CASE WHEN status IN (?, ?, ?) THEN ? ELSE status END,
 		        publish_state = CASE WHEN publish_state = ? THEN ? ELSE publish_state END,
 		        publish_error = CASE WHEN publish_state = ? THEN ? ELSE publish_error END,
 		        updated_at = CURRENT_TIMESTAMP
 		 WHERE id = ? AND COALESCE(control_state, 'running') <> ?`,
-		ControlStopped, StatusUploading, StatusQueued, StatusPublishing, StatusStopped,
+		ControlStopped, PublishPublished, StatusUploading, StatusQueued, StatusPublishing, StatusStopped,
 		PublishPending, PublishFailed, PublishPending, "任务已停止，未完成发布", postID, ControlStopped)
 	if err != nil {
 		return errors.New("停止任务失败")

@@ -614,3 +614,58 @@ func TestProcessHoldsGateForWholePost(t *testing.T) {
 	}
 	releaseSwitch()
 }
+
+// TestProcessHonorsPauseAndStop 验证暂停让出任务、恢复后继续，停止后不再上传。
+func TestProcessHonorsPauseAndStop(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	id := e.queuedPost(t, 2, "photo")
+
+	if _, ok, err := e.repo.ClaimNext(ctx); err != nil || !ok {
+		t.Fatalf("领取失败: ok=%v err=%v", ok, err)
+	}
+	if err := e.repo.Pause(ctx, id); err != nil {
+		t.Fatalf("暂停失败: %v", err)
+	}
+	if err := e.worker.Process(ctx, id); err != nil {
+		t.Fatalf("暂停后处理应正常返回: %v", err)
+	}
+	if e.provider.calls != 0 {
+		t.Errorf("暂停期间上传 %d 次，期望 0", e.provider.calls)
+	}
+	post, err := e.repo.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("读取帖子失败: %v", err)
+	}
+	if post.Status != posts.StatusQueued {
+		t.Errorf("暂停后状态 = %q，期望回到队列", post.Status)
+	}
+
+	if err := e.repo.Resume(ctx, id); err != nil {
+		t.Fatalf("恢复失败: %v", err)
+	}
+	if _, ok, err := e.repo.ClaimNext(ctx); err != nil || !ok {
+		t.Fatalf("恢复后领取失败: ok=%v err=%v", ok, err)
+	}
+	if err := e.worker.Process(ctx, id); err != nil {
+		t.Fatalf("恢复后处理失败: %v", err)
+	}
+	if e.provider.calls != 2 {
+		t.Errorf("恢复后上传 %d 次，期望 2", e.provider.calls)
+	}
+
+	second := e.queuedPost(t, 1, "photo")
+	if _, ok, err := e.repo.ClaimNext(ctx); err != nil || !ok {
+		t.Fatalf("领取第二帖失败: ok=%v err=%v", ok, err)
+	}
+	if err := e.repo.Stop(ctx, second); err != nil {
+		t.Fatalf("停止失败: %v", err)
+	}
+	before := e.provider.calls
+	if err := e.worker.Process(ctx, second); err != nil {
+		t.Fatalf("停止后处理应正常返回: %v", err)
+	}
+	if e.provider.calls != before {
+		t.Errorf("停止后仍上传了 %d 次", e.provider.calls-before)
+	}
+}

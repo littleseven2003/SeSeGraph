@@ -544,3 +544,9 @@ test('deleteFailureText 保留服务端区分的删除失败原因', () => {
   assert.equal(deleteFailureText(500, '请求失败，请稍后重试'), '删除失败，请稍后重试')
   assert.equal(deleteFailureText(409, ''), '任务正在进行中，稍后再试')
 })
+
+test('停止的任务显示已停止', () => {
+  const label = statusLabel('stopped', 'idle')
+  assert.equal(label.label, '已停止')
+  assert.equal(label.tone, 'error')
+})

@@ -54,25 +54,40 @@ func TestPauseResumeRoundGatesStaleWrites(t *testing.T) {
 		t.Fatalf("恢复后状态 = %q/%d/%v，期望 running/1", state, round, err)
 	}
 
-	// 暂停前发出的请求带旧轮次 0，恢复后必须被拒绝。
-	_, err = repo.AttachImageWithRound(ctx, Image{
+	// 全部图片已上传，恢复后回到排队，上传队列可以重新领取。
+	if _, ok, err := repo.ClaimNext(ctx); err != nil || !ok {
+		t.Fatalf("恢复后领取失败: ok=%v err=%v", ok, err)
+	}
+}
+
+// TestRoundGuardRejectsStaleUpload 验证写图记录前复核上传轮次与暂停状态。
+func TestRoundGuardRejectsStaleUpload(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+	id := controlPost(t, repo)
+
+	if _, err := repo.handle.ExecContext(ctx,
+		`UPDATE posts SET upload_round = 3 WHERE id = ?`, id); err != nil {
+		t.Fatalf("写入轮次失败: %v", err)
+	}
+	_, err := repo.AttachImageWithRound(ctx, Image{
 		PostID: id, SortOrder: 2, Status: ImageStatusUploaded, MimeType: "image/jpeg",
-	}, 0)
+	}, 2)
 	if !errors.Is(err, ErrControlInvalid) {
 		t.Fatalf("旧轮次写入错误 = %v，期望 ErrControlInvalid", err)
 	}
 	if _, err := repo.AttachImageWithRound(ctx, Image{
 		PostID: id, SortOrder: 2, Status: ImageStatusUploaded, MimeType: "image/jpeg",
-	}, round); err != nil {
+	}, 3); err != nil {
 		t.Fatalf("新轮次写入失败: %v", err)
 	}
 
 	if err := repo.Pause(ctx, id); err != nil {
-		t.Fatalf("再次暂停失败: %v", err)
+		t.Fatalf("暂停失败: %v", err)
 	}
 	if _, err := repo.AttachImageWithRound(ctx, Image{
 		PostID: id, SortOrder: 2, Status: ImageStatusUploaded, MimeType: "image/jpeg",
-	}, round); !errors.Is(err, ErrControlInvalid) {
+	}, 3); !errors.Is(err, ErrControlInvalid) {
 		t.Fatalf("暂停期间写入错误 = %v，期望 ErrControlInvalid", err)
 	}
 }
@@ -121,5 +136,34 @@ func TestPauseRejectsFinishedTask(t *testing.T) {
 	}
 	if err := repo.Pause(ctx, id); !errors.Is(err, ErrControlInvalid) {
 		t.Errorf("已完成任务暂停错误 = %v，期望拒绝", err)
+	}
+}
+
+// TestStopKeepsPublishedShortCodes 验证已发布帖停止后短码仍可用。
+func TestStopKeepsPublishedShortCodes(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+	id, err := repo.Create(ctx, Post{Title: "已发布", ImageCount: 1, Status: StatusCompleted})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+	if err := repo.SetPublic(ctx, id, true); err != nil {
+		t.Fatalf("设为公开失败: %v", err)
+	}
+	if err := repo.RequestPublish(ctx, id); err != nil {
+		t.Fatalf("请求发布失败: %v", err)
+	}
+	if err := repo.MarkPublished(ctx, id, []string{"Page-1"}, []string{"https://telegra.ph/Page-1"}); err != nil {
+		t.Fatalf("标记发布失败: %v", err)
+	}
+	if err := repo.Stop(ctx, id); err != nil {
+		t.Fatalf("停止失败: %v", err)
+	}
+	var public int
+	if err := repo.handle.QueryRowContext(ctx, `SELECT is_public FROM posts WHERE id = ?`, id).Scan(&public); err != nil {
+		t.Fatalf("读取公开标记失败: %v", err)
+	}
+	if public != 1 {
+		t.Error("已发布帖停止后短码被关闭")
 	}
 }
