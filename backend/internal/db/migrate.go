@@ -156,6 +156,15 @@ func Migrate(ctx context.Context, handle *sql.DB) error {
 	if err := ensureColumn(ctx, tx, "posts", "cover_sort_order", "ALTER TABLE posts ADD COLUMN cover_sort_order INTEGER DEFAULT NULL"); err != nil {
 		return errors.New("升级封面序号失败")
 	}
+	// 旧库升级：一次性清掉历史遗留的孤立标签，并补上按标签反查帖子的索引。
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM post_tags)`); err != nil {
+		return errors.New("清理孤立标签失败")
+	}
+	if _, err := tx.ExecContext(ctx,
+		`CREATE INDEX IF NOT EXISTS idx_post_tags_tag_id ON post_tags(tag_id)`); err != nil {
+		return errors.New("创建标签索引失败")
+	}
 	// 旧库升级：首次入队时冻结的链接生成方式与随机短码，重启后沿用同一套取值。
 	if err := ensureColumn(ctx, tx, "posts", "publish_path_mode", "ALTER TABLE posts ADD COLUMN publish_path_mode TEXT DEFAULT ''"); err != nil {
 		return errors.New("升级链接生成方式失败")

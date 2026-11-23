@@ -112,3 +112,73 @@ func TestMigrateFreshDatabaseHasCoverAndPathFields(t *testing.T) {
 		t.Errorf("字段 = %d/%q/%q，期望 3/slug/abc12345", cover, pathMode, slug)
 	}
 }
+
+// TestMigrateCleansOrphanTags 验证升级时清掉历史孤立标签，共享标签保留并补上反查索引。
+func TestMigrateCleansOrphanTags(t *testing.T) {
+	handle, err := Open(filepath.Join(t.TempDir(), "legacy-tags.db"))
+	if err != nil {
+		t.Fatalf("打开数据库失败: %v", err)
+	}
+	t.Cleanup(func() { _ = handle.Close() })
+	ctx := context.Background()
+	if err := Migrate(ctx, handle); err != nil {
+		t.Fatalf("初始化失败: %v", err)
+	}
+
+	for _, stmt := range []string{
+		`INSERT INTO posts (title, status) VALUES ('旧图集', 'completed')`,
+		`INSERT INTO tags (name) VALUES ('共享'), ('孤立')`,
+		`INSERT INTO post_tags (post_id, tag_id) SELECT 1, id FROM tags WHERE name = '共享'`,
+		`PRAGMA user_version = 10`,
+	} {
+		if _, err := handle.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("准备旧库失败: %v", err)
+		}
+	}
+
+	if err := Migrate(ctx, handle); err != nil {
+		t.Fatalf("迁移失败: %v", err)
+	}
+
+	rows, err := handle.QueryContext(ctx, `SELECT name FROM tags ORDER BY name`)
+	if err != nil {
+		t.Fatalf("读取标签失败: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("扫描标签失败: %v", err)
+		}
+		names = append(names, name)
+	}
+	if len(names) != 1 || names[0] != "共享" {
+		t.Errorf("迁移后标签 = %v，期望只剩共享", names)
+	}
+
+	indexRows, err := handle.QueryContext(ctx, `PRAGMA index_list(post_tags)`)
+	if err != nil {
+		t.Fatalf("读取索引失败: %v", err)
+	}
+	defer func() { _ = indexRows.Close() }()
+	found := false
+	for indexRows.Next() {
+		var (
+			seq     int
+			name    string
+			unique  int
+			origin  string
+			partial int
+		)
+		if err := indexRows.Scan(&seq, &name, &unique, &origin, &partial); err != nil {
+			t.Fatalf("扫描索引失败: %v", err)
+		}
+		if name == "idx_post_tags_tag_id" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("缺少 idx_post_tags_tag_id 索引")
+	}
+}

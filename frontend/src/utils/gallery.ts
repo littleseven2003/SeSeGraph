@@ -1,3 +1,5 @@
+import { splitTags } from './meta.ts'
+
 // 画廊的纯逻辑：查询串、发布时间、状态文案、分享文案与模糊偏好。
 
 /** 触屏点按临时去模糊的时长，单位毫秒。 */
@@ -380,6 +382,8 @@ export interface MetadataDraft {
   title: string
   description: string
   authorName: string
+  /** 逗号分隔的标签文本，提交时拆成数组；旧调用方可以不带。 */
+  tagsText?: string
 }
 
 /** METADATA_LIMITS 与后端校验保持一致。 */
@@ -391,16 +395,25 @@ function countRunes(value: string): number {
 }
 
 /** metadataFromDetail 用详情填充编辑草稿。 */
-export function metadataFromDetail(detail: { title: string; description: string; author_name: string }): MetadataDraft {
+export function metadataFromDetail(detail: {
+  title: string
+  description: string
+  author_name: string
+  tags?: string[]
+}): MetadataDraft {
   return {
     title: detail.title,
     description: detail.description,
     authorName: detail.author_name,
+    tagsText: (detail.tags ?? []).join('，'),
   }
 }
 
 /** validateMetadata 返回空串表示可以提交。 */
 export function validateMetadata(draft: MetadataDraft): string {
+  const tags = splitTags(draft.tagsText ?? '')
+  if (tags.length > 20) return '标签最多 20 个'
+  if (tags.some((tag) => Array.from(tag).length > 30)) return '单个标签不超过 30 字'
   const title = draft.title.trim()
   if (title === '') return '标题不能为空'
   if (countRunes(title) > METADATA_LIMITS.title) return '标题不超过 200 字'

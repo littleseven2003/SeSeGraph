@@ -6,6 +6,7 @@ import { ApiError } from '../../api/client.ts'
 import { copyText } from '../../utils/clipboard.ts'
 import { detailUploadModeLabel } from '../../utils/media.ts'
 import { makeCover } from '../../utils/cover.ts'
+import { splitTags } from '../../utils/meta.ts'
 import {
   DEFAULT_SHARE_TEMPLATE,
   SHARE_PLACEHOLDERS,
@@ -55,7 +56,7 @@ const templateNotice = ref('')
 const editing = ref(false)
 const saving = ref(false)
 const editError = ref('')
-const draft = ref<MetadataDraft>({ title: '', description: '', authorName: '' })
+const draft = ref<MetadataDraft>({ title: '', description: '', authorName: '', tagsText: '' })
 const toggling = ref(false)
 const confirmToggle = ref(false)
 const toggleError = ref('')
@@ -199,6 +200,7 @@ async function saveEdit(): Promise<void> {
       title: draft.value.title.trim(),
       description: draft.value.description,
       author_name: draft.value.authorName.trim(),
+      tags: splitTags(draft.value.tagsText ?? ''),
     })
     editing.value = false
     feedback.value = '已保存'
@@ -422,6 +424,15 @@ watch(
               rows="4"
               class="mt-1 w-full rounded-xl border border-line bg-canvas px-3 py-2 text-sm leading-relaxed outline-none transition focus:border-brand focus:bg-surface"
             ></textarea>
+          </label>
+          <label class="block">
+            <span class="text-xs font-medium text-muted">标签</span>
+            <input
+              v-model="draft.tagsText"
+              type="text"
+              placeholder="用逗号或空格分隔，留空即清空"
+              class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-brand focus:bg-surface"
+            />
           </label>
           <label class="block">
             <span class="text-xs font-medium text-muted">作者</span>

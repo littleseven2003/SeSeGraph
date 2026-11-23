@@ -337,6 +337,9 @@ func (r *Repository) Delete(ctx context.Context, postID int64) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM post_tags WHERE post_id = ?`, postID); err != nil {
 		return errors.New("删除帖子失败")
 	}
+	if err := removeOrphanTags(ctx, tx); err != nil {
+		return errors.New("删除帖子失败")
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM posts WHERE id = ?`, postID); err != nil {
 		return errors.New("删除帖子失败")
 	}
@@ -546,9 +549,21 @@ func (r *Repository) MarkPublished(ctx context.Context, postID int64, paths, url
 
 // UpdateMetadata 更新标题、说明与作者名，不改动发布状态、发布时间与页面路径。
 func (r *Repository) UpdateMetadata(ctx context.Context, postID int64, expectedState, title, description, authorName string) error {
+	return r.UpdateMetadataAndTags(ctx, postID, expectedState, title, description, authorName, nil)
+}
+
+// UpdateMetadataAndTags 在同一个短事务里更新元数据与标签。
+// tags 为空指针表示保留原标签，空切片表示清空；远端写入由调用方先完成。
+func (r *Repository) UpdateMetadataAndTags(ctx context.Context, postID int64, expectedState, title, description, authorName string, tags *[]string) error {
+	tx, err := r.handle.BeginTx(ctx, nil)
+	if err != nil {
+		return errors.New("开启更新事务失败")
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	// 写入时按读取到的状态再校验一次：读取后整次发布已完成或已入队都会失败，
 	// 避免远端与本地分别落到不同版本。失败帖还要求没有可复用的页面路径。
-	result, err := r.handle.ExecContext(ctx,
+	result, err := tx.ExecContext(ctx,
 		`UPDATE posts SET title = ?, description = ?, author_name = ?, updated_at = CURRENT_TIMESTAMP
 		 WHERE id = ? AND pending_delete = 0 AND publish_state = ?
 		   AND (publish_state IN (?, ?)
@@ -558,11 +573,38 @@ func (r *Repository) UpdateMetadata(ctx context.Context, postID int64, expectedS
 	if err != nil {
 		return errors.New("更新帖子失败")
 	}
-	if affected, _ := result.RowsAffected(); affected > 0 {
-		return nil
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		// 先释放事务占用的唯一连接，再读取具体的失败原因。
+		_ = tx.Rollback()
+		return r.missingOrBusy(ctx, postID)
 	}
 
-	return r.missingOrBusy(ctx, postID)
+	if tags != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM post_tags WHERE post_id = ?`, postID); err != nil {
+			return errors.New("更新标签失败")
+		}
+		if err := attachTags(ctx, tx, postID, *tags); err != nil {
+			return err
+		}
+		if err := removeOrphanTags(ctx, tx); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+	if err := tx.Commit(); err != nil {
+		return errors.New("提交更新事务失败")
+	}
+	return nil
+}
+
+// removeOrphanTags 删除不再关联任何帖子的标签，共享标签保留。
+func removeOrphanTags(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx,
+		`DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM post_tags)`)
+	if err != nil {
+		return errors.New("清理孤立标签失败")
+	}
+	return nil
 }
 
 // PublishInfo 读取发布所需的元数据、存图列表与已保存的页面路径。

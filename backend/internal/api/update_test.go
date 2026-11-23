@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -442,5 +443,50 @@ func TestUpdateQueuedBehindDeleteReturnsConflict(t *testing.T) {
 	}
 	if rec := <-deleteDone; rec.Code != http.StatusNoContent {
 		t.Errorf("删除状态 = %d，期望 204，响应: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestUpdatePostTagsSemantics 验证编辑接口：省略 tags 保留、空数组清空、新数组替换并清理孤立标签。
+func TestUpdatePostTagsSemantics(t *testing.T) {
+	env, _ := newEditEnv(t)
+	cookie := env.setup(t)
+	ctx := context.Background()
+	postID, err := env.posts.Create(ctx, posts.Post{Title: "标签帖", ImageCount: 0, Tags: []string{"甲", "乙"}})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+
+	rec := env.do(t, http.MethodPut, fmt.Sprintf("/api/posts/%d", postID),
+		`{"title":"标签帖","description":"","author_name":""}`, cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("省略标签状态码 = %d，响应: %s", rec.Code, rec.Body.String())
+	}
+	if tags, err := env.posts.ListTags(ctx, postID); err != nil || len(tags) != 2 {
+		t.Errorf("省略标签后 = %v / %v，期望保留两项", tags, err)
+	}
+
+	rec = env.do(t, http.MethodPut, fmt.Sprintf("/api/posts/%d", postID),
+		`{"title":"标签帖","description":"","author_name":"","tags":["丙"]}`, cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("替换标签状态码 = %d，响应: %s", rec.Code, rec.Body.String())
+	}
+	if tags, err := env.posts.ListTags(ctx, postID); err != nil || len(tags) != 1 || tags[0] != "丙" {
+		t.Errorf("替换后标签 = %v / %v，期望只剩丙", tags, err)
+	}
+	counts, err := env.posts.ListTagCounts(ctx)
+	if err != nil {
+		t.Fatalf("读取标签失败: %v", err)
+	}
+	if len(counts) != 1 || counts[0].Name != "丙" {
+		t.Errorf("标签表 = %+v，期望只剩丙", counts)
+	}
+
+	rec = env.do(t, http.MethodPut, fmt.Sprintf("/api/posts/%d", postID),
+		`{"title":"标签帖","description":"","author_name":"","tags":[]}`, cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("清空标签状态码 = %d，响应: %s", rec.Code, rec.Body.String())
+	}
+	if counts, err := env.posts.ListTagCounts(ctx); err != nil || len(counts) != 0 {
+		t.Errorf("清空后标签表 = %+v / %v，期望为空", counts, err)
 	}
 }

@@ -18,6 +18,8 @@ type updatePostRequest struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
 	AuthorName  string `json:"author_name"`
+	// Tags 省略时保留原标签，空数组表示清空。
+	Tags *[]string `json:"tags"`
 }
 
 // updatePostHandler 更新帖子元数据：已发布帖先改远端页面，全部成功后才落本地记录。
@@ -55,10 +57,21 @@ func updatePostHandler(deps Deps) gin.HandlerFunc {
 			return
 		}
 
+		var tags *[]string
+		if req.Tags != nil {
+			normalized, problem := normalizeTags(*req.Tags)
+			if problem != "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": problem})
+				return
+			}
+			tags = &normalized
+		}
+
 		err := deps.Editor.Update(c.Request.Context(), postID, publisher.Metadata{
 			Title:       title,
 			Description: req.Description,
 			AuthorName:  strings.TrimSpace(req.AuthorName),
+			Tags:        tags,
 		})
 		switch {
 		case err == nil:

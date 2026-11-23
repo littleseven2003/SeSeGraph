@@ -79,6 +79,8 @@ export interface PostMetadata {
   title: string
   description: string
   author_name: string
+  /** 省略保留原标签，空数组清空。 */
+  tags?: string[]
 }
 
 async function galleryRequest(path: string, init?: RequestInit): Promise<Response> {

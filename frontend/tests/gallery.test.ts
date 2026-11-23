@@ -452,7 +452,22 @@ test('悬停与键盘聚焦都不揭开模糊，只有显式点按解锁', () =>
 
 test('metadataFromDetail 填充编辑草稿', () => {
   const draft = metadataFromDetail({ title: '标题', description: '说明', author_name: 'SeSe' })
-  assert.deepEqual(draft, { title: '标题', description: '说明', authorName: 'SeSe' })
+  assert.deepEqual(draft, { title: '标题', description: '说明', authorName: 'SeSe', tagsText: '' })
+})
+
+test('metadataFromDetail 带回已有标签', () => {
+  const draft = metadataFromDetail({ title: '标题', description: '说明', author_name: 'SeSe', tags: ['红叶', '京都'] })
+  assert.equal(draft.tagsText, '红叶，京都')
+})
+
+test('validateMetadata 校验标签数量与长度', () => {
+  const many = Array.from({ length: 21 }, (_, index) => 't' + index).join(' ')
+  assert.equal(validateMetadata({ title: '标题', description: '', authorName: '', tagsText: many }), '标签最多 20 个')
+  assert.equal(
+    validateMetadata({ title: '标题', description: '', authorName: '', tagsText: '标'.repeat(31) }),
+    '单个标签不超过 30 字',
+  )
+  assert.equal(validateMetadata({ title: '标题', description: '', authorName: '', tagsText: '红叶 京都' }), '')
 })
 
 test('validateMetadata 校验长度与空标题', () => {
