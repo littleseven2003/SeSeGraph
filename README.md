@@ -66,36 +66,49 @@ $EDITOR .env
 docker compose up -d
 ```
 
-应用镜像从 `ghcr.io/littleseven2003/sesegraph` 拉取，`SESEGRAPH_VERSION` 固定版本、`SESEGRAPH_IMAGE` 可换成自定义地址。宿主机数据目录是 `/opt/sesegraph/data`，Caddy 的证书与配置保存在命名卷里。
+应用镜像从 `ghcr.io/littleseven2003/sesegraph` 拉取，`SESEGRAPH_VERSION` 固定版本、`SESEGRAPH_IMAGE` 可换成自定义地址。本文件的 `SESEGRAPH_VERSION` 默认固定到当前发布版 `v1.1.0`，需要跟随后续发布时显式改成 `latest` 再 `docker compose pull`。宿主机数据目录是 `/opt/sesegraph/data`，Caddy 的证书与配置保存在命名卷里。
 
 ### 单容器 Docker
 
 ```bash
-mkdir -p /opt/sesegraph/data && sudo chown 1000:1000 /opt/sesegraph/data
+install -d -m 700 /opt/sesegraph
+install -d -o 1000 -g 1000 /opt/sesegraph/data
+curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.1.0/.env.example \
+  -o /opt/sesegraph/sesegraph.env
+chmod 600 /opt/sesegraph/sesegraph.env
+# 容器内数据目录固定为 /app/data；PUBLIC_URL、管理员账号与上游凭据也在该文件中填写
+sed -i 's|^DATA_DIR=.*|DATA_DIR=/app/data|' /opt/sesegraph/sesegraph.env
+$EDITOR /opt/sesegraph/sesegraph.env
 docker run -d --name sesegraph --restart unless-stopped \
   -p 127.0.0.1:8080:8080 \
   -v /opt/sesegraph/data:/app/data \
-  -e PUBLIC_URL=https://gallery.example.com \
-  -e ADMIN_USERNAME=admin -e ADMIN_PASSWORD='换成你的密码' \
+  --env-file /opt/sesegraph/sesegraph.env \
   ghcr.io/littleseven2003/sesegraph:v1.1.0
 ```
 
-反向代理指向 `http://127.0.0.1:8080`，并关闭响应缓冲（图片网关是流式输出）。`deploy/nginx.conf.example` 与 `deploy/Caddyfile.example` 可直接参考。
+凭据放在权限 `0600` 的环境文件里由 `--env-file` 读取，不要把密码写进命令行，以免留在 shell 历史与进程列表里。反向代理指向 `http://127.0.0.1:8080`，并关闭响应缓冲（图片网关是流式输出）。`deploy/nginx.conf.example` 与 `deploy/Caddyfile.example` 可直接参考。
 
 ### 原生单二进制
 
 ```bash
-install -d /opt/sesegraph /etc/sesegraph /var/lib/sesegraph
+install -d /opt/sesegraph
+useradd --system --home /opt/sesegraph --shell /usr/sbin/nologin sesegraph || true
 curl -fsSL -o /opt/sesegraph/sesegraph \
   https://github.com/littleseven2003/SeSeGraph/releases/download/v1.1.0/sesegraph-v1.1.0-linux-amd64
 chmod +x /opt/sesegraph/sesegraph
-cp deploy/sesegraph.service /etc/systemd/system/sesegraph.service
-install -m 600 .env /etc/sesegraph/sesegraph.env
-useradd --system --home /opt/sesegraph --shell /usr/sbin/nologin sesegraph || true
+curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.1.0/deploy/sesegraph.service \
+  -o /etc/systemd/system/sesegraph.service
+install -d -m 750 /etc/sesegraph
+curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.1.0/.env.example \
+  -o /etc/sesegraph/sesegraph.env
+chmod 600 /etc/sesegraph/sesegraph.env
+# 填写 PUBLIC_URL 与上游凭据；监听地址与数据目录由单元文件里的 --addr / --data 指定
+$EDITOR /etc/sesegraph/sesegraph.env
 systemctl daemon-reload && systemctl enable --now sesegraph
+curl -fsS http://127.0.0.1:8080/api/health
 ```
 
-数据库与上传临时文件在 `/var/lib/sesegraph`，升级时只替换二进制再 `systemctl restart sesegraph`。四个平台的产物与 `SHA256SUMS` 都在 Release 页。
+单元文件用 `StateDirectory` 建好 `/var/lib/sesegraph` 并授权给运行用户，数据库、`thumbs/`、`tmp/`、`backups/` 都在这里；升级时只替换二进制再 `systemctl restart sesegraph`。四个平台的产物与 `SHA256SUMS` 都在 Release 页。
 
 ## 配置说明
 
@@ -140,15 +153,16 @@ systemctl daemon-reload && systemctl enable --now sesegraph
 make build          # 构建前端并生成 bin/sesegraph
 make test           # 后端测试
 make typecheck      # 前端类型检查
-cd frontend && pnpm test   # 前端单元测试
+(cd frontend && pnpm test)   # 前端单元测试
+make frontend       # 仅重新构建并嵌入前端资源
 make cross          # 四个平台交叉编译
 ```
 
-前端单独开发时 `cd frontend && pnpm dev`；需要重新嵌入页面时执行 `make frontend`。本地从源码构建镜像：`docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build`。
+以上命令都在仓库根目录执行，`make cross` 同样依赖根目录的 `Makefile` 与 `backend/`，不要在 `frontend/` 里调用。前端单独开发时 `cd frontend && pnpm dev`，回到根目录再执行嵌入或打包。本地从源码构建镜像：`docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build`。
 
 ## 版本与变更
 
-版本历史见 [CHANGELOG.md](CHANGELOG.md)，当前正式版 `v1.1.0`。发布由标签触发：`v*` 标签会产出四平台二进制、`SHA256SUMS` 与 `ghcr.io/littleseven2003/sesegraph` 的双架构镜像。
+版本历史见 [CHANGELOG.md](CHANGELOG.md)，当前正式版 `v1.1.0`。推送形如 `vX.Y.Z` 的正式标签（须指向 `main`，且 CHANGELOG 有对应小节）会触发发布：产出四平台二进制、`SHA256SUMS` 与 `ghcr.io/littleseven2003/sesegraph` 的双架构镜像，先验证版本镜像的架构清单、健康接口与匿名拉取，再推进 `latest` 与 Release。
 
 ## 升级与备份
 
