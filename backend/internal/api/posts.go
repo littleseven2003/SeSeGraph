@@ -168,6 +168,11 @@ func createPostHandler(deps Deps) gin.HandlerFunc {
 			return
 		}
 
+		if req.CoverSortOrder < 0 || req.CoverSortOrder > req.ImageCount {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "封面序号超出图片数量"})
+			return
+		}
+
 		mode := req.UploadMode
 		if mode == "" {
 			// 未指定时沿用全局默认画质（UPLOAD_MODE 或设置页保存值）。
@@ -199,10 +204,6 @@ func createPostHandler(deps Deps) gin.HandlerFunc {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "保存封面失败"})
 				return
 			}
-		}
-		if req.CoverSortOrder < 0 || req.CoverSortOrder > req.ImageCount {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "封面序号超出图片数量"})
-			return
 		}
 		if len(cover) > 0 || req.CoverSortOrder > 0 {
 			if err := deps.Posts.SetCoverSelection(c.Request.Context(), id, req.CoverSortOrder, coverPath); err != nil {

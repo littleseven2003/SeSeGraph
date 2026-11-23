@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { setPostDisabled, updatePost, type PostDetail } from '../../api/gallery.ts'
-import { changeCover } from '../../api/posts.ts'
+import { changeCover, fetchMediaBlob } from '../../api/posts.ts'
 import { ApiError } from '../../api/client.ts'
 import { copyText } from '../../utils/clipboard.ts'
 import { detailUploadModeLabel } from '../../utils/media.ts'
-import { makeCover } from '../../utils/cover.ts'
+import { makeCoverFromMedia } from '../../utils/cover.ts'
 import { splitTags } from '../../utils/meta.ts'
 import {
   DEFAULT_SHARE_TEMPLATE,
@@ -300,17 +300,9 @@ async function onCoverChange(event: Event): Promise<void> {
   coverBusy.value = true
   coverError.value = ''
   try {
-    let thumbnail: string | undefined
-    const image = props.detail.images.find((item) => item.sort_order === order)
-    if (image !== undefined && props.detail.public_base_url !== '') {
-      const base = props.detail.public_base_url.replace(/\/$/, '')
-      try {
-        const response = await fetch(`${base}/i/${image.short_code}`, { credentials: 'same-origin' })
-        if (response.ok) thumbnail = (await makeCover(await response.blob())).dataUrl
-      } catch {
-        thumbnail = undefined
-      }
-    }
+    // 缩略图必须真的来自选中媒体：读不到就明确失败，不提交只改序号的半套操作。
+    const media = await fetchMediaBlob(props.detail.id, order)
+    const thumbnail = (await makeCoverFromMedia(media)).dataUrl
     await changeCover(props.detail.id, order, thumbnail)
     emit('saved')
   } catch (cause) {

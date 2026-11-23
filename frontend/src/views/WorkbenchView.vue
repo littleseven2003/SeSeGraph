@@ -5,9 +5,21 @@ import ImageGrid from '../components/workbench/ImageGrid.vue'
 import ModeSwitch from '../components/workbench/ModeSwitch.vue'
 import MetaPanel from '../components/workbench/MetaPanel.vue'
 import ProgressPanel from '../components/workbench/ProgressPanel.vue'
-import { commitPost, createPost, fetchProgress, publishPost, retryPost, uploadImage, type ServerProgress } from '../api/posts.ts'
+import {
+  commitPost,
+  createPost,
+  fetchProgress,
+  pauseTask,
+  publishPost,
+  resumeTask,
+  retryPost,
+  stopTask,
+  uploadImage,
+  type ServerProgress,
+} from '../api/posts.ts'
 import { ApiError } from '../api/client.ts'
 import { makeCover } from '../utils/cover.ts'
+import { changeCover } from '../api/posts.ts'
 import {
   MAX_IMAGE_COUNT,
   extensionOf,
@@ -640,9 +652,56 @@ function onRemove(id: string): void {
   }
 }
 
+async function refreshServerProgress(): Promise<void> {
+  if (postId.value === 0) return
+  try {
+    applyServerProgress(await fetchProgress(postId.value))
+  } catch {
+    // 刷新失败保留当前展示，下一次轮询会再试。
+  }
+}
+
+const controlBusy = ref(false)
+
+async function runControl(action: 'pause' | 'resume' | 'stop'): Promise<void> {
+  if (postId.value === 0 || controlBusy.value) return
+  controlBusy.value = true
+  try {
+    if (action === 'pause') await pauseTask(postId.value)
+    else if (action === 'resume') await resumeTask(postId.value)
+    else await stopTask(postId.value)
+    await refreshServerProgress()
+    if (action === 'stop') {
+      phase.value = 'idle'
+      message.value = '任务已停止，未完成的项不再上传'
+    } else if (action === 'pause') {
+      message.value = '任务已暂停，继续时只补未完成的项'
+    } else {
+      message.value = '任务已继续，可点「继续上传」补齐缺项'
+    }
+  } catch (error) {
+    pushError(error instanceof ApiError ? error.message : '任务操作失败，请稍后重试')
+  } finally {
+    controlBusy.value = false
+  }
+}
+
 function onSelectCover(id: string): void {
   coverId.value = id
   void refreshCover()
+  // 任务已创建时同步把新封面写给服务端；失败保留原封面并给出原因。
+  if (postId.value === 0 || locked.value) return
+  const tile = tiles.value.find((item) => item.id === id)
+  if (tile === undefined) return
+  void (async () => {
+    try {
+      const cover = await makeCover(tile.posterBlob ?? tile.blob)
+      await changeCover(postId.value, tile.sortOrder, cover.dataUrl)
+      message.value = '封面已更新'
+    } catch (error) {
+      pushError(error instanceof ApiError ? error.message : '更换封面失败，请稍后重试')
+    }
+  })()
 }
 
 function onSortByName(): void {
@@ -909,10 +968,11 @@ async function runUpload(): Promise<void> {
     // 用开始上传时的列表生成队列，中途任何列表变化都不会影响已排定的请求。
     const queue = planUploadQueue(tiles.value.slice(), planned.plan.pending)
     // 受控并发：首错停止派发，已在途的请求收尾，全部成功才提交入队。
+    const round = progress.upload_round
     const failure = await runUploadPool(queue, UPLOAD_CONCURRENCY, async (item) => {
       statuses.value = { ...statuses.value, [item.sortOrder]: 'uploading' }
       try {
-        await uploadImage(id, item.sortOrder, item.tile.blob, item.tile.mime)
+        await uploadImage(id, item.sortOrder, item.tile.blob, item.tile.mime, round)
         statuses.value = { ...statuses.value, [item.sortOrder]: 'uploaded' }
       } catch (error) {
         statuses.value = { ...statuses.value, [item.sortOrder]: 'failed' }
@@ -1216,8 +1276,12 @@ onBeforeUnmount(() => {
           :progress="serverProgress"
           :retrying="retrying"
           :publishing="publishing"
+          :control-busy="controlBusy"
           @retry="retryFailed"
           @publish="publishToTelegraph"
+          @pause="runControl('pause')"
+          @resume="runControl('resume')"
+          @stop="runControl('stop')"
         />
       </div>
     </main>

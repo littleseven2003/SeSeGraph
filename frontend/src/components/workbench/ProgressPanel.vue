@@ -18,8 +18,23 @@ const props = defineProps<{
   progress: ServerProgress
   retrying?: boolean
   publishing?: boolean
+  controlBusy?: boolean
 }>()
-const emit = defineEmits<{ (event: 'retry'): void; (event: 'publish'): void }>()
+const emit = defineEmits<{
+  (event: 'retry'): void
+  (event: 'publish'): void
+  (event: 'pause'): void
+  (event: 'resume'): void
+  (event: 'stop'): void
+}>()
+// 只有还没结束的上传任务才提供暂停与停止入口。
+const controllable = computed(
+  () =>
+    props.progress.status === 'uploading' ||
+    props.progress.status === 'queued' ||
+    props.progress.status === 'publishing',
+)
+const controlState = computed(() => props.progress.control_state ?? 'running')
 const canPublish = computed(() => canRequestPublish(props.progress))
 
 const percent = computed(() => progressPercent(props.progress))
@@ -63,6 +78,37 @@ const tone = computed(() => {
           {{ props.retrying ? '正在重试…' : `重试 ${props.progress.failed_count} 张` }}
         </button>
       </div>
+    </div>
+
+    <div v-if="controllable" class="mt-3 flex flex-wrap items-center gap-2">
+      <button
+        v-if="controlState === 'running'"
+        type="button"
+        class="h-9 rounded-full border border-line bg-surface px-3 text-xs font-medium text-muted transition hover:border-ink/25 hover:text-ink disabled:opacity-60"
+        :disabled="props.controlBusy"
+        @click="emit('pause')"
+      >
+        {{ props.controlBusy ? '处理中…' : '暂停任务' }}
+      </button>
+      <button
+        v-else-if="controlState === 'paused'"
+        type="button"
+        class="h-9 rounded-full border border-brand/30 bg-brand-soft px-3 text-xs font-medium text-brand-strong transition hover:border-brand/50 disabled:opacity-60"
+        :disabled="props.controlBusy"
+        @click="emit('resume')"
+      >
+        {{ props.controlBusy ? '处理中…' : '继续任务' }}
+      </button>
+      <button
+        type="button"
+        class="h-9 rounded-full border border-danger/35 bg-white px-3 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-60"
+        :disabled="props.controlBusy"
+        @click="emit('stop')"
+      >
+        停止任务
+      </button>
+      <span v-if="controlState === 'paused'" class="text-xs text-muted">已暂停，继续只补未完成的项</span>
+      <span v-else-if="controlState === 'stopped'" class="text-xs text-muted">任务已停止</span>
     </div>
 
     <div class="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-canvas" role="progressbar" :aria-valuenow="percent" aria-valuemin="0" aria-valuemax="100">

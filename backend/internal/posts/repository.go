@@ -19,6 +19,15 @@ const (
 	StatusPublishing = "publishing"
 	StatusCompleted  = "completed"
 	StatusFailed     = "failed"
+	// StatusStopped 是用户主动停止后的终态，不再被上传与发布队列领取。
+	StatusStopped = "stopped"
+)
+
+// 任务控制状态：运行中、已暂停、已停止。
+const (
+	ControlRunning = "running"
+	ControlPaused  = "paused"
+	ControlStopped = "stopped"
 )
 
 // 发布状态取值：idle 未发布、pending 待发布、publishing 发布中、published 已发布、failed 发布失败。
@@ -60,6 +69,8 @@ type Post struct {
 	ImageCount     int
 	UploadMode     string
 	Status         string
+	ControlState   string
+	UploadRound    int
 	Tags           []string
 }
 
@@ -97,6 +108,7 @@ type Image struct {
 	MimeType     string
 	FileSize     int64
 	TempFilePath string
+	RemoteFileID string
 	Status       string
 	ErrorMessage string
 }
@@ -395,10 +407,11 @@ func (r *Repository) SampleStoredFileIDs(ctx context.Context, limit int) ([]stri
 func (r *Repository) Get(ctx context.Context, id int64) (*Post, error) {
 	post := &Post{ID: id}
 	err := r.handle.QueryRowContext(ctx,
-		`SELECT title, description, author_name, cover_thumb_path, image_count, upload_mode, status
+		`SELECT title, description, author_name, cover_thumb_path, image_count, upload_mode, status,
+		        COALESCE(control_state, 'running'), COALESCE(upload_round, 0)
 		 FROM posts WHERE id = ?`, id,
 	).Scan(&post.Title, &post.Description, &post.AuthorName, &post.CoverThumbPath,
-		&post.ImageCount, &post.UploadMode, &post.Status)
+		&post.ImageCount, &post.UploadMode, &post.Status, &post.ControlState, &post.UploadRound)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -453,10 +466,12 @@ func (r *Repository) ClaimPublishable(ctx context.Context) (int64, bool, error) 
 	var id int64
 	err := r.handle.QueryRowContext(ctx,
 		`UPDATE posts SET publish_state = ?, updated_at = CURRENT_TIMESTAMP
-		 WHERE id = (SELECT id FROM posts WHERE publish_state = ? ORDER BY updated_at LIMIT 1)
+		 WHERE id = (SELECT id FROM posts
+		              WHERE publish_state = ? AND COALESCE(control_state, 'running') = ?
+		              ORDER BY updated_at LIMIT 1)
 		   AND publish_state = ?
 		 RETURNING id`,
-		PublishPublishing, PublishPending, PublishPending).Scan(&id)
+		PublishPublishing, PublishPending, ControlRunning, PublishPending).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}
@@ -691,6 +706,49 @@ func (r *Repository) SetCoverSelection(ctx context.Context, id int64, sortOrder 
 	return nil
 }
 
+// ErrCoverConflict 表示封面提交时任务状态已变化，本次写入被拒绝。
+var ErrCoverConflict = errors.New("任务状态已变化")
+
+// SetCoverSelectionGuarded 在任务仍可编辑时更新封面序号与缩略图。
+// 与发布领取、删除流程共用状态条件，避免远端与本地落到不同版本。
+func (r *Repository) SetCoverSelectionGuarded(ctx context.Context, id int64, sortOrder int, thumbPath, expectedState string) error {
+	result, err := r.handle.ExecContext(ctx,
+		`UPDATE posts SET cover_sort_order = ?, cover_thumb_path = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND pending_delete = 0 AND publish_state = ? AND status <> ?`,
+		sortOrder, thumbPath, id, expectedState, StatusPublishing)
+	if err != nil {
+		return errors.New("更新封面失败")
+	}
+	if affected, _ := result.RowsAffected(); affected > 0 {
+		return nil
+	}
+	var exists int
+	if err := r.handle.QueryRowContext(ctx, `SELECT COUNT(*) FROM posts WHERE id = ?`, id).Scan(&exists); err != nil {
+		return errors.New("读取帖子失败")
+	}
+	if exists == 0 {
+		return ErrNotFound
+	}
+	return ErrCoverConflict
+}
+
+// ImageByOrder 读取指定序号的图片记录，供管理员受控预览使用。
+func (r *Repository) ImageByOrder(ctx context.Context, postID int64, sortOrder int) (*Image, error) {
+	image := &Image{PostID: postID}
+	err := r.handle.QueryRowContext(ctx,
+		`SELECT id, sort_order, short_code, mime_type, file_size, temp_file_path, remote_file_id, status
+		 FROM post_images WHERE post_id = ? AND sort_order = ?`, postID, sortOrder).
+		Scan(&image.ID, &image.SortOrder, &image.ShortCode, &image.MimeType, &image.FileSize,
+			&image.TempFilePath, &image.RemoteFileID, &image.Status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, errors.New("读取图片失败")
+	}
+	return image, nil
+}
+
 // SetCover 更新帖子封面路径。
 func (r *Repository) SetCover(ctx context.Context, id int64, path string) error {
 	result, err := r.handle.ExecContext(ctx,
@@ -720,19 +778,38 @@ func (r *Repository) UpdateStatus(ctx context.Context, id int64, status string) 
 // AttachImage 在短事务内复核帖子状态并写入唯一的 (post_id, sort_order) 记录。
 // 返回被替换掉的旧文件路径（与本次路径相同时返回空），由调用方负责删除。
 func (r *Repository) AttachImage(ctx context.Context, image Image) (string, error) {
+	return r.attachImage(ctx, image, -1)
+}
+
+// AttachImageWithRound 在写图记录前复核任务仍运行且上传轮次一致。
+// 暂停后迅速恢复会递增轮次，暂停前发出的迟到请求因此被拒绝。
+func (r *Repository) AttachImageWithRound(ctx context.Context, image Image, round int) (string, error) {
+	return r.attachImage(ctx, image, round)
+}
+
+func (r *Repository) attachImage(ctx context.Context, image Image, round int) (string, error) {
 	tx, err := r.handle.BeginTx(ctx, nil)
 	if err != nil {
 		return "", errors.New("开启图片事务失败")
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var status string
-	err = tx.QueryRowContext(ctx, `SELECT status FROM posts WHERE id = ?`, image.PostID).Scan(&status)
+	var status, control string
+	var currentRound int
+	err = tx.QueryRowContext(ctx,
+		`SELECT status, COALESCE(control_state, 'running'), COALESCE(upload_round, 0)
+		 FROM posts WHERE id = ?`, image.PostID).Scan(&status, &control, &currentRound)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrNotFound
 	}
 	if err != nil {
 		return "", errors.New("读取帖子状态失败")
+	}
+	if control != ControlRunning {
+		return "", ErrControlInvalid
+	}
+	if round >= 0 && round != currentRound {
+		return "", ErrControlInvalid
 	}
 	if status != StatusUploading {
 		return "", ErrNotUploading
@@ -974,7 +1051,8 @@ func (r *Repository) ClaimNext(ctx context.Context) (int64, bool, error) {
 
 	var id int64
 	err = tx.QueryRowContext(ctx,
-		`SELECT id FROM posts WHERE status = ? ORDER BY id LIMIT 1`, StatusQueued).Scan(&id)
+		`SELECT id FROM posts WHERE status = ? AND COALESCE(control_state, 'running') = ?
+		 ORDER BY id LIMIT 1`, StatusQueued, ControlRunning).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}
@@ -1181,4 +1259,99 @@ func (r *Repository) ResetFailedImages(ctx context.Context, postID int64) (int64
 		return 0, errors.New("提交重试事务失败")
 	}
 	return affected, nil
+}
+
+// ErrControlInvalid 表示任务当前状态不允许这次控制操作。
+var ErrControlInvalid = errors.New("任务当前状态不允许该操作")
+
+// Control 读取任务控制状态与上传轮次，供进度接口与写入点复核。
+func (r *Repository) Control(ctx context.Context, postID int64) (string, int, error) {
+	var state string
+	var round int
+	err := r.handle.QueryRowContext(ctx,
+		`SELECT COALESCE(control_state, 'running'), COALESCE(upload_round, 0) FROM posts WHERE id = ?`,
+		postID).Scan(&state, &round)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", 0, ErrNotFound
+	}
+	if err != nil {
+		return "", 0, errors.New("读取任务控制状态失败")
+	}
+	return state, round, nil
+}
+
+// Pause 把运行中的任务置为暂停；停止或已完成的任务不允许暂停。
+func (r *Repository) Pause(ctx context.Context, postID int64) error {
+	result, err := r.handle.ExecContext(ctx,
+		`UPDATE posts SET control_state = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND COALESCE(control_state, 'running') = ?
+		   AND status IN (?, ?, ?)`,
+		ControlPaused, postID, ControlRunning, StatusUploading, StatusQueued, StatusPublishing)
+	if err != nil {
+		return errors.New("暂停任务失败")
+	}
+	return r.controlResult(ctx, postID, result)
+}
+
+// Resume 恢复暂停中的任务：轮次加一，让暂停前发出的迟到请求失效。
+// 正在上传中的任务回到排队，上传队列重新领取。
+func (r *Repository) Resume(ctx context.Context, postID int64) error {
+	result, err := r.handle.ExecContext(ctx,
+		`UPDATE posts SET control_state = ?, upload_round = upload_round + 1,
+		        status = CASE WHEN status IN (?, ?, ?) THEN ? ELSE status END,
+		        updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND control_state = ?`,
+		ControlRunning, StatusUploading, StatusQueued, StatusPublishing, StatusUploading, postID, ControlPaused)
+	if err != nil {
+		return errors.New("恢复任务失败")
+	}
+	return r.controlResult(ctx, postID, result)
+}
+
+// Stop 停止任务：终态，短码立即关闭，未完成的公开发布标记为失败。
+func (r *Repository) Stop(ctx context.Context, postID int64) error {
+	result, err := r.handle.ExecContext(ctx,
+		`UPDATE posts SET control_state = ?, is_public = 0,
+		        status = CASE WHEN status IN (?, ?, ?) THEN ? ELSE status END,
+		        publish_state = CASE WHEN publish_state = ? THEN ? ELSE publish_state END,
+		        publish_error = CASE WHEN publish_state = ? THEN ? ELSE publish_error END,
+		        updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND COALESCE(control_state, 'running') <> ?`,
+		ControlStopped, StatusUploading, StatusQueued, StatusPublishing, StatusStopped,
+		PublishPending, PublishFailed, PublishPending, "任务已停止，未完成发布", postID, ControlStopped)
+	if err != nil {
+		return errors.New("停止任务失败")
+	}
+	return r.controlResult(ctx, postID, result)
+}
+
+// ReleaseToQueue 把上传中途暂停的任务放回队列，等恢复后重新领取。
+func (r *Repository) ReleaseToQueue(ctx context.Context, postID int64) error {
+	_, err := r.handle.ExecContext(ctx,
+		`UPDATE posts SET status = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND status = ? AND control_state = ?`,
+		StatusQueued, postID, StatusPublishing, ControlPaused)
+	if err != nil {
+		return errors.New("释放任务失败")
+	}
+	return nil
+}
+
+// controlResult 把未命中行区分成「帖子不存在」与「状态不允许」。
+func (r *Repository) controlResult(ctx context.Context, postID int64, result sql.Result) error {
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return errors.New("读取控制结果失败")
+	}
+	if affected > 0 {
+		return nil
+	}
+	var exists int
+	if err := r.handle.QueryRowContext(ctx, `SELECT COUNT(*) FROM posts WHERE id = ?`, postID).Scan(&exists); err != nil {
+		return errors.New("读取帖子失败")
+	}
+	if exists == 0 {
+		return ErrNotFound
+	}
+	return ErrControlInvalid
 }

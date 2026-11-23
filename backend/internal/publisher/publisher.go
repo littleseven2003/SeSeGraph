@@ -125,6 +125,10 @@ func (p *Publisher) publish(ctx context.Context, postID int64, pageAPI PageAPI) 
 	if len(info.Images) == 0 {
 		return errors.New("没有可发布的存图记录")
 	}
+	// 领取后与控制操作并发时以任务状态为准：停止的任务不再建页。
+	if state, _, stateErr := p.repo.Control(ctx, postID); stateErr == nil && state != posts.ControlRunning {
+		return errors.New("任务已停止")
+	}
 
 	images := orderForPublish(info.Images, info.CoverSortOrder)
 	body := buildBody(p.publicURL, info.Description, images)

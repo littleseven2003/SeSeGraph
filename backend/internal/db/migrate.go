@@ -28,6 +28,8 @@ var schemaStatements = []string{
 		image_count INTEGER DEFAULT 0,
 		upload_mode TEXT DEFAULT 'photo',
 		status TEXT DEFAULT 'queued',
+		control_state TEXT DEFAULT 'running',
+		upload_round INTEGER NOT NULL DEFAULT 0,
 		error_message TEXT DEFAULT '',
 		is_disabled INTEGER DEFAULT 0,
 		is_public INTEGER DEFAULT 0,
@@ -151,6 +153,13 @@ func Migrate(ctx context.Context, handle *sql.DB) error {
 	// 旧库升级：会话版本用于让改密后的旧 Cookie 立即失效，默认 0 与升级前的令牌兼容。
 	if err := ensureColumn(ctx, tx, "admin_users", "session_version", "ALTER TABLE admin_users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return errors.New("升级会话版本失败")
+	}
+	// 旧库升级：任务控制状态与上传轮次。暂停可恢复，停止为终态。
+	if err := ensureColumn(ctx, tx, "posts", "control_state", "ALTER TABLE posts ADD COLUMN control_state TEXT DEFAULT 'running'"); err != nil {
+		return errors.New("升级任务控制状态失败")
+	}
+	if err := ensureColumn(ctx, tx, "posts", "upload_round", "ALTER TABLE posts ADD COLUMN upload_round INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return errors.New("升级上传轮次失败")
 	}
 	// 旧库升级：封面来源序号。空值表示沿用旧行为，不前置任何媒体。
 	if err := ensureColumn(ctx, tx, "posts", "cover_sort_order", "ALTER TABLE posts ADD COLUMN cover_sort_order INTEGER DEFAULT NULL"); err != nil {

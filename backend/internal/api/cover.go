@@ -2,12 +2,14 @@ package api
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/publisher"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/storage"
 )
 
 // changeCoverRequest 是更换封面请求体：序号必填，缩略图可选。
@@ -82,42 +84,44 @@ func changeCoverHandler(deps Deps) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "封面缩略图不合法或过大"})
 			return
 		}
-
-		// 序号变化才需要改写远端页面；只替换缩略图时远端没有封面字段可改。
-		if info.CoverSortOrder != req.SortOrder && deps.Editor != nil {
-			reorderErr := deps.Editor.ReorderCover(ctx, postID, req.SortOrder)
-			switch {
-			case reorderErr == nil:
-			case errors.Is(reorderErr, publisher.ErrPublishInProgress),
-				errors.Is(reorderErr, publisher.ErrPageCountChanged),
-				errors.Is(reorderErr, publisher.ErrPublicURLInvalid),
-				errors.Is(reorderErr, posts.ErrPendingDelete):
-				c.JSON(http.StatusConflict, gin.H{"error": "当前状态不允许更换封面"})
-				return
-			default:
-				c.JSON(http.StatusBadGateway, gin.H{"error": "更新远端页面失败，请稍后重试"})
-				return
-			}
+		if deps.Editor == nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器内部错误"})
+			return
 		}
 
-		thumbPath := ""
+		// 新封面先写成独立文件：远端或本地提交失败时删掉它，旧封面仍可读。
+		thumbPath := post.CoverThumbPath
+		newFile := ""
 		if len(cover) > 0 {
-			thumbPath, err = posts.SaveCover(deps.DataDir, postID, cover)
+			newFile, err = posts.SaveCoverVersioned(deps.DataDir, postID, cover)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "保存封面失败"})
 				return
 			}
-		} else {
-			thumbPath = post.CoverThumbPath
+			thumbPath = newFile
 		}
 
-		if err := deps.Posts.SetCoverSelection(ctx, postID, req.SortOrder, thumbPath); err != nil {
-			if errors.Is(err, posts.ErrNotFound) {
-				c.JSON(http.StatusNotFound, gin.H{"error": "帖子不存在"})
-				return
+		changeErr := deps.Editor.ChangeCover(ctx, postID, req.SortOrder, thumbPath)
+		if changeErr != nil {
+			if newFile != "" {
+				posts.RemoveCoverFile(deps.DataDir, newFile)
 			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存封面失败"})
+			switch {
+			case errors.Is(changeErr, publisher.ErrPublishInProgress),
+				errors.Is(changeErr, publisher.ErrPageCountChanged),
+				errors.Is(changeErr, publisher.ErrPublicURLInvalid),
+				errors.Is(changeErr, posts.ErrPendingDelete),
+				errors.Is(changeErr, posts.ErrCoverConflict):
+				c.JSON(http.StatusConflict, gin.H{"error": "当前状态不允许更换封面"})
+			case errors.Is(changeErr, posts.ErrNotFound):
+				c.JSON(http.StatusNotFound, gin.H{"error": "帖子不存在"})
+			default:
+				c.JSON(http.StatusBadGateway, gin.H{"error": "更新远端页面失败，请稍后重试"})
+			}
 			return
+		}
+		if newFile != "" && post.CoverThumbPath != "" && post.CoverThumbPath != newFile {
+			posts.RemoveCoverFile(deps.DataDir, post.CoverThumbPath)
 		}
 
 		c.JSON(http.StatusOK, gin.H{
@@ -125,5 +129,73 @@ func changeCoverHandler(deps Deps) gin.HandlerFunc {
 			"sort_order":       req.SortOrder,
 			"cover_thumb_path": thumbPath,
 		})
+	}
+}
+
+// adminMediaHandler 在管理员会话下转发原图或视频，供换封面时生成缩略图。
+// 不经过公开图片网关，未公开或已撤回的帖子也能在后台读取自己的媒体。
+func adminMediaHandler(deps Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		postID, parseErr := strconv.ParseInt(c.Param("id"), 10, 64)
+		if parseErr != nil || postID <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "帖子编号不合法"})
+			return
+		}
+		sortOrder, parseErr := strconv.Atoi(c.Param("sort"))
+		if parseErr != nil || sortOrder <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "序号不合法"})
+			return
+		}
+		if _, err := deps.Posts.Get(c.Request.Context(), postID); err != nil {
+			if errors.Is(err, posts.ErrNotFound) {
+				c.JSON(http.StatusNotFound, gin.H{"error": "帖子不存在"})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取帖子失败"})
+			return
+		}
+
+		image, err := deps.Posts.ImageByOrder(c.Request.Context(), postID, sortOrder)
+		if errors.Is(err, posts.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "图片不存在"})
+			return
+		}
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取图片失败"})
+			return
+		}
+		if image.Status != posts.ImageStatusStored || image.RemoteFileID == "" {
+			c.JSON(http.StatusConflict, gin.H{"error": "媒体尚未存入频道"})
+			return
+		}
+		if deps.Streams == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "图床暂不可用"})
+			return
+		}
+
+		stream, err := deps.Streams.OpenStream(c.Request.Context(), image.RemoteFileID)
+		switch {
+		case errors.Is(err, storage.ErrFileUnavailable):
+			c.JSON(http.StatusNotFound, gin.H{"error": "媒体不存在"})
+			return
+		case err != nil:
+			c.JSON(http.StatusBadGateway, gin.H{"error": "读取媒体失败"})
+			return
+		}
+		defer func() { _ = stream.Body.Close() }()
+
+		c.Header("Content-Type", image.MimeType)
+		c.Header("Cache-Control", "no-store")
+		c.Header("X-Content-Type-Options", "nosniff")
+		if stream.Size > 0 {
+			c.Header("Content-Length", strconv.FormatInt(stream.Size, 10))
+		}
+		c.Status(http.StatusOK)
+		if c.Request.Method == http.MethodHead {
+			return
+		}
+		if _, err := io.Copy(c.Writer, stream.Body); err != nil {
+			return
+		}
 	}
 }

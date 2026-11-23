@@ -195,10 +195,25 @@ func (w *Worker) Process(ctx context.Context, postID int64) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		// 每张图之前复核控制状态：暂停立即让出任务，停止则不再继续。
+		if state, _, stateErr := w.repo.Control(ctx, postID); stateErr == nil && state != posts.ControlRunning {
+			if state == posts.ControlPaused {
+				return w.repo.ReleaseToQueue(ctx, postID)
+			}
+			return nil
+		}
 		if err := w.uploadImage(ctx, provider, post, image); err != nil {
 			w.finish(ctx, postID, posts.StatusFailed, "上传图片失败")
 			return errors.New("上传图片失败")
 		}
+	}
+
+	// 收尾前再看一次控制状态，避免暂停或停止后把任务标成完成。
+	if state, _, stateErr := w.repo.Control(ctx, postID); stateErr == nil && state != posts.ControlRunning {
+		if state == posts.ControlPaused {
+			return w.repo.ReleaseToQueue(ctx, postID)
+		}
+		return nil
 	}
 
 	stored, err := w.repo.CountStored(ctx, postID)

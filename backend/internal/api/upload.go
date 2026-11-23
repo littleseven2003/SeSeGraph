@@ -95,6 +95,23 @@ func uploadImageHandler(deps Deps, limiter *uploadLimiter) gin.HandlerFunc {
 			c.JSON(http.StatusConflict, gin.H{"error": "当前状态不允许继续上传"})
 			return
 		}
+		if post.ControlState != "" && post.ControlState != posts.ControlRunning {
+			c.JSON(http.StatusConflict, gin.H{"error": "任务已暂停或停止，不能继续上传"})
+			return
+		}
+		round := -1
+		if raw := strings.TrimSpace(c.Query("round")); raw != "" {
+			parsed, parseErr := strconv.Atoi(raw)
+			if parseErr != nil || parsed < 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "上传轮次不合法"})
+				return
+			}
+			if parsed != post.UploadRound {
+				c.JSON(http.StatusConflict, gin.H{"error": "任务已恢复，请刷新后继续上传"})
+				return
+			}
+			round = parsed
+		}
 		if sortOrder < 1 || sortOrder > post.ImageCount {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "序号超出声明的图片数量"})
 			return
@@ -139,14 +156,14 @@ func uploadImageHandler(deps Deps, limiter *uploadLimiter) gin.HandlerFunc {
 			return
 		}
 
-		previous, attachErr := deps.Posts.AttachImage(c.Request.Context(), posts.Image{
+		previous, attachErr := deps.Posts.AttachImageWithRound(c.Request.Context(), posts.Image{
 			PostID:       postID,
 			SortOrder:    sortOrder,
 			MimeType:     mimeType,
 			FileSize:     saved.FileSize,
 			TempFilePath: saved.Path,
 			Status:       posts.ImageStatusUploaded,
-		})
+		}, round)
 		switch {
 		case attachErr == nil:
 			// 覆盖旧序号后清理被替换的文件。
@@ -158,6 +175,10 @@ func uploadImageHandler(deps Deps, limiter *uploadLimiter) gin.HandlerFunc {
 		case errors.Is(attachErr, posts.ErrNotUploading):
 			posts.RemoveTempFile(deps.DataDir, saved.Path)
 			c.JSON(http.StatusConflict, gin.H{"error": "当前状态不允许继续上传"})
+			return
+		case errors.Is(attachErr, posts.ErrControlInvalid):
+			posts.RemoveTempFile(deps.DataDir, saved.Path)
+			c.JSON(http.StatusConflict, gin.H{"error": "任务已暂停或恢复，请刷新后继续上传"})
 			return
 		default:
 			posts.RemoveTempFile(deps.DataDir, saved.Path)

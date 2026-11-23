@@ -87,16 +87,27 @@ export interface ServerProgress {
   public: boolean
   /** 发布完成后的分享链接 */
   telegraph_urls: string[]
+  /** 任务控制状态：running / paused / stopped */
+  control_state: string
+  /** 上传轮次，暂停后继续会递增；上传请求带上它可拒绝迟到写入 */
+  upload_round: number
 }
 
 // uploadImage 逐张上传，请求体直接使用浏览器里的 Blob，由后端流式落盘。
-export async function uploadImage(postId: number, sortOrder: number, blob: Blob, mime: string): Promise<UploadedImage> {
+export async function uploadImage(
+  postId: number,
+  sortOrder: number,
+  blob: Blob,
+  mime: string,
+  round = -1,
+): Promise<UploadedImage> {
   // 单张上传必须有时限：低配链路卡住时给出明确失败，而不是让队列无限等待。
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 5 * 60 * 1000)
   let response: Response
   try {
-    response = await adminRequest(`/api/posts/${postId}/images?sort=${sortOrder}`, {
+    const query = round >= 0 ? `&round=${round}` : ''
+    response = await adminRequest(`/api/posts/${postId}/images?sort=${sortOrder}${query}`, {
       method: 'POST',
       headers: mime === '' ? undefined : { 'Content-Type': mime },
       body: blob,
@@ -120,6 +131,33 @@ export async function changeCover(postId: number, sortOrder: number, thumbnail?:
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
+}
+
+// pauseTask 暂停任务；继续上传只补服务端缺项。
+export async function pauseTask(postId: number): Promise<void> {
+  await adminRequest(`/api/posts/${postId}/pause`, { method: 'POST' })
+}
+
+// resumeTask 恢复暂停中的任务，服务端会递增上传轮次。
+export async function resumeTask(postId: number): Promise<void> {
+  await adminRequest(`/api/posts/${postId}/resume`, { method: 'POST' })
+}
+
+// stopTask 停止任务；停止后短码关闭且不再被队列领取。
+export async function stopTask(postId: number): Promise<void> {
+  await adminRequest(`/api/posts/${postId}/stop`, { method: 'POST' })
+}
+
+// mediaPath 返回管理员会话下读取原图或视频的地址，供换封面生成缩略图。
+export function mediaPath(postId: number, sortOrder: number): string {
+  return `/api/posts/${postId}/media/${sortOrder}`
+}
+
+// fetchMediaBlob 读取帖子内的一张原图或视频，失败时抛出明确错误。
+export async function fetchMediaBlob(postId: number, sortOrder: number): Promise<Blob> {
+  const response = await fetch(mediaPath(postId, sortOrder), { credentials: 'same-origin' })
+  if (!response.ok) throw new ApiError(response.status, '读取原图失败，无法生成封面')
+  return await response.blob()
 }
 
 // commitPost 校验图片齐备并进入上传队列。

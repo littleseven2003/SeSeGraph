@@ -81,9 +81,10 @@ func (e *Editor) Withdraw(ctx context.Context, paths []string) error {
 	return nil
 }
 
-// ReorderCover 按新的封面序号重排已发布帖的远端页面。
-// 只做远端写入，本地序号与缩略图由调用方在成功后落库。
-func (e *Editor) ReorderCover(ctx context.Context, postID int64, sortOrder int) error {
+// ChangeCover 在同一个编辑临界区里完成远端换序与本地条件提交。
+// thumbPath 是新封面缩略图的相对路径；远端全部成功后才写本地，
+// 期间若发布已领取或帖子进入删除，本地写入会被拒绝，旧封面保持可读。
+func (e *Editor) ChangeCover(ctx context.Context, postID int64, sortOrder int, thumbPath string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -101,12 +102,12 @@ func (e *Editor) ReorderCover(ctx context.Context, postID int64, sortOrder int) 
 	}
 	switch {
 	case info.State == posts.PublishPublished && len(info.Paths) > 0:
-		// 已发布：按新顺序逐页改写，全部成功才算完成。
+		// 已发布：先按新顺序改写全部页面。
 	case info.State == posts.PublishIdle,
 		info.State == posts.PublishFailed && len(info.Paths) == 0,
 		info.State == posts.PublishPublished && len(info.Paths) == 0:
 		// 没有远端页面，只需改本地记录。
-		return nil
+		return e.repo.SetCoverSelectionGuarded(ctx, postID, sortOrder, thumbPath, info.State)
 	default:
 		return ErrPublishInProgress
 	}
@@ -145,7 +146,8 @@ func (e *Editor) ReorderCover(ctx context.Context, postID int64, sortOrder int) 
 			return err
 		}
 	}
-	return nil
+
+	return e.repo.SetCoverSelectionGuarded(ctx, postID, sortOrder, thumbPath, info.State)
 }
 
 // Update 更新元数据：未发布的帖子只改本地记录；
