@@ -71,15 +71,53 @@ test('statusLabel 撤回优先且覆盖发布各态', () => {
   assert.deepEqual(statusLabel('uploading', 'idle'), { label: '上传中', tone: 'progress' })
 })
 
-test('renderShareText 替换全部占位符', () => {
+test('renderShareText 按默认模板生成分享文案', () => {
   const text = renderShareText(DEFAULT_SHARE_TEMPLATE, {
     title: '海边写真',
     description: '夏日海滩',
     url: 'https://telegra.ph/Page-1',
     count: 12,
     tags: ['写真', '海边'],
+    published_at: '2026-11-22',
   })
-  assert.equal(text, '海边写真 · 12 张图\nhttps://telegra.ph/Page-1\n#写真 #海边')
+  assert.equal(
+    text,
+    '【海边写真】\n\n夏日海滩\n\n标签：#写真、#海边\n\n发布时间：2026-11-22\n\n链接：https://telegra.ph/Page-1',
+  )
+})
+
+test('空描述、空标签与缺失日期整体省略且不留空行', () => {
+  const text = renderShareText(DEFAULT_SHARE_TEMPLATE, {
+    title: '无描述图集',
+    description: '',
+    url: 'https://telegra.ph/Page-2',
+    count: 3,
+    tags: [],
+    published_at: '',
+  })
+  assert.equal(text, '【无描述图集】\n\n链接：https://telegra.ph/Page-2')
+})
+
+test('字段内容只替换一次，值里的占位符不会被二次替换', () => {
+  const text = renderShareText('{{title}}\n{{description}}', {
+    title: '{{description}}',
+    description: '正文',
+    url: '',
+    count: 0,
+    tags: [],
+  })
+  assert.equal(text, '{{description}}\n正文')
+})
+
+test('自定义旧模板仍然可用，count 继续生效', () => {
+  const text = renderShareText('{{title}} · {{count}} 张图\n{{url}}', {
+    title: '旧模板',
+    description: '',
+    url: 'https://telegra.ph/Old',
+    count: 5,
+    tags: [],
+  })
+  assert.equal(text, '旧模板 · 5 张图\nhttps://telegra.ph/Old')
 })
 
 test('renderShareText 保留未知占位符', () => {

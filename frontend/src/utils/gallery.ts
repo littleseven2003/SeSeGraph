@@ -12,11 +12,19 @@ export const VIEW_STORAGE_KEY = 'sesegraph.gallery.view'
 /** 分享文案模板的本地存储键。 */
 export const SHARE_TEMPLATE_STORAGE_KEY = 'sesegraph.gallery.shareTemplate'
 
-/** 默认分享文案模板，占位符与任务书一致。 */
-export const DEFAULT_SHARE_TEMPLATE = '{{title}} · {{count}} 张图\n{{url}}\n{{tags}}'
+/** 默认分享文案模板：标题方括号、描述、标签、发布时间与链接各段之间保留一个空行。 */
+export const DEFAULT_SHARE_TEMPLATE =
+  '【{{title}}】\n\n{{description}}\n\n标签：{{tags}}\n\n发布时间：{{published_at}}\n\n链接：{{url}}'
 
-/** 分享文案允许的占位符。 */
-export const SHARE_PLACEHOLDERS = ['{{title}}', '{{description}}', '{{url}}', '{{count}}', '{{tags}}'] as const
+/** 分享文案允许的占位符，顺序即界面插入按钮顺序。 */
+export const SHARE_PLACEHOLDERS = [
+  '{{title}}',
+  '{{description}}',
+  '{{tags}}',
+  '{{published_at}}',
+  '{{url}}',
+  '{{count}}',
+] as const
 
 /** 状态文案与语气。 */
 export interface StatusLabel {
@@ -84,23 +92,53 @@ export function statusLabel(status: string, publishState: string, disabled = fal
   }
 }
 
-/** renderShareText 按模板替换占位符，未识别的占位符原样保留。 */
-export function renderShareText(
-  template: string,
-  values: { title: string; description: string; url: string; count: number; tags: string[] },
-): string {
-  const replacement: Record<string, string> = {
-    '{{title}}': values.title,
-    '{{description}}': values.description,
-    '{{url}}': values.url,
-    '{{count}}': String(values.count),
-    '{{tags}}': values.tags.map((tag) => '#' + tag).join(' '),
+/** ShareValues 是分享文案可用的字段。 */
+export interface ShareValues {
+  title: string
+  description: string
+  url: string
+  count: number
+  tags: string[]
+  published_at?: string
+}
+
+/** 单个占位符的匹配规则；未识别的占位符保持原样。 */
+const SHARE_TOKEN_PATTERN = /\{\{(title|description|url|count|tags|published_at)\}\}/g
+
+/**
+ * renderShareText 单次替换占位符并收拢空段：
+ * 一行里的占位符全部为空时整行省略，连续空行压成一个，首尾空行去掉。
+ */
+export function renderShareText(template: string, values: ShareValues): string {
+  const map: Record<string, string> = {
+    title: values.title,
+    description: values.description,
+    url: values.url,
+    count: String(values.count),
+    tags: values.tags.map((tag) => '#' + tag).join('、'),
+    published_at: values.published_at ?? '',
   }
-  let text = template
-  for (const [token, value] of Object.entries(replacement)) {
-    text = text.split(token).join(value)
+
+  const kept: string[] = []
+  for (const line of template.split('\n')) {
+    const tokens = Array.from(line.matchAll(SHARE_TOKEN_PATTERN), (match) => match[1])
+    if (tokens.length > 0 && tokens.every((token) => (map[token] ?? '') === '')) continue
+    kept.push(line.replace(SHARE_TOKEN_PATTERN, (_, token: string) => map[token] ?? ''))
   }
-  return text.trim()
+
+  const collapsed: string[] = []
+  for (const line of kept) {
+    const blank = line.trim() === ''
+    if (blank && (collapsed.length === 0 || collapsed[collapsed.length - 1].trim() === '')) continue
+    collapsed.push(line)
+  }
+  while (collapsed.length > 0 && collapsed[collapsed.length - 1].trim() === '') collapsed.pop()
+  return collapsed.join('\n').trim()
+}
+
+/** formatPublishedDate 取本地日期部分，分享文案与画廊展示保持一致。 */
+export function formatPublishedDate(value: string | null | undefined): string {
+  return formatPublishedAt(value).split(' ')[0] ?? ''
 }
 
 /** 整帖分享的可用条件：已发布、公开、未撤回且互链页面就绪。 */

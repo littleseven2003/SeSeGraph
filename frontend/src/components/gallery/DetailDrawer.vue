@@ -9,6 +9,7 @@ import {
   focusStep,
   formatFileSize,
   formatPublishedAt,
+  formatPublishedDate,
   formatViewsExact,
   showsViews,
   imageShareUrl,
@@ -94,6 +95,8 @@ const previewValues = computed(() => ({
   url: shareUrl.value !== '' ? shareUrl.value : 'https://telegra.ph/Example-1',
   count: props.detail?.images.length ?? 0,
   tags: props.detail?.tags ?? [],
+  // 预览在缺少发布日期时用示例日期，确保模板里的时间段可见。
+  published_at: formatPublishedDate(props.detail?.published_at) || '2026-11-22',
 }))
 
 function imageLink(image: { short_code: string; status: string }): string {
@@ -201,6 +204,7 @@ function copyShareText(): void {
     url: shareUrl.value,
     count: props.detail.images.length,
     tags: props.detail.tags,
+    published_at: formatPublishedDate(props.detail.published_at),
   })
   void copy(text, '分享文案', 'share')
 }
