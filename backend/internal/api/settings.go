@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -70,6 +71,22 @@ type settingsView struct {
 		TelegramEnabled  bool   `json:"telegram_enabled"`
 		TelegraphEnabled bool   `json:"telegraph_enabled"`
 	} `json:"proxy"`
+	// Traffic 汇报月度预警与硬上限（字节）及其来源。
+	Traffic struct {
+		AlertBytes  int64  `json:"alert_bytes"`
+		AlertSource string `json:"alert_source"`
+		LimitBytes  int64  `json:"limit_bytes"`
+		LimitSource string `json:"limit_source"`
+	} `json:"traffic"`
+	// Backup 汇报自动备份开关、每日时刻与保留份数。
+	Backup struct {
+		Enabled       bool   `json:"enabled"`
+		EnabledSource string `json:"enabled_source"`
+		Time          string `json:"time"`
+		TimeSource    string `json:"time_source"`
+		Keep          int    `json:"keep"`
+		KeepSource    string `json:"keep_source"`
+	} `json:"backup"`
 	// Upload 汇报新任务默认画质及其来源。
 	Upload struct {
 		DefaultMode string `json:"default_mode"`
@@ -132,6 +149,16 @@ func buildSettingsView(effective settings.Effective, publicURL string) settingsV
 	view.Proxy.URLSource = effective.ProxyURL.Source
 	view.Proxy.TelegramEnabled = effective.ProxyEnabled(netclient.ServiceTelegram)
 	view.Proxy.TelegraphEnabled = effective.ProxyEnabled(netclient.ServiceTelegraph)
+	view.Traffic.AlertBytes = parseIntValue(effective.TrafficAlertBytes.Value)
+	view.Traffic.AlertSource = effective.TrafficAlertBytes.Source
+	view.Traffic.LimitBytes = parseIntValue(effective.TrafficLimitBytes.Value)
+	view.Traffic.LimitSource = effective.TrafficLimitBytes.Source
+	view.Backup.Enabled = strings.EqualFold(effective.BackupEnabled.Value, "true")
+	view.Backup.EnabledSource = effective.BackupEnabled.Source
+	view.Backup.Time = effective.BackupTime.Value
+	view.Backup.TimeSource = effective.BackupTime.Source
+	view.Backup.Keep = int(parseIntValue(effective.BackupKeep.Value))
+	view.Backup.KeepSource = effective.BackupKeep.Source
 	view.Telegraph.PathMode = effective.TelegraphPathMode.Value
 	view.Telegraph.PathModeSource = effective.TelegraphPathMode.Source
 	view.Upload.DefaultMode = effective.UploadMode.Value
@@ -156,6 +183,11 @@ func buildSettingsView(effective settings.Effective, publicURL string) settingsV
 		{"proxy.telegraph", effective.ProxyTelegraph},
 		{"upload.mode", effective.UploadMode},
 		{"telegraph.path_mode", effective.TelegraphPathMode},
+		{"traffic.alert_bytes", effective.TrafficAlertBytes},
+		{"traffic.limit_bytes", effective.TrafficLimitBytes},
+		{"backup.enabled", effective.BackupEnabled},
+		{"backup.time", effective.BackupTime},
+		{"backup.keep", effective.BackupKeep},
 	}
 	for _, field := range fields {
 		if field.value.Source == settings.SourceEnv {
@@ -172,6 +204,15 @@ func proxyClient(effective settings.Effective, service netclient.Service) *http.
 		return nil
 	}
 	return client
+}
+
+// parseIntValue 把配置里的十进制数值转成整数，非法值按 0 处理。
+func parseIntValue(raw string) int64 {
+	value, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil || value < 0 {
+		return 0
+	}
+	return value
 }
 
 // settingsHandler 返回当前生效配置与各项来源。
@@ -204,6 +245,15 @@ type settingsPatchRequest struct {
 	Upload *struct {
 		Mode *string `json:"mode"`
 	} `json:"upload"`
+	Traffic *struct {
+		AlertBytes *int64 `json:"alert_bytes"`
+		LimitBytes *int64 `json:"limit_bytes"`
+	} `json:"traffic"`
+	Backup *struct {
+		Enabled *bool   `json:"enabled"`
+		Time    *string `json:"time"`
+		Keep    *int64  `json:"keep"`
+	} `json:"backup"`
 	Meta *struct {
 		Filenames *[]string `json:"filenames"`
 		ParseMode *string   `json:"parse_mode"`
@@ -229,6 +279,15 @@ func (r settingsPatchRequest) toPatch() settings.Patch {
 	}
 	if r.Upload != nil {
 		patch.UploadMode = r.Upload.Mode
+	}
+	if r.Traffic != nil {
+		patch.TrafficAlertBytes = r.Traffic.AlertBytes
+		patch.TrafficLimitBytes = r.Traffic.LimitBytes
+	}
+	if r.Backup != nil {
+		patch.BackupEnabled = r.Backup.Enabled
+		patch.BackupTime = r.Backup.Time
+		patch.BackupKeep = r.Backup.Keep
 	}
 	if r.Proxy != nil {
 		patch.ProxyMode = r.Proxy.Mode
@@ -337,6 +396,24 @@ func updateSettingsHandler(deps Deps) gin.HandlerFunc {
 		// 落库成功后才让已验证的候选生效，复用 Prepare 的校验结果，不再访问上游。
 		if pending != nil && deps.CommitProvider != nil {
 			deps.CommitProvider(c.Request.Context(), pending)
+		}
+
+		// 流量阈值、备份保留份数与计划热生效，不用重启服务。
+		applied, err := deps.Settings.Effective(c.Request.Context())
+		if err == nil {
+			if deps.Traffic != nil {
+				deps.Traffic.SetLimits(parseIntValue(applied.TrafficAlertBytes.Value),
+					parseIntValue(applied.TrafficLimitBytes.Value))
+			}
+			if deps.Backup != nil {
+				deps.Backup.SetKeep(int(parseIntValue(applied.BackupKeep.Value)))
+			}
+			if deps.ApplyBackupSchedule != nil {
+				if scheduleErr := deps.ApplyBackupSchedule(applied); scheduleErr != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "备份计划更新失败"})
+					return
+				}
+			}
 		}
 
 		if deps.Reload != nil {

@@ -22,6 +22,10 @@ export const FIELD_PROXY_TELEGRAM = 'proxy.telegram'
 export const FIELD_PROXY_TELEGRAPH = 'proxy.telegraph'
 export const FIELD_TELEGRAPH_PATH_MODE = 'telegraph.path_mode'
 export const FIELD_UPLOAD_MODE = 'post.upload_mode'
+export const FIELD_TRAFFIC_ALERT = 'traffic.alert_bytes'
+export const FIELD_TRAFFIC_LIMIT = 'traffic.limit_bytes'
+export const FIELD_BACKUP_TIME = 'backup.time'
+export const FIELD_BACKUP_KEEP = 'backup.keep'
 
 /** 代理模式选项，顺序即界面顺序。 */
 export const PROXY_MODES = [
@@ -52,6 +56,26 @@ export function pathModeLabel(mode: string): string {
 export function uploadModeLabel(mode: string): string {
   const found = UPLOAD_MODES.find((item) => item.value === mode)
   return found === undefined ? mode : found.label
+}
+
+/** bytesToGB 把字节数转成输入框里的 GB 文本，0 显示为空。 */
+export function bytesToGB(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return ''
+  return String(Math.round((bytes / (1 << 30)) * 100) / 100)
+}
+
+/** gbToBytes 把 GB 文本转成字节数；空文本表示关闭，非法返回 null。 */
+export function gbToBytes(text: string): number | null {
+  const trimmed = text.trim()
+  if (trimmed === '') return 0
+  const value = Number(trimmed)
+  if (!Number.isFinite(value) || value < 0) return null
+  return Math.round(value * (1 << 30))
+}
+
+/** backupTimeInvalid 校验 HH:MM 时刻。 */
+export function backupTimeInvalid(text: string): boolean {
+  return !/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(text.trim())
 }
 
 /** proxyModeLabel 返回代理模式的中文名，未知取值原样展示。 */
@@ -151,6 +175,11 @@ export function connectionSummary(result: ConnectionResult): string {
 
 /** SettingsForm 是设置页表单的取值。 */
 export interface SettingsForm {
+  alertGB: string
+  limitGB: string
+  backupEnabled: boolean
+  backupTime: string
+  backupKeep: string
   token: string
   channelId: string
   authorName: string
@@ -212,6 +241,34 @@ export function changedPatch(view: SettingsView, form: SettingsForm): SettingsPa
   }
   if (form.defaultMode !== view.upload.default_mode && !view.env_managed.includes(FIELD_UPLOAD_MODE)) {
     patch.upload = { mode: form.defaultMode }
+  }
+  const alert = gbToBytes(form.alertGB)
+  const limit = gbToBytes(form.limitGB)
+  if (alert !== null && alert !== view.traffic.alert_bytes && !view.env_managed.includes(FIELD_TRAFFIC_ALERT)) {
+    patch.traffic = { ...(patch.traffic ?? {}), alert_bytes: alert }
+  }
+  if (limit !== null && limit !== view.traffic.limit_bytes && !view.env_managed.includes(FIELD_TRAFFIC_LIMIT)) {
+    patch.traffic = { ...(patch.traffic ?? {}), limit_bytes: limit }
+  }
+  const keep = Number(form.backupKeep)
+  if (
+    Number.isInteger(keep) &&
+    keep >= 1 &&
+    keep <= 60 &&
+    keep !== view.backup.keep &&
+    !view.env_managed.includes(FIELD_BACKUP_KEEP)
+  ) {
+    patch.backup = { ...(patch.backup ?? {}), keep }
+  }
+  if (form.backupEnabled !== view.backup.enabled) {
+    patch.backup = { ...(patch.backup ?? {}), enabled: form.backupEnabled }
+  }
+  if (
+    form.backupTime !== view.backup.time &&
+    !backupTimeInvalid(form.backupTime) &&
+    !view.env_managed.includes(FIELD_BACKUP_TIME)
+  ) {
+    patch.backup = { ...(patch.backup ?? {}), time: form.backupTime.trim() }
   }
   if (Object.keys(telegram).length > 0) patch.telegram = telegram
   if (Object.keys(telegraph).length > 0) patch.telegraph = telegraph

@@ -3,6 +3,7 @@ package settings
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 
 	"github.com/littleseven2003/SeSeGraph/backend/internal/netclient"
@@ -563,5 +564,69 @@ func TestUploadModeWritable(t *testing.T) {
 	if err := envResolver.Update(ctx, Patch{UploadMode: &stored}); !errors.As(err, &conflict) ||
 		len(conflict.Fields) != 1 || conflict.Fields[0] != "post.upload_mode" {
 		t.Fatalf("错误 = %v，期望 post.upload_mode 由环境变量托管", err)
+	}
+}
+
+// TestTrafficAndBackupSettings 验证流量与备份配置的默认值、写入与校验。
+func TestTrafficAndBackupSettings(t *testing.T) {
+	ctx := context.Background()
+	resolver := newResolver(t, Env{})
+
+	effective, err := resolver.Effective(ctx)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if effective.TrafficAlertBytes.Value != "0" || effective.TrafficAlertBytes.Source != SourceDefault {
+		t.Errorf("默认预警 = %+v，期望 0 / default", effective.TrafficAlertBytes)
+	}
+	if effective.BackupEnabled.Value != "false" || effective.BackupTime.Value != DefaultBackupTime ||
+		effective.BackupKeep.Value != "7" {
+		t.Errorf("备份默认值 = %+v / %+v / %+v", effective.BackupEnabled, effective.BackupTime, effective.BackupKeep)
+	}
+
+	alert := int64(3 << 30)
+	limit := int64(5 << 30)
+	enabled := true
+	timeValue := "4:30"
+	keep := int64(10)
+	if err := resolver.Update(ctx, Patch{
+		TrafficAlertBytes: &alert, TrafficLimitBytes: &limit,
+		BackupEnabled: &enabled, BackupTime: &timeValue, BackupKeep: &keep,
+	}); err != nil {
+		t.Fatalf("保存失败: %v", err)
+	}
+	effective, err = resolver.Effective(ctx)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if effective.TrafficAlertBytes.Value != strconv.FormatInt(alert, 10) ||
+		effective.TrafficLimitBytes.Value != strconv.FormatInt(limit, 10) {
+		t.Errorf("流量阈值 = %+v / %+v", effective.TrafficAlertBytes, effective.TrafficLimitBytes)
+	}
+	if effective.BackupEnabled.Value != "true" || effective.BackupTime.Value != "04:30" ||
+		effective.BackupKeep.Value != "10" {
+		t.Errorf("备份配置 = %+v / %+v / %+v", effective.BackupEnabled, effective.BackupTime, effective.BackupKeep)
+	}
+
+	badTime := "25:00"
+	var problem *FieldProblem
+	if err := resolver.Update(ctx, Patch{BackupTime: &badTime}); !errors.As(err, &problem) ||
+		len(problem.Fields) != 1 || problem.Fields[0] != "backup.time" {
+		t.Fatalf("错误 = %v，期望 backup.time 校验失败", err)
+	}
+	badKeep := int64(0)
+	if err := resolver.Update(ctx, Patch{BackupKeep: &badKeep}); !errors.As(err, &problem) ||
+		problem.Fields[0] != "backup.keep" {
+		t.Fatalf("错误 = %v，期望 backup.keep 校验失败", err)
+	}
+
+	envResolver := newResolver(t, Env{BackupEnabled: "TRUE", BackupTime: "05:15", BackupKeep: "3"})
+	effective, err = envResolver.Effective(ctx)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if effective.BackupEnabled.Source != SourceEnv || effective.BackupTime.Value != "05:15" ||
+		effective.BackupKeep.Value != "3" {
+		t.Errorf("环境变量备份配置 = %+v / %+v / %+v", effective.BackupEnabled, effective.BackupTime, effective.BackupKeep)
 	}
 }

@@ -28,6 +28,9 @@ import {
   trafficStateText,
   trafficSummary,
   UPLOAD_MODES,
+  bytesToGB,
+  gbToBytes,
+  backupTimeInvalid,
   uploadModeLabel,
 } from '../src/utils/settings.ts'
 
@@ -60,6 +63,20 @@ function view(overrides: Partial<SettingsView> = {}): SettingsView {
       telegram_enabled: false,
       telegraph_enabled: false,
     },
+    traffic: {
+      alert_bytes: 0,
+      alert_source: 'default',
+      limit_bytes: 0,
+      limit_source: 'default',
+    },
+    backup: {
+      enabled: false,
+      enabled_source: 'default',
+      time: '03:00',
+      time_source: 'default',
+      keep: 7,
+      keep_source: 'default',
+    },
     upload: {
       default_mode: 'photo',
       mode_source: 'default',
@@ -75,6 +92,11 @@ function view(overrides: Partial<SettingsView> = {}): SettingsView {
 }
 
 const baseForm = {
+  alertGB: '',
+  limitGB: '',
+  backupEnabled: false,
+  backupTime: '03:00',
+  backupKeep: '7',
   metaFilenames: 'info.txt, meta.txt, readme.txt',
   metaParseMode: 'first-line',
   token: '',
@@ -292,4 +314,45 @@ test('链接生成方式与默认画质受环境变量托管时不提交', () =>
   const current = view({ env_managed: ['telegraph.path_mode', 'post.upload_mode'] })
   const patch = changedPatch(current, { ...baseForm, pathMode: 'slug', defaultMode: 'document' })
   assert.equal(hasPatch(patch), false)
+})
+
+test('GB 与字节互转以及备份时刻校验', () => {
+  assert.equal(gbToBytes(''), 0)
+  assert.equal(gbToBytes('1.5'), 1610612736)
+  assert.equal(gbToBytes('-1'), null)
+  assert.equal(gbToBytes('abc'), null)
+  assert.equal(bytesToGB(0), '')
+  assert.equal(bytesToGB(1610612736), '1.5')
+  assert.equal(backupTimeInvalid('03:00'), false)
+  assert.equal(backupTimeInvalid('3:5'), true)
+  assert.equal(backupTimeInvalid('24:00'), true)
+})
+
+test('流量与备份改动进入补丁', () => {
+  const current = view()
+  const patch = changedPatch(current, {
+    ...baseForm,
+    alertGB: '2',
+    limitGB: '5',
+    backupEnabled: true,
+    backupTime: '04:30',
+    backupKeep: '10',
+  })
+  assert.deepEqual(patch.traffic, { alert_bytes: 2147483648, limit_bytes: 5368709120 })
+  assert.deepEqual(patch.backup, { keep: 10, enabled: true, time: '04:30' })
+})
+
+test('流量与备份受环境变量托管时不提交', () => {
+  const current = view({
+    env_managed: ['traffic.alert_bytes', 'traffic.limit_bytes', 'backup.time', 'backup.keep'],
+  })
+  const patch = changedPatch(current, {
+    ...baseForm,
+    alertGB: '2',
+    limitGB: '5',
+    backupTime: '04:30',
+    backupKeep: '10',
+  })
+  assert.equal(patch.traffic, undefined)
+  assert.equal(patch.backup, undefined)
 })

@@ -53,6 +53,8 @@ type Deps struct {
 	Backup *backup.Manager
 	// BackupSchedule 是定时备份的展示文案，为空表示未启用定时备份。
 	BackupSchedule string
+	// ApplyBackupSchedule 在设置保存后热更新自动备份计划。
+	ApplyBackupSchedule func(settings.Effective) error
 	// Telegraph 负责账户配置与建号，未配置时为 nil。
 	Telegraph *telegraph.Manager
 	// PublicURL 是对外访问地址，发布前要求为 HTTPS。

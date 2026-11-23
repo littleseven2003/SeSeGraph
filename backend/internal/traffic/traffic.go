@@ -275,6 +275,21 @@ func (r *Recorder) recordLocked(ctx context.Context, bytes int64, request bool) 
 	return r.overLimitLocked()
 }
 
+// SetLimits 热更新月度预警与硬上限，非正值表示关闭对应阈值。
+// 阈值调高后允许按新值重新提醒一次，调低则立即生效。
+func (r *Recorder) SetLimits(alertBytes, limitBytes int64) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.opts.AlertBytes = alertBytes
+	r.opts.LimitBytes = limitBytes
+	if alertBytes <= 0 || r.bytesOut < alertBytes {
+		r.alertSent = false
+	}
+}
+
 // OverLimit 报告当月是否已超过硬上限。
 func (r *Recorder) OverLimit() bool {
 	if r == nil {

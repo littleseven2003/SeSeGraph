@@ -30,6 +30,24 @@ export interface ProxySettings {
   telegraph_enabled: boolean
 }
 
+/** TrafficSettings 是月度预警与硬上限，单位字节，0 表示关闭。 */
+export interface TrafficSettings {
+  alert_bytes: number
+  alert_source: string
+  limit_bytes: number
+  limit_source: string
+}
+
+/** BackupSettings 是自动备份开关、每日时刻与保留份数。 */
+export interface BackupSettings {
+  enabled: boolean
+  enabled_source: string
+  time: string
+  time_source: string
+  keep: number
+  keep_source: string
+}
+
 /** UploadSettings 是新任务的默认画质及其来源。 */
 export interface UploadSettings {
   default_mode: string
@@ -48,6 +66,8 @@ export interface SettingsView {
   telegram: TelegramSettings
   telegraph: TelegraphSettings
   proxy: ProxySettings
+  traffic: TrafficSettings
+  backup: BackupSettings
   upload: UploadSettings
   meta: MetaSettings
   env_managed: string[]
@@ -63,6 +83,8 @@ export interface SettingsPatch {
     telegraph_enabled?: boolean
   }
   upload?: { mode?: string }
+  traffic?: { alert_bytes?: number; limit_bytes?: number }
+  backup?: { enabled?: boolean; time?: string; keep?: number }
   meta?: {
     filenames?: string[]
     parse_mode?: string

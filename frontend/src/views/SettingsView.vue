@@ -36,6 +36,13 @@ import {
   FIELD_TELEGRAPH_PATH_MODE,
   FIELD_TELEGRAPH_TOKEN,
   FIELD_UPLOAD_MODE,
+  FIELD_TRAFFIC_ALERT,
+  FIELD_TRAFFIC_LIMIT,
+  FIELD_BACKUP_TIME,
+  FIELD_BACKUP_KEEP,
+  backupTimeInvalid,
+  bytesToGB,
+  gbToBytes,
   credentialErrors,
   credentialFieldError,
   hasCredentialErrors,
@@ -113,10 +120,18 @@ function fieldErrorText(field: string): string {
   if (field === FIELD_TELEGRAM_CHANNEL) return '需为 @用户名 或数字编号'
   if (field === FIELD_TELEGRAPH_AUTHOR) return '作者名不超过 100 字'
   if (field === FIELD_PROXY_URL) return '需为 http://、https:// 或 socks5:// 地址，自定义模式必须填写'
+  if (field === FIELD_TRAFFIC_ALERT || field === FIELD_TRAFFIC_LIMIT) return '请填写不小于 0 的 GB 数值，留空表示关闭'
+  if (field === FIELD_BACKUP_TIME) return '时刻格式为 HH:MM，例如 03:00'
+  if (field === FIELD_BACKUP_KEEP) return '保留份数为 1–60 的整数'
   return '该项填写有误'
 }
 
 const form = reactive({
+  alertGB: '',
+  limitGB: '',
+  backupEnabled: false,
+  backupTime: '03:00',
+  backupKeep: '7',
   token: '',
   channelId: '',
   authorName: '',
@@ -136,6 +151,11 @@ function applyView(next: SettingsView): void {
   form.authorName = next.telegraph.author_name
   form.pathMode = next.telegraph.path_mode
   form.defaultMode = next.upload.default_mode
+  form.alertGB = bytesToGB(next.traffic.alert_bytes)
+  form.limitGB = bytesToGB(next.traffic.limit_bytes)
+  form.backupEnabled = next.backup.enabled
+  form.backupTime = next.backup.time
+  form.backupKeep = String(next.backup.keep)
   form.token = ''
   form.proxyMode = next.proxy.mode
   form.proxyUrl = ''
@@ -316,6 +336,22 @@ async function save(): Promise<void> {
   if (patch.proxy?.url !== undefined && proxyURLInvalid(patch.proxy.url)) {
     saveError.value = '代理地址需为 http://、https:// 或 socks5:// 格式'
     fieldErrors.value = [FIELD_PROXY_URL]
+    return
+  }
+  if (gbToBytes(form.alertGB) === null || gbToBytes(form.limitGB) === null) {
+    saveError.value = '流量阈值需为不小于 0 的 GB 数值'
+    fieldErrors.value = [FIELD_TRAFFIC_ALERT, FIELD_TRAFFIC_LIMIT]
+    return
+  }
+  if (backupTimeInvalid(form.backupTime)) {
+    saveError.value = '备份时刻格式为 HH:MM'
+    fieldErrors.value = [FIELD_BACKUP_TIME]
+    return
+  }
+  const keep = Number(form.backupKeep)
+  if (!Number.isInteger(keep) || keep < 1 || keep > 60) {
+    saveError.value = '备份保留份数为 1–60 的整数'
+    fieldErrors.value = [FIELD_BACKUP_KEEP]
     return
   }
   if (proxyCustomNeedsURL(form.proxyMode, view.value.proxy.url_set, form.proxyUrl)) {
@@ -931,6 +967,38 @@ onBeforeUnmount(() => {
                     </button>
                   </div>
                   <div class="px-5 py-4">
+                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <label class="block">
+                        <span class="text-xs font-medium text-muted">月流量预警（GB）</span>
+                        <input
+                          v-model="form.alertGB"
+                          type="number"
+                          min="0"
+                          step="0.1"
+                          :disabled="saving || managed(FIELD_TRAFFIC_ALERT)"
+                          placeholder="留空表示关闭"
+                          class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface disabled:opacity-60"
+                          :class="fieldErrors.includes(FIELD_TRAFFIC_ALERT) ? 'border-danger' : ''"
+                        />
+                        <p v-if="managed(FIELD_TRAFFIC_ALERT)" class="mt-1 text-xs text-muted">{{ ENV_MANAGED_HINT }}</p>
+                      </label>
+                      <label class="block">
+                        <span class="text-xs font-medium text-muted">月流量硬上限（GB）</span>
+                        <input
+                          v-model="form.limitGB"
+                          type="number"
+                          min="0"
+                          step="0.1"
+                          :disabled="saving || managed(FIELD_TRAFFIC_LIMIT)"
+                          placeholder="留空表示不熔断"
+                          class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface disabled:opacity-60"
+                          :class="fieldErrors.includes(FIELD_TRAFFIC_LIMIT) ? 'border-danger' : ''"
+                        />
+                        <p v-if="managed(FIELD_TRAFFIC_LIMIT)" class="mt-1 text-xs text-muted">{{ ENV_MANAGED_HINT }}</p>
+                      </label>
+                    </div>
+                    <p class="mt-1 text-xs text-muted">保存后立即生效，当前月份计数保持不变；硬上限触发后图片网关返回 503。</p>
+
                     <p v-if="trafficError !== ''" class="text-xs text-danger">{{ trafficError }}</p>
                     <p v-else-if="traffic === null" class="text-xs text-muted">尚未读取。</p>
                     <template v-else>
@@ -980,6 +1048,41 @@ onBeforeUnmount(() => {
                     </div>
                   </div>
                   <div class="px-5 py-4">
+                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      <label class="flex min-h-11 items-center gap-2.5 rounded-xl border border-line bg-canvas px-3 py-2.5 text-sm">
+                        <input
+                          v-model="form.backupEnabled"
+                          type="checkbox"
+                          :disabled="saving"
+                          class="h-5 w-5 shrink-0 accent-accent"
+                        />
+                        <span>启用每日自动备份</span>
+                      </label>
+                      <label class="block">
+                        <span class="text-xs font-medium text-muted">每日时刻</span>
+                        <input
+                          v-model="form.backupTime"
+                          type="time"
+                          :disabled="saving || managed(FIELD_BACKUP_TIME)"
+                          class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface disabled:opacity-60"
+                          :class="fieldErrors.includes(FIELD_BACKUP_TIME) ? 'border-danger' : ''"
+                        />
+                      </label>
+                      <label class="block">
+                        <span class="text-xs font-medium text-muted">本地保留份数</span>
+                        <input
+                          v-model="form.backupKeep"
+                          type="number"
+                          min="1"
+                          max="60"
+                          :disabled="saving || managed(FIELD_BACKUP_KEEP)"
+                          class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface disabled:opacity-60"
+                          :class="fieldErrors.includes(FIELD_BACKUP_KEEP) ? 'border-danger' : ''"
+                        />
+                      </label>
+                    </div>
+                    <p class="mt-1 text-xs text-muted">按服务器时区执行；计划保存后立即更新下一次执行时间。运行中的备份会自然完成。</p>
+
                     <p v-if="backupError !== ''" class="text-xs text-danger">{{ backupError }}</p>
                     <p v-else-if="backupNote !== ''" class="text-xs text-accent">{{ backupNote }}</p>
                     <template v-if="backup !== null">

@@ -3,6 +3,7 @@ package settings
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -100,6 +101,12 @@ type Env struct {
 	UploadMode string
 	// TelegraphPathMode 是 Telegraph 链接生成方式，title 或 slug。
 	TelegraphPathMode string
+	// 流量看护与自动备份：字节阈值、是否启用、每日时刻与保留份数。
+	TrafficAlertBytes string
+	TrafficLimitBytes string
+	BackupEnabled     string
+	BackupTime        string
+	BackupKeep        string
 }
 
 // Value 是一项生效配置及其来源。敏感项只通过 Value 在校验与自检内部使用，不对外输出。
@@ -130,6 +137,13 @@ type Effective struct {
 	UploadMode Value
 	// TelegraphPathMode 是 Telegraph 链接生成方式。
 	TelegraphPathMode Value
+	// TrafficAlertBytes 与 TrafficLimitBytes 是月度预警与硬上限，0 表示关闭。
+	TrafficAlertBytes Value
+	TrafficLimitBytes Value
+	// BackupEnabled、BackupTime 与 BackupKeep 控制自动备份。
+	BackupEnabled Value
+	BackupTime    Value
+	BackupKeep    Value
 	// MetaFilenames 是压缩包内说明文件的候选名（逗号分隔）。
 	MetaFilenames Value
 	// MetaParseMode 是说明文件的默认解析方式。
@@ -212,6 +226,11 @@ func (r *Resolver) effectiveFrom(stored map[string]string) Effective {
 		ProxyTelegraph:    resolveFlag(r.env.ProxyTelegraph, stored[KeyProxyTelegraph]),
 		UploadMode:        resolveUploadMode(r.env.UploadMode, stored[KeyUploadMode]),
 		TelegraphPathMode: resolvePathMode(r.env.TelegraphPathMode, stored[KeyTelegraphPathMode]),
+		TrafficAlertBytes: resolveNumber(r.env.TrafficAlertBytes, stored[KeyTrafficAlert], "0"),
+		TrafficLimitBytes: resolveNumber(r.env.TrafficLimitBytes, stored[KeyTrafficLimit], "0"),
+		BackupEnabled:     resolveFlag(r.env.BackupEnabled, stored[KeyBackupEnabled]),
+		BackupTime:        resolveBackupTime(r.env.BackupTime, stored[KeyBackupTime]),
+		BackupKeep:        resolveNumber(r.env.BackupKeep, stored[KeyBackupKeep], "7"),
 		MetaFilenames:     resolve("", stored, KeyMetaFilenames, DefaultMetaFilenames),
 		MetaParseMode:     resolveMetaParseMode(stored[KeyMetaParseMode]),
 	}
@@ -250,6 +269,53 @@ func normalizePathMode(raw string) string {
 	default:
 		return ""
 	}
+}
+
+// resolveNumber 解析十进制数值配置：环境变量优先，非法值回落默认。
+func resolveNumber(envValue, stored, fallback string) Value {
+	if value := normalizeNumber(envValue); value != "" {
+		return Value{Value: value, Source: SourceEnv}
+	}
+	if value := normalizeNumber(stored); value != "" {
+		return Value{Value: value, Source: SourceStored}
+	}
+	return Value{Value: fallback, Source: SourceDefault}
+}
+
+// normalizeNumber 只接受非负十进制整数，其余返回空串。
+func normalizeNumber(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value < 0 {
+		return ""
+	}
+	return strconv.FormatInt(value, 10)
+}
+
+// resolveBackupTime 解析每日备份时刻，非法值回落到默认三点。
+func resolveBackupTime(envValue, stored string) Value {
+	if value := normalizeBackupTime(envValue); value != "" {
+		return Value{Value: value, Source: SourceEnv}
+	}
+	if value := normalizeBackupTime(stored); value != "" {
+		return Value{Value: value, Source: SourceStored}
+	}
+	return Value{Value: DefaultBackupTime, Source: SourceDefault}
+}
+
+// normalizeBackupTime 校验 HH:MM 形式并以两位数字返回。
+func normalizeBackupTime(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if matched, _ := regexp.MatchString(`^([01]?[0-9]|2[0-3]):[0-5][0-9]$`, raw); !matched {
+		return ""
+	}
+	parts := strings.SplitN(raw, ":", 2)
+	hour, _ := strconv.Atoi(parts[0])
+	minute, _ := strconv.Atoi(parts[1])
+	return fmt.Sprintf("%02d:%02d", hour, minute)
 }
 
 // validatePathMode 校验链接生成方式只取两个约定值。
@@ -348,6 +414,12 @@ type Patch struct {
 	// 发帖默认画质与 Telegraph 链接生成方式。
 	UploadMode        *string
 	TelegraphPathMode *string
+	// 流量看护与自动备份。
+	TrafficAlertBytes *int64
+	TrafficLimitBytes *int64
+	BackupEnabled     *bool
+	BackupTime        *string
+	BackupKeep        *int64
 }
 
 // Empty 报告补丁是否没有任何字段。
@@ -355,7 +427,9 @@ func (p Patch) Empty() bool {
 	return p.TelegramToken == nil && p.TelegramChannel == nil && p.TelegraphAuthor == nil &&
 		p.ProxyMode == nil && p.ProxyURL == nil && p.ProxyTelegram == nil && p.ProxyTelegraph == nil &&
 		p.MetaFilenames == nil && p.MetaParseMode == nil &&
-		p.UploadMode == nil && p.TelegraphPathMode == nil
+		p.UploadMode == nil && p.TelegraphPathMode == nil &&
+		p.TrafficAlertBytes == nil && p.TrafficLimitBytes == nil &&
+		p.BackupEnabled == nil && p.BackupTime == nil && p.BackupKeep == nil
 }
 
 // Prepare 校验补丁并返回应用后的生效配置，不写入数据库。
@@ -437,6 +511,9 @@ func (r *Resolver) classify(stored map[string]string, patch Patch) (Effective, m
 	applyMeta(patch, current, values, &deletes, &invalid)
 	apply(patch.UploadMode, current.UploadMode, KeyUploadMode, "post.upload_mode", validateUploadMode)
 	apply(patch.TelegraphPathMode, current.TelegraphPathMode, KeyTelegraphPathMode, "telegraph.path_mode", validatePathMode)
+	applyNumber(patch.TrafficAlertBytes, current.TrafficAlertBytes, KeyTrafficAlert, "traffic.alert_bytes", values, &deletes, &conflicts, &invalid)
+	applyNumber(patch.TrafficLimitBytes, current.TrafficLimitBytes, KeyTrafficLimit, "traffic.limit_bytes", values, &deletes, &conflicts, &invalid)
+	applyBackup(patch, current, values, &deletes, &conflicts, &invalid)
 
 	if len(invalid) > 0 {
 		return Effective{}, nil, nil, &FieldProblem{Fields: invalid}
@@ -631,4 +708,74 @@ func validateAuthor(value string) error {
 		return ErrInvalidValue
 	}
 	return nil
+}
+
+// DefaultBackupTime 是自动备份的默认每日时刻。
+const DefaultBackupTime = "03:00"
+
+// applyNumber 归类非负数值配置：0 表示清除数据库值并回落默认。
+func applyNumber(raw *int64, current Value, key, field string, values map[string]string, deletes *[]string, conflicts *[]string, invalid *[]string) {
+	if raw == nil {
+		return
+	}
+	if *raw < 0 {
+		*invalid = append(*invalid, field)
+		return
+	}
+	value := strconv.FormatInt(*raw, 10)
+	if value == current.Value {
+		return
+	}
+	if current.Source == SourceEnv {
+		*conflicts = append(*conflicts, field)
+		return
+	}
+	if *raw == 0 {
+		*deletes = append(*deletes, key)
+		return
+	}
+	values[key] = value
+}
+
+// applyBackup 归类自动备份开关、每日时刻与保留份数。
+func applyBackup(patch Patch, current Effective, values map[string]string, deletes *[]string, conflicts *[]string, invalid *[]string) {
+	if patch.BackupEnabled != nil {
+		value := "false"
+		if *patch.BackupEnabled {
+			value = "true"
+		}
+		if value != current.BackupEnabled.Value {
+			if current.BackupEnabled.Source == SourceEnv {
+				*conflicts = append(*conflicts, "backup.enabled")
+			} else {
+				values[KeyBackupEnabled] = value
+			}
+		}
+	}
+	if patch.BackupTime != nil {
+		normalized := normalizeBackupTime(*patch.BackupTime)
+		if normalized == "" {
+			*invalid = append(*invalid, "backup.time")
+		} else if normalized != current.BackupTime.Value {
+			if current.BackupTime.Source == SourceEnv {
+				*conflicts = append(*conflicts, "backup.time")
+			} else {
+				values[KeyBackupTime] = normalized
+			}
+		}
+	}
+	if patch.BackupKeep != nil {
+		if *patch.BackupKeep < 1 || *patch.BackupKeep > 60 {
+			*invalid = append(*invalid, "backup.keep")
+			return
+		}
+		value := strconv.FormatInt(*patch.BackupKeep, 10)
+		if value != current.BackupKeep.Value {
+			if current.BackupKeep.Source == SourceEnv {
+				*conflicts = append(*conflicts, "backup.keep")
+			} else {
+				values[KeyBackupKeep] = value
+			}
+		}
+	}
 }

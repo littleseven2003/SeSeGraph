@@ -26,6 +26,12 @@ const (
 	KeyProxyURL       = "proxy.url"
 	KeyProxyTelegram  = "proxy.telegram"
 	KeyProxyTelegraph = "proxy.telegraph"
+	// 流量看护与自动备份：月度两级阈值、每日备份时刻与保留份数。
+	KeyTrafficAlert  = "traffic.alert_bytes"
+	KeyTrafficLimit  = "traffic.limit_bytes"
+	KeyBackupEnabled = "backup.enabled"
+	KeyBackupTime    = "backup.time"
+	KeyBackupKeep    = "backup.keep"
 )
 
 // Store 基于 settings 表读写键值配置。

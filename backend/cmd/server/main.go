@@ -103,6 +103,11 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		ProxyTelegraph:    envValue(lookupEnv, "PROXY_FOR_TELEGRAPH"),
 		UploadMode:        envValue(lookupEnv, "UPLOAD_MODE"),
 		TelegraphPathMode: envValue(lookupEnv, "TELEGRAPH_PATH_MODE"),
+		TrafficAlertBytes: envNumberString(readGigabytes(lookupEnv, "TRAFFIC_ALERT_GB")),
+		TrafficLimitBytes: envNumberString(readGigabytes(lookupEnv, "TRAFFIC_LIMIT_GB")),
+		BackupEnabled:     envValue(lookupEnv, "BACKUP_ENABLED"),
+		BackupTime:        backupTimeEnv(lookupEnv),
+		BackupKeep:        envValue(lookupEnv, "BACKUP_KEEP"),
 	})
 	effective, err := resolver.Effective(ctx)
 	if err != nil {
@@ -204,8 +209,9 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	defer stopViews()
 
 	// 月度流量统计：内存累加 + 定时刷盘，越过预警阈值时用 Bot 发一条通知。
-	alertBytes := readGigabytes(lookupEnv, "TRAFFIC_ALERT_GB")
-	limitBytes := readGigabytes(lookupEnv, "TRAFFIC_LIMIT_GB")
+	// 阈值来自生效配置（环境变量优先，其次设置页保存值）。
+	alertBytes := parseSettingBytes(effective.TrafficAlertBytes.Value)
+	limitBytes := parseSettingBytes(effective.TrafficLimitBytes.Value)
 	trafficMeter := traffic.New(store, traffic.Options{
 		AlertBytes: alertBytes,
 		LimitBytes: limitBytes,
@@ -223,21 +229,11 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		DataDir:       cfg.DataDir,
 		Handle:        store,
 		IncludeThumbs: !isFalse(envValue(lookupEnv, "BACKUP_INCLUDE_THUMBS")),
+		Keep:          int(parseSettingBytes(effective.BackupKeep.Value)),
 		Sender:        backupSender(resolver, lookupEnv, switcher),
 	})
-	backupSchedule := ""
-	if enabled, _ := lookupEnv("BACKUP_ENABLED"); isTrue(strings.TrimSpace(enabled)) {
-		spec := envValue(lookupEnv, "BACKUP_CRON")
-		if spec == "" {
-			spec = "0 3 * * *"
-		}
-		hour, minute, parseErr := backup.ParseDaily(spec)
-		if parseErr != nil {
-			log.Print("备份周期不合法，定时备份未启用")
-		} else {
-			backupSchedule = backup.DailyText(hour, minute)
-		}
-	}
+	backupState := newBackupScheduleState(effective)
+	backupSchedule := backupState.text()
 
 	router := api.NewRouter(api.Deps{
 		Version:           version,
@@ -265,7 +261,11 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		Traffic:           trafficMeter,
 		Backup:            backupManager,
 		BackupSchedule:    backupSchedule,
-		Views:             viewsService,
+		ApplyBackupSchedule: func(next settings.Effective) error {
+			backupState.apply(next)
+			return nil
+		},
+		Views: viewsService,
 	})
 
 	stopWorker := startUploadQueue(ctx, repository, cfg.DataDir, switcher, gate, lookupEnv)
@@ -274,7 +274,7 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	stopPublisher := startPublisher(ctx, repository, telegraphManager, cfg.PublicURL)
 	defer stopPublisher()
 
-	stopBackup := startBackupScheduler(ctx, backupManager, backupSchedule, lookupEnv)
+	stopBackup := startBackupScheduler(ctx, backupManager, backupState)
 	defer stopBackup()
 
 	// 只记录版本信息，监听地址与数据目录属于本地部署细节，不写入日志。
@@ -436,19 +436,55 @@ func uploadDocument(ctx context.Context, provider *storage.Telegram, path, capti
 	return err
 }
 
-// startBackupScheduler 按每天固定时刻触发热备，返回停止函数。
-func startBackupScheduler(ctx context.Context, manager *backup.Manager, schedule string, lookupEnv func(string) (string, bool)) func() {
-	if manager == nil || schedule == "" {
+// backupScheduleState 保存当前自动备份计划，设置保存后可热更新。
+type backupScheduleState struct {
+	mu      sync.Mutex
+	enabled bool
+	hour    int
+	minute  int
+}
+
+// newBackupScheduleState 用生效配置初始化计划。
+func newBackupScheduleState(effective settings.Effective) *backupScheduleState {
+	state := &backupScheduleState{}
+	state.apply(effective)
+	return state
+}
+
+// apply 把生效配置写入计划；时刻非法时回落到默认三点。
+func (s *backupScheduleState) apply(effective settings.Effective) {
+	hour, minute := 3, 0
+	if parsedHour, parsedMinute, err := parseClock(effective.BackupTime.Value); err == nil {
+		hour, minute = parsedHour, parsedMinute
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.enabled = strings.EqualFold(strings.TrimSpace(effective.BackupEnabled.Value), "true")
+	s.hour = hour
+	s.minute = minute
+}
+
+// text 返回计划的中文说明，未启用时为空串。
+func (s *backupScheduleState) text() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.enabled {
+		return ""
+	}
+	return backup.DailyText(s.hour, s.minute)
+}
+
+// snapshot 返回当前计划，供调度协程判断是否到点。
+func (s *backupScheduleState) snapshot() (bool, int, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.enabled, s.hour, s.minute
+}
+
+// startBackupScheduler 按当前计划每天触发一次热备，计划可热更新。
+func startBackupScheduler(ctx context.Context, manager *backup.Manager, state *backupScheduleState) func() {
+	if manager == nil || state == nil {
 		log.Print("定时备份未启用")
-		return func() {}
-	}
-	spec := envValue(lookupEnv, "BACKUP_CRON")
-	if spec == "" {
-		spec = "0 3 * * *"
-	}
-	hour, minute, err := backup.ParseDaily(spec)
-	if err != nil {
-		log.Print("备份周期不合法，定时备份未启用")
 		return func() {}
 	}
 
@@ -456,28 +492,30 @@ func startBackupScheduler(ctx context.Context, manager *backup.Manager, schedule
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+		lastRun := ""
 		for {
-			next := nextBackupTime(time.Now(), hour, minute)
-			timer := time.NewTimer(time.Until(next))
+			enabled, hour, minute := state.snapshot()
+			now := time.Now()
+			if enabled && now.Hour() == hour && now.Minute() == minute && lastRun != now.Format("2006-01-02") {
+				lastRun = now.Format("2006-01-02")
+				if err := manager.Start(); err != nil {
+					log.Print("上一次备份仍在进行，本次跳过")
+				} else {
+					runCtx, runCancel := context.WithTimeout(schedulerCtx, 15*time.Minute)
+					result, runErr := manager.Run(runCtx)
+					runCancel()
+					if runErr != nil {
+						log.Print("定时备份未完成，请检查数据目录与图床配置")
+					} else {
+						log.Printf("定时备份完成：%s（%.1f MB）", result.Name, float64(result.Size)/(1<<20))
+					}
+				}
+			}
 			select {
 			case <-schedulerCtx.Done():
-				timer.Stop()
 				return
-			case <-timer.C:
+			case <-time.After(20 * time.Second):
 			}
-
-			if err := manager.Start(); err != nil {
-				log.Print("上一次备份仍在进行，本次跳过")
-				continue
-			}
-			runCtx, runCancel := context.WithTimeout(schedulerCtx, 15*time.Minute)
-			result, runErr := manager.Run(runCtx)
-			runCancel()
-			if runErr != nil {
-				log.Print("定时备份未完成，请检查数据目录与图床配置")
-				continue
-			}
-			log.Printf("定时备份完成：%s（%.1f MB）", result.Name, float64(result.Size)/(1<<20))
 		}
 	}()
 
@@ -485,6 +523,56 @@ func startBackupScheduler(ctx context.Context, manager *backup.Manager, schedule
 		cancel()
 		<-done
 	}
+}
+
+// parseClock 解析 HH:MM 时刻。
+func parseClock(raw string) (int, int, error) {
+	parts := strings.SplitN(strings.TrimSpace(raw), ":", 2)
+	if len(parts) != 2 {
+		return 0, 0, errors.New("时刻格式不正确")
+	}
+	hour, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, err
+	}
+	minute, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, err
+	}
+	if hour < 0 || hour > 23 || minute < 0 || minute > 59 {
+		return 0, 0, errors.New("时刻超出范围")
+	}
+	return hour, minute, nil
+}
+
+// parseSettingBytes 把配置中的十进制字节数转成整数，非法值按 0 处理。
+func parseSettingBytes(raw string) int64 {
+	value, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil || value < 0 {
+		return 0
+	}
+	return value
+}
+
+// envNumberString 把环境变量里的字节数转成配置字符串，未配置时为空。
+func envNumberString(value int64) string {
+	if value <= 0 {
+		return ""
+	}
+	return strconv.FormatInt(value, 10)
+}
+
+// backupTimeEnv 把 BACKUP_CRON 里的每日时刻转成 HH:MM。
+func backupTimeEnv(lookupEnv func(string) (string, bool)) string {
+	spec := envValue(lookupEnv, "BACKUP_CRON")
+	if spec == "" {
+		return ""
+	}
+	hour, minute, err := backup.ParseDaily(spec)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%02d:%02d", hour, minute)
 }
 
 // nextBackupTime 计算下一次触发时刻。

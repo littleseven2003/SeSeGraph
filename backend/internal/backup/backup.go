@@ -134,6 +134,19 @@ func (m *Manager) Dir() string {
 	return filepath.Join(m.opts.DataDir, DirName)
 }
 
+// SetKeep 热更新本地保留份数，下一次清理按新值执行。
+func (m *Manager) SetKeep(keep int) {
+	if m == nil {
+		return
+	}
+	if keep <= 0 {
+		keep = DefaultKeep
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.opts.Keep = keep
+}
+
 // Start 标记开始一次备份，已有任务时返回 ErrBusy。
 func (m *Manager) Start() error {
 	m.mu.Lock()

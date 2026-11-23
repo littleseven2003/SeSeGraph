@@ -1028,3 +1028,58 @@ func readEffectiveSettings(t *testing.T, env *testEnv, cookie *http.Cookie) (map
 	}
 	return view, effective
 }
+
+// TestSettingsHotAppliesTrafficAndBackup 验证流量阈值与备份计划保存后立即生效。
+func TestSettingsHotAppliesTrafficAndBackup(t *testing.T) {
+	meter := traffic.New(nil, traffic.Options{})
+	applied := 0
+	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
+		deps.Settings = settings.NewResolver(settings.NewStore(handle), settings.Env{})
+		deps.Traffic = meter
+		deps.ApplyBackupSchedule = func(settings.Effective) error {
+			applied++
+			return nil
+		}
+	})
+	cookie := env.setup(t)
+
+	body := `{"traffic":{"alert_bytes":1073741824,"limit_bytes":3221225472},` +
+		`"backup":{"enabled":true,"time":"04:30","keep":5}}`
+	rec := env.do(t, http.MethodPut, "/api/settings", body, cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("保存状态码 = %d，响应: %s", rec.Code, rec.Body.String())
+	}
+	if applied != 1 {
+		t.Errorf("备份计划热更新调用 %d 次，期望 1 次", applied)
+	}
+
+	stats, err := meter.Stats(context.Background())
+	if err != nil {
+		t.Fatalf("读取流量统计失败: %v", err)
+	}
+	if stats.AlertBytes != 1073741824 || stats.LimitBytes != 3221225472 {
+		t.Errorf("热更新后阈值 = %d / %d", stats.AlertBytes, stats.LimitBytes)
+	}
+
+	rec = env.do(t, http.MethodGet, "/api/settings", "", cookie)
+	var view struct {
+		Traffic struct {
+			AlertBytes int64 `json:"alert_bytes"`
+			LimitBytes int64 `json:"limit_bytes"`
+		} `json:"traffic"`
+		Backup struct {
+			Enabled bool   `json:"enabled"`
+			Time    string `json:"time"`
+			Keep    int    `json:"keep"`
+		} `json:"backup"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
+		t.Fatalf("解析设置失败: %v", err)
+	}
+	if view.Traffic.AlertBytes != 1073741824 || view.Traffic.LimitBytes != 3221225472 {
+		t.Errorf("设置页阈值 = %+v", view.Traffic)
+	}
+	if !view.Backup.Enabled || view.Backup.Time != "04:30" || view.Backup.Keep != 5 {
+		t.Errorf("设置页备份 = %+v", view.Backup)
+	}
+}
