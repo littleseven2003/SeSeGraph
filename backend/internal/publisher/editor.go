@@ -69,8 +69,9 @@ func (e *Editor) Withdraw(ctx context.Context, paths []string) error {
 			continue
 		}
 		if _, err := pageAPI.EditPage(ctx, path, telegraph.PageRequest{
-			Title:   WithdrawTitle,
-			Content: []telegraph.Node{telegraph.Paragraph(WithdrawTitle)},
+			Title:       WithdrawTitle,
+			Content:     []telegraph.Node{telegraph.Paragraph(WithdrawTitle)},
+			ClearAuthor: true,
 		}); err != nil {
 			return err
 		}

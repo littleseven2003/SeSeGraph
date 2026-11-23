@@ -53,6 +53,10 @@ func publishPostHandler(deps Deps) gin.HandlerFunc {
 		}
 
 		if err := deps.Posts.RequestPublish(c.Request.Context(), postID); err != nil {
+			if errors.Is(err, posts.ErrPendingDelete) {
+				c.JSON(http.StatusConflict, gin.H{"error": "帖子正在删除，无法继续操作"})
+				return
+			}
 			if errors.Is(err, posts.ErrNotFound) {
 				c.JSON(http.StatusConflict, gin.H{"error": "当前状态不可发布"})
 				return

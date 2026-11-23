@@ -84,12 +84,15 @@ const created = computed(() => (props.detail === null ? '' : formatPublishedAt(p
 // 分享链接一律使用服务端公开地址，管理页面的域名不能代表图片出口。
 const shareUrl = computed(() => (props.detail === null ? '' : postShareUrl(props.detail)))
 const publicBase = computed(() => (props.detail === null ? '' : props.detail.public_base_url))
-const shareReady = computed(() => shareUrl.value !== '')
+const pendingDelete = computed(() => props.detail?.pending_delete === true)
+const shareReady = computed(() => shareUrl.value !== '' && !pendingDelete.value)
 // shareHint 说明当前为什么不能分享：撤回与未发布分别给出对应提示。
 const shareHint = computed(() =>
-  props.detail !== null && props.detail.disabled
-    ? '已撤回访问，恢复后可分享整帖'
-    : '发布完成并生成链接后可分享整帖',
+  pendingDelete.value
+    ? '图集正在删除，分享已停用；可在下方重试删除'
+    : props.detail !== null && props.detail.disabled
+      ? '已撤回访问，恢复后可分享整帖'
+      : '发布完成并生成链接后可分享整帖',
 )
 const previewValues = computed(() => ({
   title: props.detail?.title ?? '标题',
@@ -616,8 +619,11 @@ watch(
               class="rounded-xl border border-danger/25 bg-danger-soft/70 px-3.5 py-3"
             >
               <p class="text-xs leading-relaxed text-danger">
-                删除后本站链接立即停用，已发布的 Telegraph 页面会清空为「此图集已撤回」，本地记录与封面一并移除，且无法恢复。
-                Telegraph 原地址仍可能被访问到；Telegram 私有频道里的原图与历史备份继续保留。
+                <template v-if="pendingDelete">上次删除未完成，已保留待删除记录并停用短码；可再次确认重试，远端页面会重新清空。</template>
+                <template v-else>
+                  删除后本站链接立即停用，已发布的 Telegraph 页面会清空为「此图集已撤回」，本地记录与封面一并移除，且无法恢复。
+                  Telegraph 原地址仍可能被访问到；Telegram 私有频道里的原图与历史备份继续保留。
+                </template>
               </p>
               <div class="mt-2 flex flex-wrap items-center gap-2">
                 <button
@@ -626,7 +632,7 @@ watch(
                   :disabled="deleting"
                   @click="emit('delete')"
                 >
-                  {{ deleting ? '正在删除…' : '确认删除' }}
+                  {{ deleting ? '正在删除…' : pendingDelete ? '重试删除' : '确认删除' }}
                 </button>
                 <button
                   type="button"

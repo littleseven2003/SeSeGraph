@@ -250,6 +250,9 @@ async function onDelete(): Promise<void> {
     } else {
       deleteError.value = '删除失败，请稍后重试'
     }
+    // 失败或部分完成后刷新抽屉与列表，让待删除状态和短码停用立即可见。
+    await loadDetail()
+    await loadList(page.value)
   } finally {
     deleting.value = false
   }

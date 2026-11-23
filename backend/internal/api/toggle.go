@@ -46,6 +46,10 @@ func togglePostHandler(deps Deps) gin.HandlerFunc {
 		}
 
 		disabled, public, err := deps.Posts.SetDisabled(c.Request.Context(), postID, *req.Disabled)
+		if errors.Is(err, posts.ErrPendingDelete) {
+			c.JSON(http.StatusConflict, gin.H{"error": "帖子正在删除，无法继续操作"})
+			return
+		}
 		if errors.Is(err, posts.ErrNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "帖子不存在"})
 			return

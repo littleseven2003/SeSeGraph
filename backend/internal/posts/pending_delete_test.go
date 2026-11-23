@@ -68,3 +68,28 @@ func TestMarkPendingDeleteMissingPost(t *testing.T) {
 		t.Errorf("不存在的帖子应返回 ErrNotFound，实际: %v", err)
 	}
 }
+
+func TestStateUpdatesRejectPendingDelete(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+	id, err := repo.Create(ctx, Post{Title: "待删除", ImageCount: 1})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+	if err := repo.MarkPostFinished(ctx, id, StatusCompleted, ""); err != nil {
+		t.Fatalf("标记完成失败: %v", err)
+	}
+	if _, err := repo.MarkPendingDelete(ctx, id); err != nil {
+		t.Fatalf("标记删除失败: %v", err)
+	}
+
+	if _, _, err := repo.SetDisabled(ctx, id, false); !errors.Is(err, ErrPendingDelete) {
+		t.Errorf("待删除时恢复访问应被拒绝，实际: %v", err)
+	}
+	if err := repo.UpdateMetadata(ctx, id, PublishIdle, "新标题", "", ""); !errors.Is(err, ErrPendingDelete) {
+		t.Errorf("待删除时更新元数据应被拒绝，实际: %v", err)
+	}
+	if err := repo.RequestPublish(ctx, id); !errors.Is(err, ErrPendingDelete) {
+		t.Errorf("待删除时请求发布应被拒绝，实际: %v", err)
+	}
+}

@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/base64"
 	"errors"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -92,6 +93,19 @@ func deletePostHandler(deps Deps) gin.HandlerFunc {
 		}
 
 		post, postErr := deps.Posts.Get(c.Request.Context(), postID)
+
+		// 先清理本地文件；失败时保留待删除记录，短码继续 404，可再次重试。
+		if postErr == nil && post.CoverThumbPath != "" {
+			if err := os.Remove(filepath.Join(deps.DataDir, post.CoverThumbPath)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				c.JSON(http.StatusBadGateway, gin.H{"error": "本地文件清理失败，已保留待删除记录，可稍后重试"})
+				return
+			}
+		}
+		if err := os.RemoveAll(filepath.Join(deps.DataDir, "tmp", strconv.FormatInt(postID, 10))); err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "本地文件清理失败，已保留待删除记录，可稍后重试"})
+			return
+		}
+
 		if err := deps.Posts.Delete(c.Request.Context(), postID); err != nil {
 			switch {
 			case errors.Is(err, posts.ErrNotFound):
@@ -103,12 +117,6 @@ func deletePostHandler(deps Deps) gin.HandlerFunc {
 			}
 			return
 		}
-
-		// 记录删除后再清理本地文件：封面与未上传完的临时目录。
-		if postErr == nil && post.CoverThumbPath != "" {
-			_ = os.Remove(filepath.Join(deps.DataDir, post.CoverThumbPath))
-		}
-		_ = os.RemoveAll(filepath.Join(deps.DataDir, "tmp", strconv.FormatInt(postID, 10)))
 		c.Status(http.StatusNoContent)
 	}
 }

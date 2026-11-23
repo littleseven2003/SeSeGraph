@@ -193,10 +193,10 @@ func (r *Repository) SetDisabled(ctx context.Context, postID int64, disabled boo
 	err := r.handle.QueryRowContext(ctx,
 		`UPDATE posts SET is_disabled = ?,
 		        updated_at = CASE WHEN is_disabled = ? THEN updated_at ELSE CURRENT_TIMESTAMP END
-		 WHERE id = ? RETURNING is_disabled, is_public`,
+		 WHERE id = ? AND pending_delete = 0 RETURNING is_disabled, is_public`,
 		target, target, postID).Scan(&gotDisabled, &public)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, false, ErrNotFound
+		return false, false, r.missingOrPending(ctx, postID)
 	}
 	if err != nil {
 		return false, false, errors.New("更新熔断状态失败")
@@ -206,6 +206,38 @@ func (r *Repository) SetDisabled(ctx context.Context, postID int64, disabled boo
 
 // ErrPendingDelete 表示帖子正处于删除流程中。
 var ErrPendingDelete = errors.New("帖子正在删除")
+
+// missingOrPending 在条件更新未命中时区分「不存在」与「正在删除」。
+func (r *Repository) missingOrPending(ctx context.Context, postID int64) error {
+	var pending int
+	err := r.handle.QueryRowContext(ctx, `SELECT pending_delete FROM posts WHERE id = ?`, postID).Scan(&pending)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return errors.New("读取帖子状态失败")
+	}
+	if pending == 1 {
+		return ErrPendingDelete
+	}
+	return ErrNotFound
+}
+
+// missingOrBusy 区分「不存在」「正在删除」与「发布状态已变化」。
+func (r *Repository) missingOrBusy(ctx context.Context, postID int64) error {
+	var pending int
+	err := r.handle.QueryRowContext(ctx, `SELECT pending_delete FROM posts WHERE id = ?`, postID).Scan(&pending)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return errors.New("读取帖子状态失败")
+	}
+	if pending == 1 {
+		return ErrPendingDelete
+	}
+	return ErrPublishBusy
+}
 
 // MarkPendingDelete 在短事务里标记待删除并立即停用短码，返回待清空的远端页面路径。
 // 已经处于待删除状态时直接复用现有标记，供失败后重试。
@@ -380,7 +412,7 @@ func (r *Repository) PublicImage(ctx context.Context, shortCode string) (*Public
 		`SELECT i.id, i.post_id, i.remote_file_id, i.mime_type, p.upload_mode
 		 FROM post_images i JOIN posts p ON p.id = i.post_id
 		 WHERE i.short_code = ? AND i.status = ? AND i.remote_file_id <> ''
-		   AND p.is_public = 1 AND p.is_disabled = 0`,
+		   AND p.is_public = 1 AND p.is_disabled = 0 AND p.pending_delete = 0`,
 		shortCode, ImageStatusStored,
 	).Scan(&image.ImageID, &image.PostID, &image.RemoteFileID, &image.MIMEType, &image.UploadMode)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -397,13 +429,13 @@ func (r *Repository) PublicImage(ctx context.Context, shortCode string) (*Public
 func (r *Repository) RequestPublish(ctx context.Context, postID int64) error {
 	result, err := r.handle.ExecContext(ctx,
 		`UPDATE posts SET is_public = 1, publish_state = ?, publish_error = '', updated_at = CURRENT_TIMESTAMP
-		 WHERE id = ? AND status = ? AND publish_state IN (?, ?)`,
+		 WHERE id = ? AND pending_delete = 0 AND status = ? AND publish_state IN (?, ?)`,
 		PublishPending, postID, StatusCompleted, PublishIdle, PublishFailed)
 	if err != nil {
 		return errors.New("更新发布状态失败")
 	}
 	if affected, _ := result.RowsAffected(); affected == 0 {
-		return ErrNotFound
+		return r.missingOrPending(ctx, postID)
 	}
 	return nil
 }
@@ -513,7 +545,7 @@ func (r *Repository) UpdateMetadata(ctx context.Context, postID int64, expectedS
 	// 避免远端与本地分别落到不同版本。失败帖还要求没有可复用的页面路径。
 	result, err := r.handle.ExecContext(ctx,
 		`UPDATE posts SET title = ?, description = ?, author_name = ?, updated_at = CURRENT_TIMESTAMP
-		 WHERE id = ? AND publish_state = ?
+		 WHERE id = ? AND pending_delete = 0 AND publish_state = ?
 		   AND (publish_state IN (?, ?)
 		        OR (publish_state = ? AND telegraph_paths IN ('[]', '')))`,
 		title, description, authorName, postID, expectedState,
@@ -525,14 +557,7 @@ func (r *Repository) UpdateMetadata(ctx context.Context, postID int64, expectedS
 		return nil
 	}
 
-	var exists int
-	if err := r.handle.QueryRowContext(ctx, `SELECT COUNT(*) FROM posts WHERE id = ?`, postID).Scan(&exists); err != nil {
-		return errors.New("更新帖子失败")
-	}
-	if exists == 0 {
-		return ErrNotFound
-	}
-	return ErrPublishBusy
+	return r.missingOrBusy(ctx, postID)
 }
 
 // PublishInfo 读取发布所需的元数据、存图列表与已保存的页面路径。
@@ -1007,13 +1032,19 @@ func (r *Repository) ResetFailedImages(ctx context.Context, postID int64) (int64
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var status string
-	err = tx.QueryRowContext(ctx, `SELECT status FROM posts WHERE id = ?`, postID).Scan(&status)
+	var (
+		status  string
+		pending int
+	)
+	err = tx.QueryRowContext(ctx, `SELECT status, pending_delete FROM posts WHERE id = ?`, postID).Scan(&status, &pending)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, ErrNotFound
 	}
 	if err != nil {
 		return 0, errors.New("读取帖子状态失败")
+	}
+	if pending == 1 {
+		return 0, ErrPendingDelete
 	}
 	if status == StatusQueued || status == StatusPublishing {
 		return 0, nil

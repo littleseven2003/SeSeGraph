@@ -101,13 +101,15 @@ type GalleryImage struct {
 // GalleryDetail 是帖子详情，包含正文、进度与图片清单。
 type GalleryDetail struct {
 	GalleryItem
-	Description  string
-	AuthorName   string
-	UploadMode   string
-	ErrorMessage string
-	PublishError string
-	Paths        []string
-	Images       []GalleryImage
+	// PendingDelete 表示图集已进入删除流程，界面应停用分享并提供重试入口。
+	PendingDelete bool
+	Description   string
+	AuthorName    string
+	UploadMode    string
+	ErrorMessage  string
+	PublishError  string
+	Paths         []string
+	Images        []GalleryImage
 }
 
 // TagCount 是标签及其关联帖子数量。
@@ -245,7 +247,7 @@ func (r *Repository) tagsByPostIDs(ctx context.Context, ids []any) (map[int64][]
 // GalleryDetail 读取单帖详情，包含图片清单与已建页面路径。
 func (r *Repository) GalleryDetail(ctx context.Context, id int64) (*GalleryDetail, error) {
 	detail := &GalleryDetail{}
-	var public, disabled int
+	var public, disabled, pending int
 	var urls, paths string
 	err := r.handle.QueryRowContext(ctx,
 		`SELECT p.id, p.title, p.description, p.author_name, p.cover_thumb_path, p.image_count,
@@ -254,13 +256,14 @@ func (r *Repository) GalleryDetail(ctx context.Context, id int64) (*GalleryDetai
 		        COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', p.published_at), ''),
 		        strftime('%Y-%m-%dT%H:%M:%SZ', p.created_at),
 		        strftime('%Y-%m-%dT%H:%M:%SZ', p.updated_at),
-		        p.views_count, COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', p.views_updated_at), '')
+		        p.views_count, COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', p.views_updated_at), ''),
+		        p.pending_delete
 		 FROM posts p WHERE p.id = ?`, id,
 	).Scan(&detail.ID, &detail.Title, &detail.Description, &detail.AuthorName, &detail.CoverThumbPath,
 		&detail.ImageCount, &detail.UploadMode, &detail.Status, &detail.ErrorMessage,
 		&detail.PublishState, &detail.PublishError, &public, &disabled, &urls, &paths,
 		&detail.PublishedAt, &detail.CreatedAt, &detail.UpdatedAt,
-		&detail.ViewsCount, &detail.ViewsUpdatedAt)
+		&detail.ViewsCount, &detail.ViewsUpdatedAt, &pending)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -269,6 +272,7 @@ func (r *Repository) GalleryDetail(ctx context.Context, id int64) (*GalleryDetai
 	}
 	detail.IsPublic = public == 1
 	detail.IsDisabled = disabled == 1
+	detail.PendingDelete = pending == 1
 	detail.TelegraphURLs = parseStringList(urls)
 	detail.Paths = parseStringList(paths)
 

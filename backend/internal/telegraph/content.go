@@ -34,6 +34,8 @@ type PageRequest struct {
 	Title      string
 	AuthorName string
 	Content    []Node
+	// ClearAuthor 表示这次编辑不携带作者信息，用于撤回页面时移除原作者。
+	ClearAuthor bool
 }
 
 // MarshalContent 返回 content 数组的 UTF-8 JSON 字节，用于体积阈值判断与请求体构造。
@@ -63,18 +65,22 @@ func (c *Client) normalize(request PageRequest) (url.Values, error) {
 		return nil, ErrContentTooLarge
 	}
 
-	author := strings.TrimSpace(request.AuthorName)
-	if author == "" {
-		author = c.authorName
-	}
-	if author == "" {
-		author = "SeSeGraph"
-	}
-
 	form := url.Values{}
 	form.Set("access_token", c.token)
 	form.Set("title", title)
-	form.Set("author_name", author)
+	if request.ClearAuthor {
+		// 撤回页面时不提交作者字段，避免回填配置作者或原作者。
+		form.Set("author_name", "")
+	} else {
+		author := strings.TrimSpace(request.AuthorName)
+		if author == "" {
+			author = c.authorName
+		}
+		if author == "" {
+			author = "SeSeGraph"
+		}
+		form.Set("author_name", author)
+	}
 	form.Set("content", string(encoded))
 	form.Set("return_content", "false")
 	return form, nil

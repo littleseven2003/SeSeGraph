@@ -50,6 +50,8 @@ export interface GalleryImage {
 
 export interface PostDetail extends GalleryItem {
   description: string
+  /** 图集正在删除时停用分享，并保留删除重试入口。 */
+  pending_delete: boolean
   author_name: string
   upload_mode: string
   error_message?: string

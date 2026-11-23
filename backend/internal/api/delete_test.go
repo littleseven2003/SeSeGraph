@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -16,9 +17,10 @@ import (
 
 // stubPageAPI 记录远端编辑调用，并可模拟撤回失败。
 type stubPageAPI struct {
-	mu    sync.Mutex
-	paths []string
-	fail  bool
+	mu       sync.Mutex
+	paths    []string
+	fail     bool
+	failPath string
 }
 
 func (s *stubPageAPI) CreatePage(context.Context, telegraph.PageRequest) (telegraph.Page, error) {
@@ -29,7 +31,7 @@ func (s *stubPageAPI) EditPage(_ context.Context, path string, _ telegraph.PageR
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.paths = append(s.paths, path)
-	if s.fail {
+	if s.fail || (s.failPath != "" && path == s.failPath) {
 		return telegraph.Page{}, errors.New("上游失败")
 	}
 	return telegraph.Page{Path: path, URL: "https://telegra.ph/" + path}, nil
@@ -45,6 +47,12 @@ func (s *stubPageAPI) setFail(fail bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.fail = fail
+}
+
+func (s *stubPageAPI) setFailPath(path string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failPath = path
 }
 
 // envWithPages 给测试环境装上可观测的远端页面客户端。
@@ -226,5 +234,80 @@ func TestDeletePostRequiresLogin(t *testing.T) {
 	postID := publishedPost(t, env)
 	if rec := env.do(t, http.MethodDelete, "/api/posts/"+strconv.FormatInt(postID, 10), "", nil); rec.Code != http.StatusUnauthorized {
 		t.Errorf("未登录删除 = %d，期望 401", rec.Code)
+	}
+}
+
+func TestSecondPageWithdrawFailureCanRetry(t *testing.T) {
+	pages := &stubPageAPI{}
+	pages.setFailPath("Page-2")
+	env := envWithPages(t, pages)
+	cookie := env.setup(t)
+
+	postID, err := env.posts.Create(context.Background(), posts.Post{Title: "多页图集", ImageCount: 2})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+	if err := env.posts.MarkPostFinished(context.Background(), postID, posts.StatusCompleted, ""); err != nil {
+		t.Fatalf("标记完成失败: %v", err)
+	}
+	if err := env.posts.RequestPublish(context.Background(), postID); err != nil {
+		t.Fatalf("请求发布失败: %v", err)
+	}
+	if err := env.posts.MarkPublished(context.Background(), postID,
+		[]string{"Page-1", "Page-2"},
+		[]string{"https://telegra.ph/Page-1", "https://telegra.ph/Page-2"}); err != nil {
+		t.Fatalf("标记发布失败: %v", err)
+	}
+	path := "/api/posts/" + strconv.FormatInt(postID, 10)
+
+	if rec := env.do(t, http.MethodDelete, path, "", cookie); rec.Code != http.StatusBadGateway {
+		t.Fatalf("第二页失败时状态 = %d，期望 502", rec.Code)
+	}
+	detail := env.do(t, http.MethodGet, path, "", cookie)
+	var body map[string]any
+	if err := json.Unmarshal(detail.Body.Bytes(), &body); err != nil {
+		t.Fatalf("详情不是 JSON: %v", err)
+	}
+	if body["pending_delete"] != true {
+		t.Errorf("失败后详情应标记待删除: %v", body["pending_delete"])
+	}
+
+	pages.setFailPath("")
+	if rec := env.do(t, http.MethodDelete, path, "", cookie); rec.Code != http.StatusNoContent {
+		t.Fatalf("重试状态 = %d，期望 204，响应: %s", rec.Code, rec.Body.String())
+	}
+	calls := pages.calls()
+	if len(calls) != 4 || calls[2] != "Page-1" || calls[3] != "Page-2" {
+		t.Errorf("重试应重新处理全部页面，调用 = %v", calls)
+	}
+}
+
+func TestPendingDeleteBlocksImageRetry(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	cookie := env.setup(t)
+	postID, err := env.posts.Create(context.Background(), posts.Post{Title: "待删除", ImageCount: 1})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+	shortCode, err := env.posts.AttachImage(context.Background(), posts.Image{
+		PostID: postID, SortOrder: 1, Status: posts.ImageStatusFailed, MimeType: "image/jpeg",
+	})
+	if err != nil {
+		t.Fatalf("保存图片失败: %v", err)
+	}
+	if _, err := env.handle.Exec(`UPDATE post_images SET status = ? WHERE short_code = ?`, posts.ImageStatusFailed, shortCode); err != nil {
+		t.Fatalf("写入失败状态失败: %v", err)
+	}
+	// 任务结束后保留一张失败图片，用于验证待删除期间的重试拦截。
+	if _, err := env.handle.Exec(`UPDATE posts SET status = ? WHERE id = ?`, posts.StatusCompleted, postID); err != nil {
+		t.Fatalf("写入完成状态失败: %v", err)
+	}
+	if _, err := env.posts.MarkPendingDelete(context.Background(), postID); err != nil {
+		t.Fatalf("标记删除失败: %v", err)
+	}
+
+	rec := env.do(t, http.MethodPost, "/api/posts/"+strconv.FormatInt(postID, 10)+"/retry", "", cookie)
+	if rec.Code != http.StatusConflict {
+		t.Errorf("待删除时图片重试 = %d，期望 409", rec.Code)
 	}
 }

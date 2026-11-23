@@ -61,6 +61,8 @@ type galleryDetailResponse struct {
 	PublishError string                 `json:"publish_error,omitempty"`
 	Paths        []string               `json:"telegraph_paths"`
 	Images       []galleryImageResponse `json:"images"`
+	// PendingDelete 表示图集正在删除，前端据此停用分享并保留重试入口。
+	PendingDelete bool `json:"pending_delete"`
 	// PublicBaseURL 是拼接单图外链用的公开地址，未配置或结构不合法时为空。
 	PublicBaseURL string `json:"public_base_url"`
 }
@@ -244,6 +246,7 @@ func postDetailHandler(deps Deps) gin.HandlerFunc {
 			PublishError:        detail.PublishError,
 			Paths:               paths,
 			Images:              images,
+			PendingDelete:       detail.PendingDelete,
 			PublicBaseURL:       publicBaseURL(deps.PublicURL),
 		})
 	}

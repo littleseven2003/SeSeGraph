@@ -25,10 +25,6 @@ func progressHandler(deps Deps) gin.HandlerFunc {
 			return
 		}
 
-		if rejectPendingDelete(c, deps, postID) {
-			return
-		}
-
 		post, err := deps.Posts.Get(c.Request.Context(), postID)
 		if errors.Is(err, posts.ErrNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "帖子不存在"})
@@ -98,8 +94,15 @@ func retryHandler(deps Deps) gin.HandlerFunc {
 			return
 		}
 
+		if rejectPendingDelete(c, deps, postID) {
+			return
+		}
+
 		retried, err := deps.Posts.ResetFailedImages(c.Request.Context(), postID)
 		switch {
+		case errors.Is(err, posts.ErrPendingDelete):
+			c.JSON(http.StatusConflict, gin.H{"error": "帖子正在删除，无法继续操作"})
+			return
 		case errors.Is(err, posts.ErrNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"error": "帖子不存在"})
 			return
