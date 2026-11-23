@@ -344,12 +344,13 @@ test('流量与备份改动进入补丁', () => {
 
 test('流量与备份受环境变量托管时不提交', () => {
   const current = view({
-    env_managed: ['traffic.alert_bytes', 'traffic.limit_bytes', 'backup.time', 'backup.keep'],
+    env_managed: ['traffic.alert_bytes', 'traffic.limit_bytes', 'backup.enabled', 'backup.time', 'backup.keep'],
   })
   const patch = changedPatch(current, {
     ...baseForm,
     alertGB: '2',
     limitGB: '5',
+    backupEnabled: true,
     backupTime: '04:30',
     backupKeep: '10',
   })

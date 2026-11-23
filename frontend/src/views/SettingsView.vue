@@ -38,6 +38,7 @@ import {
   FIELD_UPLOAD_MODE,
   FIELD_TRAFFIC_ALERT,
   FIELD_TRAFFIC_LIMIT,
+  FIELD_BACKUP_ENABLED,
   FIELD_BACKUP_TIME,
   FIELD_BACKUP_KEEP,
   backupTimeInvalid,
@@ -1055,10 +1056,13 @@ onBeforeUnmount(() => {
                         <input
                           v-model="form.backupEnabled"
                           type="checkbox"
-                          :disabled="saving"
+                          :disabled="saving || managed(FIELD_BACKUP_ENABLED)"
                           class="h-5 w-5 shrink-0 accent-accent"
                         />
-                        <span>启用每日自动备份</span>
+                        <span class="min-w-0">
+                          启用每日自动备份
+                          <span v-if="managed(FIELD_BACKUP_ENABLED)" class="mt-0.5 block text-xs text-muted">{{ ENV_MANAGED_HINT }}</span>
+                        </span>
                       </label>
                       <label class="block">
                         <span class="text-xs font-medium text-muted">每日时刻</span>

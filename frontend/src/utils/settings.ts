@@ -24,6 +24,7 @@ export const FIELD_TELEGRAPH_PATH_MODE = 'telegraph.path_mode'
 export const FIELD_UPLOAD_MODE = 'post.upload_mode'
 export const FIELD_TRAFFIC_ALERT = 'traffic.alert_bytes'
 export const FIELD_TRAFFIC_LIMIT = 'traffic.limit_bytes'
+export const FIELD_BACKUP_ENABLED = 'backup.enabled'
 export const FIELD_BACKUP_TIME = 'backup.time'
 export const FIELD_BACKUP_KEEP = 'backup.keep'
 
@@ -260,7 +261,7 @@ export function changedPatch(view: SettingsView, form: SettingsForm): SettingsPa
   ) {
     patch.backup = { ...(patch.backup ?? {}), keep }
   }
-  if (form.backupEnabled !== view.backup.enabled) {
+  if (form.backupEnabled !== view.backup.enabled && !view.env_managed.includes(FIELD_BACKUP_ENABLED)) {
     patch.backup = { ...(patch.backup ?? {}), enabled: form.backupEnabled }
   }
   if (
