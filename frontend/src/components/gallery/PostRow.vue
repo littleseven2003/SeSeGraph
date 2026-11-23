@@ -69,6 +69,7 @@ const copyLabel = computed(() => {
 })
 </script>
 
+
 <template>
   <div
     class="-mx-4 grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 px-4 py-3.5 transition-colors hover:bg-canvas/60 md:grid-cols-[4.5rem_minmax(13rem,1.2fr)_minmax(11rem,1.4fr)_5.25rem_6.75rem] md:items-center md:gap-4 lg:grid-cols-[5rem_minmax(15rem,1.15fr)_minmax(16rem,1.5fr)_5.25rem_6.75rem]"
@@ -162,25 +163,6 @@ const copyLabel = computed(() => {
             <rect x="9" y="9" width="11" height="11" rx="2" />
             <path d="M15 5.5A2.5 2.5 0 0 0 12.5 3H6a2 2 0 0 0-2 2v7.5A2.5 2.5 0 0 0 6.5 15" stroke-linecap="round" />
           </template>
-          <path v-else-if="copyState === 'copied'" d="M5 12.5l4.5 4.5L19 7" stroke-linecap="round" stroke-linejoin="round" />
-          <template v-else>
-            <path d="M12 8v5" stroke-linecap="round" />
-            <circle cx="12" cy="16.5" r="0.9" fill="currentColor" stroke="none" />
-          </template>
-        </svg>
-      </button>
-
-      <button
-        type="button"
-        class="inline-flex h-11 items-center rounded-full bg-ink px-3.5 text-xs font-medium text-white transition hover:bg-ink/90"
-        @click="onRowOpen"
-      >
-        打开
-      </button>
-    </div>
-    <span role="status" aria-live="polite" class="sr-only">{{ copyState === 'idle' ? '' : copyLabel }}</span>
-  </div>
-</template>
           <path v-else-if="copyState === 'copied'" d="M5 12.5l4.5 4.5L19 7" stroke-linecap="round" stroke-linejoin="round" />
           <template v-else>
             <path d="M12 8v5" stroke-linecap="round" />
