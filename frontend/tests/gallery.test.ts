@@ -29,7 +29,6 @@ import {
   updateFailureText,
   validateMetadata,
   readBlurPreference,
-  COVER_REMASK_MS,
   readViewPreference,
   saveViewPreference,
   stepIndex,
@@ -239,20 +238,21 @@ test('按激活事件区分鼠标、触屏与键盘三种回遮路径', () => {
   )
   assert.ok(source.includes('resolveRevealTrigger(event)'), '回遮路径按实际激活事件选择')
   assert.ok(source.includes('scheduleShortRemask'), '键盘与触屏走短时回遮')
-  assert.ok(source.includes('scheduleLeaveRemask'), '鼠标走离开后的 2 秒回遮')
+  assert.ok(source.includes('pointerRevealed'), '鼠标揭开单独标记，离开即回遮')
 })
 
-test('只有指针直接点封面才走离开计时，行内「打开」保留短时回遮', () => {
+test('只有指针直接点封面才由离开回遮，行内「打开」保留短时回遮', () => {
   const row = readFileSync(new URL('../src/components/gallery/PostRow.vue', import.meta.url), 'utf8')
   assert.ok(row.includes('@click="onCoverOpen"'), '缩略图点击单独处理')
   assert.ok(row.includes('@click="onRowOpen"'), '行内打开按钮单独处理')
   const start = row.indexOf('function onRowOpen')
   const rowHandler = row.slice(start, row.indexOf('}', start))
-  assert.equal(rowHandler.includes('fromCover'), false, '行内按钮不交给离开计时')
+  assert.equal(rowHandler.includes('fromCover'), false, '行内按钮不交给离开回遮')
 
   const hook = readFileSync(new URL('../src/components/gallery/useCoverReveal.ts', import.meta.url), 'utf8')
-  assert.ok(hook.includes('options.fromCover === true'), '离开计时只由封面点按触发')
+  assert.ok(hook.includes('options.fromCover === true'), '离开回遮只由封面点按触发')
   assert.ok(hook.includes('scheduleShortRemask()'), '行内按钮走短时回遮')
+  assert.equal(hook.includes('@mouseenter'), false, '封面不再需要移入取消计时')
 })
 
 test('少量标签时「全部标签」入口常驻，Esc 有焦点可归还', () => {
@@ -262,12 +262,16 @@ test('少量标签时「全部标签」入口常驻，Esc 有焦点可归还', (
   assert.ok(source.includes('trigger.value?.focus()'), '关闭面板归还焦点')
 })
 
-test('解锁封面离开 2 秒后自动回遮', () => {
-  assert.equal(COVER_REMASK_MS, 2000)
-  const source = readFileSync(new URL('../src/components/gallery/useCoverReveal.ts', import.meta.url), 'utf8')
-  assert.ok(source.includes('onCoverLeave'), '封面离开要启动回遮计时')
-  assert.ok(source.includes('onCoverEnter'), '移回封面要取消回遮计时')
-  assert.ok(source.includes('clearLeaveTimer'), '卸载与手动复位要清理计时器')
+test('鼠标离开封面立即回遮，遮罩切换不做渐变', () => {
+  const hook = readFileSync(new URL('../src/components/gallery/useCoverReveal.ts', import.meta.url), 'utf8')
+  assert.ok(hook.includes('function onCoverLeave'), '封面离开事件仍在')
+  assert.ok(hook.includes('pointerRevealed = false'), '离开后清掉指针揭开标记')
+  assert.equal(hook.includes('COVER_REMASK_MS'), false, '不再保留延迟回遮')
+  assert.equal(hook.includes('scheduleLeaveRemask'), false, '不再有延迟计时')
+
+  const card = readFileSync(new URL('../src/components/gallery/PostCard.vue', import.meta.url), 'utf8')
+  assert.ok(card.includes('transition-[transform]'), '封面只对缩放做过渡')
+  assert.equal(/:hover\) img/.test(card), false)
 })
 
 test('主页布局偏好默认画廊并持久化', () => {

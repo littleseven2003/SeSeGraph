@@ -15,7 +15,7 @@ import { useCoverReveal } from './useCoverReveal.ts'
 const props = defineProps<{ item: GalleryItem; blurred: boolean }>()
 const emit = defineEmits<{ open: [id: number] }>()
 
-const { showBlur, activate, onCoverEnter, onCoverLeave } = useCoverReveal(() => props.blurred)
+const { showBlur, activate, onCoverLeave } = useCoverReveal(() => props.blurred)
 
 // 缩略图上的点击按鼠标离开计时回遮；行内「打开」只做短时揭开，不改变已有计时。
 function onCoverOpen(event: MouseEvent): void {
@@ -77,7 +77,6 @@ const copyLabel = computed(() => {
       :aria-label="`打开《${item.title}》详情`"
       data-reveal="cover"
       @click="onCoverOpen"
-      @mouseenter="onCoverEnter"
       @mouseleave="onCoverLeave"
     >
       <img

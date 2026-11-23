@@ -22,7 +22,7 @@ const current = computed<GalleryItem | null>(() => props.items[index.value] ?? n
 const position = computed(() => String(index.value + 1).padStart(2, '0'))
 const total = computed(() => String(props.items.length).padStart(2, '0'))
 
-const { showBlur, revealed, activate, remask, onCoverEnter, onCoverLeave } = useCoverReveal(() => props.blurred)
+const { showBlur, revealed, activate, remask, onCoverLeave } = useCoverReveal(() => props.blurred)
 
 const status = computed(() =>
   current.value === null ? null : statusLabel(current.value.status, current.value.publish_state, current.value.disabled),
@@ -157,8 +157,7 @@ onBeforeUnmount(() => {
             :aria-label="`打开《${current.title}》详情`"
             data-reveal="cover"
             @click="onCover"
-            @mouseenter="onCoverEnter"
-            @mouseleave="onCoverLeave"
+                @mouseleave="onCoverLeave"
           >
             <img
               v-if="current.cover_url !== ''"

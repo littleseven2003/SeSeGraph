@@ -15,7 +15,7 @@ import { useCoverReveal } from './useCoverReveal.ts'
 const props = defineProps<{ item: GalleryItem; blurred: boolean }>()
 const emit = defineEmits<{ open: [id: number] }>()
 
-const { showBlur, activate, remask, onCoverEnter, onCoverLeave } = useCoverReveal(() => props.blurred)
+const { showBlur, activate, remask, onCoverLeave } = useCoverReveal(() => props.blurred)
 
 function onOpen(event: MouseEvent): void {
   activate(() => emit('open', props.item.id), event, { fromCover: true })
@@ -80,14 +80,13 @@ const copyLabel = computed(() => {
       :aria-label="`打开《${item.title}》详情`"
       data-reveal="cover"
       @click="onOpen"
-      @mouseenter="onCoverEnter"
       @mouseleave="onCoverLeave"
     >
       <img
         v-if="item.cover_url !== ''"
         :src="item.cover_url"
         :alt="item.title + ' 的封面'"
-        class="h-full w-full object-cover transition duration-300 motion-safe:group-hover:scale-[1.03]"
+        class="h-full w-full object-cover transition-[transform] duration-300 motion-safe:group-hover:scale-[1.03]"
         loading="lazy"
       />
       <span v-else class="flex h-full w-full items-center justify-center text-muted" aria-hidden="true">

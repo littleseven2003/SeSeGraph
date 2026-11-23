@@ -3,9 +3,6 @@
 /** 触屏点按临时去模糊的时长，单位毫秒。 */
 export const TOUCH_REVEAL_MS = 2500
 
-/** 鼠标离开已解锁封面后自动重新遮罩的等待时间。 */
-export const COVER_REMASK_MS = 2000
-
 /** 模糊开关的本地存储键。 */
 export const BLUR_STORAGE_KEY = 'sesegraph.gallery.blur'
 
