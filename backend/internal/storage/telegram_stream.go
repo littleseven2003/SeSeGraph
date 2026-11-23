@@ -299,8 +299,13 @@ func (t *Telegram) OpenStreamRange(ctx context.Context, fileID string, r ByteRan
 				io.Closer
 			}{io.LimitReader(response.Body, r.Length), response.Body}
 		}
-		// 整段回退仍标记为整段响应，网关据此写 200。
-		return Stream{Body: body, ContentType: streamContentType(response, path), Size: size, Start: -1, End: -1}, nil
+		// 已跳过前缀并限长，按实际区间返回，网关据此写 206。
+		start := r.Start
+		end := size - 1
+		if r.Length >= 0 && start+r.Length-1 < end {
+			end = start + r.Length - 1
+		}
+		return Stream{Body: body, ContentType: streamContentType(response, path), Size: size, Start: start, End: end}, nil
 	default:
 		_ = response.Body.Close()
 		return Stream{}, ErrUpstream

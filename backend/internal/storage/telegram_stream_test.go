@@ -538,8 +538,8 @@ func TestOpenStreamRangeFallsBackWhenUpstreamIgnoresRange(t *testing.T) {
 	if string(got) != "3456" {
 		t.Errorf("回退正文 = %q，期望跳过前缀并限长", got)
 	}
-	if stream.Start != -1 || stream.End != -1 {
-		t.Errorf("回退响应应标记为整段: start=%d end=%d", stream.Start, stream.End)
+	if stream.Start != 3 || stream.End != 6 || stream.Size != 10 {
+		t.Errorf("回退响应区间不符: start=%d end=%d size=%d", stream.Start, stream.End, stream.Size)
 	}
 }
 
