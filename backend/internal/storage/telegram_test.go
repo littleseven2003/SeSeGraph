@@ -44,6 +44,7 @@ type fakeAPI struct {
 	method   string
 	chatID   string
 	fileName string
+	fileType string
 	content  []byte
 	caption  string
 }
@@ -72,6 +73,7 @@ func newFakeAPI(t *testing.T) *fakeAPI {
 			body, _ := io.ReadAll(part)
 			if part.FileName() != "" {
 				api.fileName = part.FileName()
+				api.fileType = part.Header.Get("Content-Type")
 				api.content = body
 			} else {
 				switch part.FormName() {
@@ -733,7 +735,7 @@ func TestTelegramSendVideo(t *testing.T) {
 
 	content := []byte("fake-mp4-payload")
 	result, err := provider.Upload(context.Background(), UploadRequest{
-		FileName: "clip.mp4",
+		FileName: "upload-1.part",
 		MIMEType: "video/mp4",
 		Mode:     ModeVideo,
 		Size:     int64(len(content)),
@@ -745,8 +747,11 @@ func TestTelegramSendVideo(t *testing.T) {
 	if api.method != "sendVideo" {
 		t.Errorf("请求方法 = %q，期望 sendVideo", api.method)
 	}
-	if api.fileName != "clip.mp4" || string(api.content) != string(content) {
-		t.Errorf("文件字段不符: name=%q size=%d", api.fileName, len(api.content))
+	if api.fileName != "upload-1.mp4" || api.fileType != "video/mp4" {
+		t.Errorf("视频 multipart 不符: name=%q type=%q", api.fileName, api.fileType)
+	}
+	if string(api.content) != string(content) {
+		t.Errorf("视频内容不符: size=%d", len(api.content))
 	}
 	if result.FileID != "video-file-id" || result.MIMEType != "video/mp4" || result.MessageID != 33 {
 		t.Errorf("返回结果不符: %+v", result)
