@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { clearTask, loadTask, matchSnapshotFiles, saveTask, type StorageLike } from '../src/utils/task-store.ts'
+import { clearTask, loadTask, loadTaskFor, matchSnapshotFiles, saveTask, type StorageLike } from '../src/utils/task-store.ts'
 
 function memoryStorage(initial: Record<string, string> = {}): StorageLike & { data: Record<string, string> } {
   const data = { ...initial }
@@ -109,4 +109,57 @@ test('本次选择含重复文件时拒绝', () => {
   const matched = matchSnapshotFiles(files, [files[0], files[1], files[1]])
   assert.ok('error' in matched)
   assert.match(matched.error, /重复/)
+})
+
+const snapshotA = {
+  postId: 1,
+  imageCount: 2,
+  files: [
+    { name: 'a1.jpg', size: 10 },
+    { name: 'a2.jpg', size: 20 },
+  ],
+  createdAt: 1,
+}
+
+const snapshotB = {
+  postId: 2,
+  imageCount: 2,
+  files: [
+    { name: 'b1.jpg', size: 30 },
+    { name: 'b2.jpg', size: 40 },
+  ],
+  createdAt: 2,
+}
+
+test('按任务编号读取快照，不被其他任务的单键快照覆盖', () => {
+  const storage = memoryStorage()
+  saveTask(storage, snapshotA)
+  saveTask(storage, snapshotB)
+  assert.equal(loadTask(storage)?.postId, 2)
+  assert.deepEqual(loadTaskFor(storage, 1), snapshotA)
+  assert.deepEqual(loadTaskFor(storage, 2), snapshotB)
+  assert.equal(loadTaskFor(storage, 3), null)
+})
+
+test('兼容旧的单键快照，但只在编号一致时采用', () => {
+  const storage = memoryStorage({
+    'sesegraph.workbench.task': JSON.stringify(snapshotB),
+  })
+  assert.deepEqual(loadTaskFor(storage, 2), snapshotB)
+  assert.equal(loadTaskFor(storage, 1), null)
+})
+
+test('清除指定任务时同时移除独立槽位与旧单键', () => {
+  const storage = memoryStorage()
+  saveTask(storage, snapshotA)
+  saveTask(storage, snapshotB)
+  clearTask(storage, 2)
+  assert.equal(loadTask(storage), null)
+  assert.deepEqual(loadTaskFor(storage, 1), snapshotA)
+  assert.equal(loadTaskFor(storage, 2), null)
+})
+
+test('同数量但不同文件被拒绝', () => {
+  const result = matchSnapshotFiles(snapshotB.files, snapshotA.files)
+  assert.ok('error' in result)
 })

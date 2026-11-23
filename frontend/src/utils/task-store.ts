@@ -1,6 +1,28 @@
 // 断点续传用的本地快照：任务编号与有序文件清单，关闭网页后仍可对照续传。
 const STORAGE_KEY = 'sesegraph.workbench.task'
 
+// taskKey 按任务编号返回独立槽位，避免多个任务互相覆盖。
+function taskKey(postId: number): string {
+  return `${STORAGE_KEY}.${postId}`
+}
+
+function readSnapshot(storage: StorageLike | null, key: string): TaskSnapshot | null {
+  if (!storage) return null
+  let raw: string | null = null
+  try {
+    raw = storage.getItem(key)
+  } catch {
+    return null
+  }
+  if (!raw) return null
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return isSnapshot(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
 // 快照中的一个文件，用名称与体积确认身份。
 export interface SnapshotFile {
   name: string
@@ -85,22 +107,18 @@ export function matchSnapshotFiles(
   return { order }
 }
 
-// loadTask 读取快照，内容不合法时返回 null。
+// loadTask 读取最近一次任务的快照，内容不合法时返回 null。
 export function loadTask(storage: StorageLike | null): TaskSnapshot | null {
-  if (!storage) return null
-  let raw: string | null = null
-  try {
-    raw = storage.getItem(STORAGE_KEY)
-  } catch {
-    return null
-  }
-  if (!raw) return null
-  try {
-    const parsed: unknown = JSON.parse(raw)
-    return isSnapshot(parsed) ? parsed : null
-  } catch {
-    return null
-  }
+  return readSnapshot(storage, STORAGE_KEY)
+}
+
+// loadTaskFor 按任务编号读取可信快照：优先独立槽位，兼容旧的单键记录。
+export function loadTaskFor(storage: StorageLike | null, postId: number): TaskSnapshot | null {
+  if (!Number.isInteger(postId) || postId <= 0) return null
+  const own = readSnapshot(storage, taskKey(postId))
+  if (own !== null && own.postId === postId) return own
+  const legacy = loadTask(storage)
+  return legacy !== null && legacy.postId === postId ? legacy : null
 }
 
 // saveTask 写入快照，存储不可用时静默跳过。
@@ -108,16 +126,18 @@ export function saveTask(storage: StorageLike | null, snapshot: TaskSnapshot): v
   if (!storage) return
   try {
     storage.setItem(STORAGE_KEY, JSON.stringify(snapshot))
+    storage.setItem(taskKey(snapshot.postId), JSON.stringify(snapshot))
   } catch {
     // 隐私模式下写入可能被拒绝，此时仅失去续传提示
   }
 }
 
-// clearTask 清除快照。
-export function clearTask(storage: StorageLike | null): void {
+// clearTask 清除快照；给出任务编号时同时清除独立槽位。
+export function clearTask(storage: StorageLike | null, postId?: number): void {
   if (!storage) return
   try {
     storage.removeItem(STORAGE_KEY)
+    if (postId !== undefined && postId > 0) storage.removeItem(taskKey(postId))
   } catch {
     // 忽略清理失败
   }

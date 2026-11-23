@@ -54,6 +54,7 @@ import {
   browserStorage,
   clearTask,
   loadTask,
+  loadTaskFor,
   matchSnapshotFiles,
   saveTask,
   type SnapshotFile,
@@ -115,6 +116,9 @@ const metaSource = ref('')
 const coverPreview = ref('')
 const coverDataUrl = ref('')
 const coverBytes = ref(0)
+// resumeUnsafe 表示当前是按任务编号打开、但本机没有该任务的可信文件清单。
+// 此时只允许查看进度与控制，禁止选图、换序与补传。
+const resumeUnsafe = ref(false)
 // uploadAbort 结束本轮在途上传：暂停或停止任务时立即取消。
 let uploadAbort: AbortController | null = null
 const draft = ref<PostMeta>({ title: '', description: '', tags: [], author: '' })
@@ -153,9 +157,10 @@ const busy = computed(() => discardBlocked(phase.value) || submitting.value)
 const finished = computed(() => serverProgress.value?.status === 'completed')
 // resuming 表示当前选中的文件与上次任务完全一致，可以直接补传。
 const resuming = computed(() => {
+  if (resumeUnsafe.value) return false
   if (postId.value > 0) {
     const current = snapshot.value
-    if (!current) return true
+    if (!current) return false
     const local: SnapshotFile[] = snapshotFiles()
     return !('error' in matchSnapshotFiles(current.files, local))
   }
@@ -165,7 +170,9 @@ const resuming = computed(() => {
   return !('error' in matchSnapshotFiles(saved.files, local))
 })
 // 续传时沿用旧任务元数据，文件与任务不匹配时解锁，允许重新选择或放弃。
-const locked = computed(() => busy.value || (postId.value > 0 && tiles.value.length > 0 && resuming.value))
+const locked = computed(
+  () => resumeUnsafe.value || busy.value || (postId.value > 0 && tiles.value.length > 0 && resuming.value),
+)
 // 封面只跟压缩/建任务阶段互斥；上传开始后仍可更换封面。
 const coverLocked = computed(() => submitting.value && phase.value !== 'uploading')
 const viewingTask = computed(() => snapshot.value !== null && tiles.value.length === 0)
@@ -202,7 +209,10 @@ onMounted(() => {
 // bootstrap 先把设置与续传进度读完再开放文件入口，
 // 避免用户先拖入 ZIP 或先重选原图时用到还没确定的规则。
 async function bootstrap(): Promise<void> {
-  const saved = loadTask(storage)
+  const requested = Number(new URLSearchParams(window.location.search).get('resume') ?? '')
+  const targetID = Number.isInteger(requested) && requested > 0 ? requested : 0
+  // 路由指定了任务编号时只信任同编号的快照，避免把别的任务当成续传目标。
+  const saved = targetID > 0 ? loadTaskFor(storage, targetID) : loadTask(storage)
   if (saved) snapshot.value = saved
   const init = await loadWorkbenchInitialization({
     loadSettings: fetchSettings,
@@ -222,24 +232,23 @@ async function bootstrap(): Promise<void> {
     hydrate(saved, init.progress)
   } else if (saved) {
     // 续传任务已不存在（例如数据目录被清空）时丢弃快照。
-    clearTask(storage)
+    clearTask(storage, saved.postId)
     snapshot.value = null
     resetToDefaultMode()
   }
-  // 从任务列表直达：没有本地快照时按任务编号加载服务端进度，等用户重选原文件。
-  if (saved === null && postId.value === 0) {
-    const resumeID = Number(new URLSearchParams(window.location.search).get('resume') ?? '')
-    if (Number.isInteger(resumeID) && resumeID > 0) {
-      try {
-        const progress = await fetchProgress(resumeID)
-        postId.value = progress.id
-        serverProgress.value = progress
-        applyServerProgress(progress)
-        phase.value = progress.status === 'uploading' ? 'idle' : progress.status === 'failed' ? 'failed' : 'queued'
-        message.value = `已载入任务 #${progress.id}，请重新选择同一批文件后继续上传`
-      } catch {
-        message.value = '未能读取该任务，请回任务列表重试'
-      }
+
+  // 从任务列表直达但本机没有该任务清单：只查看进度与控制，禁止补传。
+  if (saved === null && targetID > 0) {
+    try {
+      const progress = await fetchProgress(targetID)
+      postId.value = progress.id
+      serverProgress.value = progress
+      applyServerProgress(progress)
+      phase.value = progress.status === 'uploading' ? 'idle' : progress.status === 'failed' ? 'failed' : 'queued'
+      resumeUnsafe.value = true
+      message.value = `任务 #${progress.id} 已载入。此设备没有该任务的文件清单，只能查看进度和控制；请在原设备续传，或放弃该任务后重新建任务。`
+    } catch {
+      message.value = '未能读取该任务，请回任务列表重试'
     }
   }
   ready.value = true
@@ -837,7 +846,7 @@ function resetProgress(): void {
   serverProgress.value = null
   message.value = ''
   stopPolling()
-  clearTask(storage)
+  clearTask(storage, snapshot.value?.postId)
 }
 
 // discardSnapshot 放弃上次任务的续传入口，允许直接开新任务。
@@ -847,7 +856,7 @@ function discardSnapshot(): void {
   if (!canLeaveResume(ready.value, phase.value)) return
   const abandoned = snapshot.value?.postId ?? postId.value
   snapshot.value = null
-  clearTask(storage)
+  clearTask(storage, abandoned)
   stopPolling()
   postId.value = 0
   phase.value = 'idle'
@@ -951,6 +960,10 @@ async function publish(): Promise<void> {
     return
   }
 
+  if (postId.value > 0 && snapshot.value === null) {
+    pushError('当前任务没有可信的本地文件清单，无法安全补传；请在原设备续传')
+    return
+  }
   if (serverProgress.value !== null && serverProgress.value.control_state !== 'running') {
     pushError(serverProgress.value.control_state === 'stopped' ? '任务已停止，不能再继续上传' : '任务已暂停，请先继续任务')
     return
