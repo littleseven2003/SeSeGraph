@@ -151,7 +151,7 @@ const locked = computed(() => busy.value || (postId.value > 0 && tiles.value.len
 const viewingTask = computed(() => snapshot.value !== null && tiles.value.length === 0)
 const phaseText = computed(() => {
   if (serverProgress.value?.status === 'completed') {
-    return '存图完成，图片已进入频道，可以关闭网页'
+    return '已存入频道，可以关闭网页'
   }
   if (serverProgress.value?.status === 'failed') {
     return '部分图片存图失败，可在下方重试'
@@ -227,7 +227,7 @@ function hydrate(saved: TaskSnapshot, progress: ServerProgress): void {
     startPolling(saved.postId)
   }
   if (progress.status === 'completed') {
-    message.value = `任务 #${saved.postId} 已存图完成`
+    message.value = `任务 #${saved.postId} 已存入频道`
   }
 }
 
@@ -653,7 +653,7 @@ function stopPolling(): void {
   }
 }
 
-// 用服务端状态刷新图格标记，已存图与已落盘都视为完成。
+// 用服务端状态刷新图格标记，已存入频道与已传至服务器都视为完成。
 function applyServerProgress(progress: ServerProgress): void {
   serverProgress.value = progress
   const next: Record<number, UploadStatus> = { ...statuses.value }
@@ -683,7 +683,7 @@ async function refreshProgress(id: number): Promise<void> {
       } else if (progress.publish_state === 'failed') {
         message.value = 'Telegraph 发布失败，可重新发布'
       } else if (progress.status === 'completed') {
-        message.value = '存图完成，图片已进入频道'
+        message.value = '已存入频道'
       } else if (progress.status === 'failed') {
         message.value = '部分图片存图失败，可以点击重试'
       }
@@ -1100,7 +1100,7 @@ onBeforeUnmount(() => {
                     :disabled="busy || phase === 'queued' || finished"
                     @click="publish"
                   >
-                    {{ busy ? '正在上传…' : finished ? '存图完成' : serverProgress?.status === 'uploading' ? '继续上传' : '提交存图' }}
+                    {{ busy ? '正在上传…' : finished ? '已存入频道' : serverProgress?.status === 'uploading' ? '继续上传' : '提交存图' }}
                   </button>
                   <button
                     v-if="finished"
@@ -1155,7 +1155,7 @@ onBeforeUnmount(() => {
               :disabled="busy || phase === 'queued' || finished"
               @click="publish"
             >
-              {{ busy ? '正在上传…' : finished ? '存图完成' : serverProgress?.status === 'uploading' ? '继续上传' : '提交存图' }}
+              {{ busy ? '正在上传…' : finished ? '已存入频道' : serverProgress?.status === 'uploading' ? '继续上传' : '提交存图' }}
             </button>
           </div>
         </div>

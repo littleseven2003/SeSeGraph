@@ -74,17 +74,17 @@ export function statusLabel(status: string, publishState: string, disabled = fal
   if (disabled) return { label: '已撤回', tone: 'error' }
   if (publishState === 'published') return { label: '已发布', tone: 'ok' }
   if (publishState === 'failed') return { label: '发布失败', tone: 'error' }
-  if (publishState === 'publishing') return { label: '发布中', tone: 'progress' }
+  if (publishState === 'publishing') return { label: '正在发布', tone: 'progress' }
   if (publishState === 'pending') return { label: '待发布', tone: 'progress' }
   switch (status) {
     case 'uploading':
-      return { label: '上传中', tone: 'progress' }
+      return { label: '正在传至服务器', tone: 'progress' }
     case 'queued':
-      return { label: '排队中', tone: 'progress' }
+      return { label: '排队存入频道', tone: 'progress' }
     case 'publishing':
-      return { label: '存图中', tone: 'progress' }
+      return { label: '正在存入频道', tone: 'progress' }
     case 'failed':
-      return { label: '存图失败', tone: 'error' }
+      return { label: '部分存图失败', tone: 'error' }
     case 'completed':
       return { label: '待发布', tone: 'idle' }
     default:

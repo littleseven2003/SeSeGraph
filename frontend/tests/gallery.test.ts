@@ -66,10 +66,10 @@ test('statusLabel 撤回优先且覆盖发布各态', () => {
   assert.deepEqual(statusLabel('completed', 'published'), { label: '已发布', tone: 'ok' })
   assert.deepEqual(statusLabel('completed', 'failed'), { label: '发布失败', tone: 'error' })
   assert.deepEqual(statusLabel('completed', 'pending'), { label: '待发布', tone: 'progress' })
-  assert.deepEqual(statusLabel('publishing', 'idle'), { label: '存图中', tone: 'progress' })
+  assert.deepEqual(statusLabel('publishing', 'idle'), { label: '正在存入频道', tone: 'progress' })
   assert.deepEqual(statusLabel('completed', 'idle'), { label: '待发布', tone: 'idle' })
-  assert.deepEqual(statusLabel('failed', 'idle'), { label: '存图失败', tone: 'error' })
-  assert.deepEqual(statusLabel('uploading', 'idle'), { label: '上传中', tone: 'progress' })
+  assert.deepEqual(statusLabel('failed', 'idle'), { label: '部分存图失败', tone: 'error' })
+  assert.deepEqual(statusLabel('uploading', 'idle'), { label: '正在传至服务器', tone: 'progress' })
 })
 
 test('renderShareText 按默认模板生成分享文案', () => {
