@@ -1,5 +1,6 @@
 # 只用 Compose 启动应用本体，接入宿主机已有的 Nginx / Caddy / 宝塔面板
 # 用法：docker compose -f docker-compose.standalone.yml up -d
+# 默认拉取已发布镜像，可用 SESEGRAPH_VERSION 或 SESEGRAPH_IMAGE 固定版本。
 # 反向代理指向 http://127.0.0.1:8080，并保持流式响应不缓冲。
 services:
   # 首次部署时宿主目录由 Docker 建成 root 所有，应用容器以 uid 1000 运行会写不进去。
@@ -12,12 +13,7 @@ services:
       - ./data:/app/data
 
   sesegraph:
-    build:
-      context: .
-      args:
-        VERSION: ${VERSION:-dev}
-        COMMIT: ${COMMIT:-unknown}
-    image: sesegraph:local
+    image: ${SESEGRAPH_IMAGE:-ghcr.io/littleseven2003/sesegraph:${SESEGRAPH_VERSION:-latest}}
     restart: unless-stopped
     environment:
       LISTEN_ADDR: ":8080"
@@ -44,6 +40,9 @@ services:
       UPLOAD_INTERVAL_MS: ${UPLOAD_INTERVAL_MS:-1500}
       UPLOAD_MODE: ${UPLOAD_MODE:-photo}
       PROXY_CONCURRENCY: ${PROXY_CONCURRENCY:-25}
+      # 浏览量同步：默认 30 分钟一轮，手动刷新冷却 60 秒
+      VIEWS_SYNC_MINUTES: ${VIEWS_SYNC_MINUTES:-30}
+      VIEWS_COOLDOWN_SECONDS: ${VIEWS_COOLDOWN_SECONDS:-60}
       # 月度流量看护：留空或 0 表示不启用
       TRAFFIC_ALERT_GB: ${TRAFFIC_ALERT_GB:-}
       TRAFFIC_LIMIT_GB: ${TRAFFIC_LIMIT_GB:-}

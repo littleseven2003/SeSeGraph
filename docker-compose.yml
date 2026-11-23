@@ -1,5 +1,6 @@
 # SeSeGraph 一键部署：应用容器 + Caddy 自动 HTTPS
-# 准备：cp .env.example .env，至少填写 DOMAIN、ADMIN_PASSWORD；再执行 docker compose up -d
+# 准备：mkdir -p /opt/sesegraph && cd /opt/sesegraph；放入本文件与 .env、deploy/Caddyfile。
+# 默认拉取已发布镜像，可用 SESEGRAPH_VERSION 固定版本或用 SESEGRAPH_IMAGE 指定完整镜像。
 # 应用只在内部网络暴露 8080，由 Caddy 终结 TLS 并反向代理。
 services:
   # 首次部署时宿主目录由 Docker 建成 root 所有，应用容器以 uid 1000 运行会写不进去。
@@ -12,12 +13,7 @@ services:
       - ./data:/app/data
 
   sesegraph:
-    build:
-      context: .
-      args:
-        VERSION: ${VERSION:-dev}
-        COMMIT: ${COMMIT:-unknown}
-    image: sesegraph:local
+    image: ${SESEGRAPH_IMAGE:-ghcr.io/littleseven2003/sesegraph:${SESEGRAPH_VERSION:-latest}}
     restart: unless-stopped
     environment:
       LISTEN_ADDR: ":8080"
@@ -44,6 +40,9 @@ services:
       UPLOAD_INTERVAL_MS: ${UPLOAD_INTERVAL_MS:-1500}
       UPLOAD_MODE: ${UPLOAD_MODE:-photo}
       PROXY_CONCURRENCY: ${PROXY_CONCURRENCY:-25}
+      # 浏览量同步：默认 30 分钟一轮，手动刷新冷却 60 秒
+      VIEWS_SYNC_MINUTES: ${VIEWS_SYNC_MINUTES:-30}
+      VIEWS_COOLDOWN_SECONDS: ${VIEWS_COOLDOWN_SECONDS:-60}
       # 月度流量看护：留空或 0 表示不启用
       TRAFFIC_ALERT_GB: ${TRAFFIC_ALERT_GB:-}
       TRAFFIC_LIMIT_GB: ${TRAFFIC_LIMIT_GB:-}
