@@ -20,6 +20,9 @@ const (
 	routeLabelAsset = "asset"
 )
 
+// sessionVersionKey 是鉴权通过后写入上下文键，处理函数用它作为更新条件。
+const sessionVersionKey = "sesegraph.session_version"
+
 // routeOf 返回日志用的路由描述：优先路由模板，其次处理函数的标注。
 func routeOf(c *gin.Context) string {
 	if route := c.FullPath(); route != "" {
@@ -83,6 +86,7 @@ func RequireAuth(sessions *auth.Sessions, accounts *auth.Service) gin.HandlerFun
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "登录已失效，请重新登录"})
 			return
 		}
+		c.Set(sessionVersionKey, version)
 		c.Next()
 	}
 }

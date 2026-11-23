@@ -8,11 +8,12 @@ import (
 )
 
 // credentialBody 组装修改凭据的请求体。
-func credentialBody(current, username, password string) string {
+func credentialBody(current, username, password, confirm string) string {
 	payload := map[string]string{
 		"current_password": current,
 		"username":         username,
 		"new_password":     password,
+		"confirm_password": confirm,
 	}
 	raw, _ := json.Marshal(payload)
 	return string(raw)
@@ -21,7 +22,7 @@ func credentialBody(current, username, password string) string {
 func TestUpdateCredentialsRequiresLogin(t *testing.T) {
 	env := newTestEnv(t, testSetupToken)
 	rec := env.do(t, http.MethodPut, "/api/settings/admin-credentials",
-		credentialBody("correct-horse", "ops", "new-password-123"), nil)
+		credentialBody("correct-horse", "ops", "new-password-123", "new-password-123"), nil)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("未登录状态码 = %d，期望 401", rec.Code)
 	}
@@ -32,7 +33,7 @@ func TestUpdateCredentialsChangesBothAndInvalidatesSession(t *testing.T) {
 	cookie := env.setup(t)
 
 	rec := env.do(t, http.MethodPut, "/api/settings/admin-credentials",
-		credentialBody("correct-horse", "ops.admin", "new-password-123"), cookie)
+		credentialBody("correct-horse", "ops.admin", "new-password-123", "new-password-123"), cookie)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("状态码 = %d，期望 200，响应: %s", rec.Code, rec.Body.String())
 	}
@@ -84,7 +85,7 @@ func TestUpdateCredentialsWrongPasswordKeepsAccount(t *testing.T) {
 	cookie := env.setup(t)
 
 	rec := env.do(t, http.MethodPut, "/api/settings/admin-credentials",
-		credentialBody("wrong-current", "ops.admin", "new-password-123"), cookie)
+		credentialBody("wrong-current", "ops.admin", "new-password-123", "new-password-123"), cookie)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("状态码 = %d，期望 400", rec.Code)
 	}
@@ -115,9 +116,9 @@ func TestUpdateCredentialsRejectsWeakPasswordAndBadUsername(t *testing.T) {
 		field  string
 		status int
 	}{
-		{"密码过短", credentialBody("correct-horse", "", "short"), "new_password", http.StatusBadRequest},
-		{"用户名非法", credentialBody("correct-horse", "bad name", ""), "username", http.StatusBadRequest},
-		{"空更新", credentialBody("correct-horse", "", ""), "new_password", http.StatusBadRequest},
+		{"密码过短", credentialBody("correct-horse", "", "short", "short"), "new_password", http.StatusBadRequest},
+		{"用户名非法", credentialBody("correct-horse", "bad name", "", ""), "username", http.StatusBadRequest},
+		{"空更新", credentialBody("correct-horse", "", "", ""), "new_password", http.StatusBadRequest},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -142,7 +143,7 @@ func TestUpdateCredentialsUsernameOnlyKeepsPassword(t *testing.T) {
 	cookie := env.setup(t)
 
 	rec := env.do(t, http.MethodPut, "/api/settings/admin-credentials",
-		credentialBody("correct-horse", "solo.admin", ""), cookie)
+		credentialBody("correct-horse", "solo.admin", "", ""), cookie)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("状态码 = %d，期望 200，响应: %s", rec.Code, rec.Body.String())
 	}
@@ -150,5 +151,57 @@ func TestUpdateCredentialsUsernameOnlyKeepsPassword(t *testing.T) {
 		`{"username":"solo.admin","password":"correct-horse"}`, nil)
 	if login.Code != http.StatusOK {
 		t.Errorf("只改用户名后原密码应仍可登录，状态码 = %d", login.Code)
+	}
+}
+
+func TestUpdateCredentialsRejectsUnconfirmedPassword(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	cookie := env.setup(t)
+
+	cases := []struct {
+		name    string
+		confirm string
+	}{
+		{"缺少确认值", ""},
+		{"确认值不一致", "another-password"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := env.do(t, http.MethodPut, "/api/settings/admin-credentials",
+				credentialBody("correct-horse", "", "new-password-123", tc.confirm), cookie)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("状态码 = %d，期望 400，响应: %s", rec.Code, rec.Body.String())
+			}
+			var body map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("响应不是合法 JSON: %v", err)
+			}
+			fields, _ := body["fields"].([]any)
+			if len(fields) != 1 || fields[0] != "confirm_password" {
+				t.Fatalf("字段错误 = %v，期望 confirm_password", body["fields"])
+			}
+
+			// 校验失败不应改动密码、会话版本，也不应让当前 Cookie 失效。
+			var version int
+			if err := env.handle.QueryRow("SELECT session_version FROM admin_users WHERE id = 1").Scan(&version); err != nil {
+				t.Fatalf("读取会话版本失败: %v", err)
+			}
+			if version != 0 {
+				t.Errorf("会话版本 = %d，期望保持 0", version)
+			}
+			status := env.do(t, http.MethodGet, "/api/auth/status", "", cookie)
+			var state map[string]any
+			if err := json.Unmarshal(status.Body.Bytes(), &state); err != nil {
+				t.Fatalf("状态响应不是合法 JSON: %v", err)
+			}
+			if state["authenticated"] != true {
+				t.Errorf("校验失败后当前会话应保持有效: %v", state)
+			}
+			login := env.do(t, http.MethodPost, "/api/auth/login",
+				`{"username":"admin","password":"correct-horse"}`, nil)
+			if login.Code != http.StatusOK {
+				t.Errorf("校验失败后原密码应仍可登录，状态码 = %d", login.Code)
+			}
+		})
 	}
 }

@@ -26,6 +26,10 @@ var (
 	ErrInvalidUsername = errors.New("用户名需为 1–64 位字母、数字、点、下划线或短横线")
 	// ErrWeakPassword 表示新密码不符合长度要求。
 	ErrWeakPassword = errors.New("新密码至少 12 个字符，且不超过 72 字节")
+	// ErrConfirmRequired 表示修改密码时缺少确认值。
+	ErrConfirmRequired = errors.New("请再次输入新密码")
+	// ErrPasswordMismatch 表示两次输入的新密码不一致。
+	ErrPasswordMismatch = errors.New("两次输入的新密码不一致")
 )
 
 // FieldError 标记校验失败的字段，接口据此返回字段级提示。
@@ -45,10 +49,13 @@ type Credentials struct {
 }
 
 // CredentialUpdate 描述一次凭据修改，用户名或新密码留空表示不改该项。
+// SessionVersion 是请求通过鉴权时的会话版本，用于拒绝使用过期会话完成修改。
 type CredentialUpdate struct {
 	CurrentPassword string
 	Username        string
 	NewPassword     string
+	ConfirmPassword string
+	SessionVersion  int
 }
 
 const (
@@ -228,6 +235,14 @@ func (s *Service) UpdateCredentials(ctx context.Context, update CredentialUpdate
 		if err := ValidateNewPassword(update.NewPassword); err != nil {
 			return Credentials{}, err
 		}
+		if update.ConfirmPassword == "" {
+			return Credentials{}, &FieldError{Field: "confirm_password", Err: ErrConfirmRequired}
+		}
+		if update.ConfirmPassword != update.NewPassword {
+			return Credentials{}, &FieldError{Field: "confirm_password", Err: ErrPasswordMismatch}
+		}
+	} else if update.ConfirmPassword != "" {
+		return Credentials{}, &FieldError{Field: "confirm_password", Err: ErrConfirmRequired}
 	}
 
 	var (
@@ -243,6 +258,11 @@ func (s *Service) UpdateCredentials(ctx context.Context, update CredentialUpdate
 	}
 	if err != nil {
 		return Credentials{}, errors.New("读取管理员账号失败")
+	}
+
+	// 请求带来的会话版本必须是当前版本，避免过期会话在并发中完成第二次修改。
+	if update.SessionVersion != version {
+		return Credentials{}, ErrConflict
 	}
 
 	// 当前密码仅用于校验，失败时不写库。
@@ -270,7 +290,7 @@ func (s *Service) UpdateCredentials(ctx context.Context, update CredentialUpdate
 		`UPDATE admin_users
 		    SET username = ?, password_hash = ?, session_version = session_version + 1, updated_at = CURRENT_TIMESTAMP
 		  WHERE id = 1 AND session_version = ?`,
-		targetName, targetHash, version,
+		targetName, targetHash, update.SessionVersion,
 	)
 	if err != nil {
 		return Credentials{}, errors.New("保存管理员账号失败")

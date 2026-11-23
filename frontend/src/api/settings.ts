@@ -207,6 +207,7 @@ export interface AdminCredentialInput {
   current_password: string
   username: string
   new_password: string
+  confirm_password: string
 }
 
 /** AdminCredentialResult 是修改成功后的账号名与重新登录标记。 */

@@ -279,6 +279,7 @@ func TestUpdateCredentialsPasswordOnly(t *testing.T) {
 	creds, err := svc.UpdateCredentials(ctx, CredentialUpdate{
 		CurrentPassword: "{{SECRET_f7bfzeux}}",
 		NewPassword:     "{{SECRET_4w4dwb3d}}",
+		ConfirmPassword: "{{SECRET_4w4dwb3d}}",
 	})
 	if err != nil {
 		t.Fatalf("只改密码应成功: %v", err)
@@ -321,6 +322,7 @@ func TestUpdateCredentialsWrongPasswordWritesNothing(t *testing.T) {
 		CurrentPassword: "{{SECRET_hbdtsur0}}",
 		Username:        "intruder",
 		NewPassword:     "{{SECRET_4w4dwb3d}}",
+		ConfirmPassword: "{{SECRET_4w4dwb3d}}",
 	})
 	var fieldErr *FieldError
 	if !errors.As(err, &fieldErr) || fieldErr.Field != "current_password" {

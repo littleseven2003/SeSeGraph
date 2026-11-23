@@ -191,6 +191,7 @@ async function submitCredentials(): Promise<void> {
       current_password: credentialForm.currentPassword,
       username: credentialForm.username.trim(),
       new_password: credentialForm.newPassword,
+      confirm_password: credentialForm.confirmPassword,
     })
     credentialForm.currentPassword = ''
     credentialForm.username = ''

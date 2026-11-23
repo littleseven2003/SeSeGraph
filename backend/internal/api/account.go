@@ -18,6 +18,7 @@ type credentialUpdateRequest struct {
 	CurrentPassword string `json:"current_password"`
 	Username        string `json:"username"`
 	NewPassword     string `json:"new_password"`
+	ConfirmPassword string `json:"confirm_password"`
 }
 
 // updateCredentialsHandler 校验当前密码后修改管理员账号名或密码。
@@ -40,10 +41,16 @@ func updateCredentialsHandler(deps Deps) gin.HandlerFunc {
 			return
 		}
 
+		// 会话版本取自本次鉴权通过时的 Cookie，过期会话无法完成第二次修改。
+		version, _ := c.Get(sessionVersionKey)
+		sessionVersion, _ := version.(int)
+
 		creds, err := deps.Auth.UpdateCredentials(c.Request.Context(), auth.CredentialUpdate{
 			CurrentPassword: req.CurrentPassword,
 			Username:        req.Username,
 			NewPassword:     req.NewPassword,
+			ConfirmPassword: req.ConfirmPassword,
+			SessionVersion:  sessionVersion,
 		})
 		var fieldErr *auth.FieldError
 		switch {
