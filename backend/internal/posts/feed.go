@@ -34,6 +34,7 @@ func (r *Repository) ListFeed(ctx context.Context, limit int) ([]FeedItem, error
 		  WHERE p.publish_state = 'published'
 		    AND p.is_public = 1
 		    AND p.is_disabled = 0
+		    AND p.pending_delete = 0
 		    AND p.published_at IS NOT NULL
 		    AND p.telegraph_urls NOT IN ('', '[]')
 		  ORDER BY p.published_at DESC, p.id DESC
