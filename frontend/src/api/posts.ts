@@ -89,11 +89,23 @@ export interface ServerProgress {
 
 // uploadImage 逐张上传，请求体直接使用浏览器里的 Blob，由后端流式落盘。
 export async function uploadImage(postId: number, sortOrder: number, blob: Blob, mime: string): Promise<UploadedImage> {
-  const response = await adminRequest(`/api/posts/${postId}/images?sort=${sortOrder}`, {
-    method: 'POST',
-    headers: mime === '' ? undefined : { 'Content-Type': mime },
-    body: blob,
-  })
+  // 单张上传必须有时限：低配链路卡住时给出明确失败，而不是让队列无限等待。
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 5 * 60 * 1000)
+  let response: Response
+  try {
+    response = await adminRequest(`/api/posts/${postId}/images?sort=${sortOrder}`, {
+      method: 'POST',
+      headers: mime === '' ? undefined : { 'Content-Type': mime },
+      body: blob,
+      signal: controller.signal,
+    })
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error('单张上传超过 5 分钟未完成，已中断，可继续上传重试')
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
   return (await response.json()) as UploadedImage
 }
 

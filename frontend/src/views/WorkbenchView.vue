@@ -782,8 +782,16 @@ async function ensureTask(): Promise<number | null> {
     tags: draft.value.tags,
   })
   postId.value = created.id
-  const files: SnapshotFile[] = tiles.value.map((tile) => ({ name: tile.name, size: tile.size }))
-  const next: TaskSnapshot = { postId: created.id, imageCount: files.length, files, createdAt: Date.now() }
+  // 快照按原始体积生成，后续压缩不改变续传身份；同时固化模式与压缩策略。
+  const files = snapshotFiles()
+  const next: TaskSnapshot = {
+    postId: created.id,
+    imageCount: files.length,
+    files,
+    createdAt: Date.now(),
+    mode: mode.value,
+    autoCompress: autoCompress.value,
+  }
   snapshot.value = next
   saveTask(storage, next)
   return postId.value
@@ -856,7 +864,9 @@ async function publish(): Promise<void> {
       } catch (error) {
         statuses.value = { ...statuses.value, [item.sortOrder]: 'failed' }
         phase.value = 'failed'
-        pushError(error instanceof ApiError ? error.message : `${item.tile.name} 上传失败，请稍后继续`)
+        const position = queue.findIndex((entry) => entry.sortOrder === item.sortOrder) + 1
+        const reason = error instanceof ApiError ? error.message : '网络中断或超时'
+        pushError(`第 ${position}/${queue.length} 项 ${item.tile.name} 上传失败：${reason}；已停止本轮，点「继续上传」只补未完成的项`)
         return
       }
     }

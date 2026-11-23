@@ -20,7 +20,7 @@ const props = defineProps<{
 const STATUS_TEXT: Record<UploadStatus, string> = {
   pending: '待上传',
   uploading: '上传中',
-  uploaded: '已上传',
+  uploaded: '已传至服务器',
   failed: '上传失败',
 }
 

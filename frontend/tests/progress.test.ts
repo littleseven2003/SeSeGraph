@@ -34,11 +34,11 @@ function withPublish(progress: ServerProgress, state: string, publicFlag: boolea
 }
 
 test('帖子与图片状态文案', () => {
-  assert.equal(postStatusLabel('completed'), '存图完成')
-  assert.equal(postStatusLabel('queued'), '排队中')
+  assert.equal(postStatusLabel('completed'), '已存入频道')
+  assert.equal(postStatusLabel('queued'), '排队存入频道')
   assert.equal(postStatusLabel('unknown'), 'unknown')
-  assert.equal(imageStatusLabel('stored'), '已存图')
-  assert.equal(imageStatusLabel('failed'), '失败')
+  assert.equal(imageStatusLabel('stored'), '已存入频道')
+  assert.equal(imageStatusLabel('failed'), '转存失败')
 })
 
 test('活跃状态需要继续轮询', () => {
@@ -61,15 +61,15 @@ test('只有失败且静止时才提示重试', () => {
 })
 
 test('汇总文案覆盖完成、失败与进行中', () => {
-  assert.match(summaryText(make('completed', 4, 0)), /存图完成/)
-  assert.match(summaryText(make('failed', 2, 2)), /2 张需要重试/)
-  assert.match(summaryText(make('queued', 2, 0)), /已入队/)
-  assert.match(summaryText(make('uploading', 1, 0)), /已存 1 \/ 4/)
+  assert.match(summaryText(make('completed', 4, 0)), /全部存入频道/)
+  assert.match(summaryText(make('failed', 2, 2)), /2 项失败可重试/)
+  assert.match(summaryText(make('queued', 2, 0)), /已排队等待转存频道/)
+  assert.match(summaryText(make('uploading', 1, 0)), /已完成 1 \/ 4/)
 })
 
 test('发布状态文案与进行中判断', () => {
   assert.equal(publishStateLabel('published'), '已发布')
-  assert.equal(publishStateLabel('publishing'), '发布中')
+  assert.equal(publishStateLabel('publishing'), '正在发布')
   const base = make('completed', 4, 0)
   assert.equal(publishActive(withPublish(base, 'pending', false)), true)
   assert.equal(publishActive(withPublish(base, 'published', true)), false)

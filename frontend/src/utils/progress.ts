@@ -3,19 +3,19 @@ import type { ServerProgress } from '../api/posts.ts'
 
 // 帖子状态文案，与后端状态取值一一对应。
 const POST_LABELS: Record<string, string> = {
-  uploading: '上传中',
-  queued: '排队中',
-  publishing: '发布中',
-  completed: '存图完成',
-  failed: '失败',
+  uploading: '正在传至服务器',
+  queued: '排队存入频道',
+  publishing: '正在存入频道',
+  completed: '已存入频道',
+  failed: '部分存图失败',
 }
 
 // 单张图片状态文案。
 const IMAGE_LABELS: Record<string, string> = {
   pending: '等待上传',
-  uploaded: '已落盘',
-  stored: '已存图',
-  failed: '失败',
+  uploaded: '已传至服务器',
+  stored: '已存入频道',
+  failed: '转存失败',
 }
 
 // 需要继续轮询的状态；完成与失败后停止。
@@ -50,22 +50,22 @@ export function summaryText(progress: ServerProgress): string {
   const total = progress.image_count
   const stored = progress.stored_count
   if (progress.status === 'completed') {
-    return `存图完成，共 ${total} 张已进入频道`
+    return `共 ${total} 项已全部存入频道`
   }
   if (progress.status === 'failed') {
-    return `已存 ${stored} / ${total} 张，有 ${progress.failed_count} 张需要重试`
+    return `已存入频道 ${stored} / ${total} 项，${progress.failed_count} 项失败可重试`
   }
   if (progress.status === 'queued') {
-    return `已入队，等待服务端处理（已存 ${stored} / ${total} 张）`
+    return `已排队等待转存频道（已完成 ${stored} / ${total} 项）`
   }
-  return `正在存图，已存 ${stored} / ${total} 张`
+  return `正在存入频道，已完成 ${stored} / ${total} 项`
 }
 
 // 发布状态文案。
 const PUBLISH_LABELS: Record<string, string> = {
   idle: '未发布',
   pending: '等待发布',
-  publishing: '发布中',
+  publishing: '正在发布',
   published: '已发布',
   failed: '发布失败',
 }
