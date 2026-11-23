@@ -8,7 +8,7 @@ import (
 )
 
 // SchemaVersion 是当前代码期望的数据库结构版本，写入 SQLite 的 user_version。
-const SchemaVersion = 10
+const SchemaVersion = 11
 
 // schemaStatements 是首次建库所需的语句，顺序即执行顺序。
 var schemaStatements = []string{
@@ -31,6 +31,9 @@ var schemaStatements = []string{
 		error_message TEXT DEFAULT '',
 		is_disabled INTEGER DEFAULT 0,
 		is_public INTEGER DEFAULT 0,
+		cover_sort_order INTEGER DEFAULT NULL,
+		publish_path_mode TEXT DEFAULT '',
+		publish_slug TEXT DEFAULT '',
 		publish_state TEXT DEFAULT 'idle',
 		publish_error TEXT DEFAULT '',
 		pending_delete INTEGER NOT NULL DEFAULT 0,
@@ -148,6 +151,17 @@ func Migrate(ctx context.Context, handle *sql.DB) error {
 	// 旧库升级：会话版本用于让改密后的旧 Cookie 立即失效，默认 0 与升级前的令牌兼容。
 	if err := ensureColumn(ctx, tx, "admin_users", "session_version", "ALTER TABLE admin_users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return errors.New("升级会话版本失败")
+	}
+	// 旧库升级：封面来源序号。空值表示沿用旧行为，不前置任何媒体。
+	if err := ensureColumn(ctx, tx, "posts", "cover_sort_order", "ALTER TABLE posts ADD COLUMN cover_sort_order INTEGER DEFAULT NULL"); err != nil {
+		return errors.New("升级封面序号失败")
+	}
+	// 旧库升级：首次入队时冻结的链接生成方式与随机短码，重启后沿用同一套取值。
+	if err := ensureColumn(ctx, tx, "posts", "publish_path_mode", "ALTER TABLE posts ADD COLUMN publish_path_mode TEXT DEFAULT ''"); err != nil {
+		return errors.New("升级链接生成方式失败")
+	}
+	if err := ensureColumn(ctx, tx, "posts", "publish_slug", "ALTER TABLE posts ADD COLUMN publish_slug TEXT DEFAULT ''"); err != nil {
+		return errors.New("升级链接短码失败")
 	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", SchemaVersion)); err != nil {
 		return errors.New("写入数据库结构版本失败")

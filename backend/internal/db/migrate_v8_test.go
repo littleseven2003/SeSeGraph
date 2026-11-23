@@ -56,8 +56,8 @@ func TestMigrateAddsViewsColumns(t *testing.T) {
 	if err := handle.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("读取版本失败: %v", err)
 	}
-	if version != 10 || SchemaVersion != 10 {
-		t.Fatalf("版本 = %d，SchemaVersion = %d，期望 10", version, SchemaVersion)
+	if version != SchemaVersion {
+		t.Fatalf("版本 = %d，SchemaVersion = %d", version, SchemaVersion)
 	}
 
 	var count int
