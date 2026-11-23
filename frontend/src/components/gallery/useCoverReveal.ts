@@ -46,7 +46,9 @@ export function useCoverReveal(blurred: Ref<boolean> | (() => boolean)) {
     // 直接点封面时取消遗留的短时计时，改由鼠标离开负责回遮。
     if (onCover) clearTimer()
     if (!shouldRevealOnTap({ blurred: isBlurred(), revealed: revealed.value })) {
-      // 再次点按打开详情，已有的回遮计时保持不变。
+      // 再次点按打开详情。若首击来自键盘或行内按钮，这次鼠标点封面沿用离开回遮，
+      // 避免短时计时被清掉后没有任何回遮路径。
+      if (onCover) pointerRevealed = true
       action()
       return
     }

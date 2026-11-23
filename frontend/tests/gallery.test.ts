@@ -252,6 +252,9 @@ test('只有指针直接点封面才由离开回遮，行内「打开」保留�
   const hook = readFileSync(new URL('../src/components/gallery/useCoverReveal.ts', import.meta.url), 'utf8')
   assert.ok(hook.includes('options.fromCover === true'), '离开回遮只由封面点按触发')
   assert.ok(hook.includes('scheduleShortRemask()'), '行内按钮走短时回遮')
+  // 首击来自键盘时，第二击鼠标打开详情仍要建立离开回遮，避免计时被清掉后失去路径。
+  const secondClick = hook.slice(hook.indexOf('if (!shouldRevealOnTap'))
+  assert.ok(secondClick.includes('if (onCover) pointerRevealed = true'), '第二次点按沿用离开回遮')
   assert.equal(hook.includes('@mouseenter'), false, '封面不再需要移入取消计时')
 })
 
