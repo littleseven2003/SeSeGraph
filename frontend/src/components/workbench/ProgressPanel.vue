@@ -98,20 +98,30 @@ const tone = computed(() => {
       </ul>
     </div>
 
-    <ul class="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-3 lg:grid-cols-4">
-      <li
-        v-for="image in props.progress.images"
-        :key="image.sort_order"
-        class="tnum flex items-center justify-between gap-2 text-xs"
+    <div
+      class="mt-3 min-w-0 max-w-full overflow-x-auto overscroll-x-contain pb-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-ink/30"
+      tabindex="0"
+      role="group"
+      aria-label="图片明细，可左右滚动查看全部序号"
+    >
+      <ul
+        class="grid grid-flow-col auto-cols-[minmax(8.5rem,max-content)] gap-x-4 gap-y-1 pr-1"
+        :class="props.progress.images.length > 2 ? 'grid-rows-2' : 'grid-rows-1'"
       >
-        <span class="text-muted">#{{ image.sort_order }}</span>
-        <span
-          class="truncate"
-          :class="image.status === 'failed' ? 'text-danger' : image.status === 'stored' ? 'text-ink' : 'text-muted'"
-          :title="image.error ?? ''"
-          >{{ imageStatusLabel(image.status) }}</span
+        <li
+          v-for="image in props.progress.images"
+          :key="image.sort_order"
+          class="tnum flex items-center justify-between gap-2 whitespace-nowrap text-xs"
         >
-      </li>
-    </ul>
+          <span class="text-muted">#{{ image.sort_order }}</span>
+          <span
+            class="whitespace-nowrap"
+            :class="image.status === 'failed' ? 'text-danger' : image.status === 'stored' ? 'text-ink' : 'text-muted'"
+            :title="image.error ?? ''"
+            >{{ imageStatusLabel(image.status) }}</span
+          >
+        </li>
+      </ul>
+    </div>
   </section>
 </template>
