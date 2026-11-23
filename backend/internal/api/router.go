@@ -48,6 +48,8 @@ type Deps struct {
 	Telegraph *telegraph.Manager
 	// PublicURL 是对外访问地址，发布前要求为 HTTPS。
 	PublicURL string
+	// RSSEnabled 控制是否对外提供图集订阅源。
+	RSSEnabled bool
 	// Editor 负责把已发布帖的元数据同步到远端页面。
 	Editor *publisher.Editor
 	// Settings 解析运行期可修改的配置，未装配时设置接口不可用。
@@ -100,6 +102,10 @@ func NewRouter(deps Deps) *gin.Engine {
 	// 公开图片网关：短码即凭证，不经过管理会话。
 	gateway := newImageGateway(deps.Posts, deps.Streams, deps.ImageConcurrency, deps.Logger, deps.Traffic)
 	router.GET("/i/:short_code", gateway.handle)
+
+	// 公开订阅源：默认关闭，启用且配置有效 HTTPS 地址时才提供。
+	router.GET("/rss.xml", rssHandler(deps))
+	router.HEAD("/rss.xml", rssHandler(deps))
 
 	admin := router.Group("/api", RequireAuth(deps.Sessions, deps.Auth))
 	admin.GET("/posts", listPostsHandler(deps))

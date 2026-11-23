@@ -250,6 +250,7 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		Streams:          switcher,
 		Telegraph:        telegraphManager,
 		PublicURL:        cfg.PublicURL,
+		RSSEnabled:       envEnabled(lookupEnv, "RSS_ENABLED"),
 		Editor:           editor,
 		Settings:         resolver,
 		Reload:           reloadSettings,
@@ -655,6 +656,19 @@ func readUploadInterval(lookupEnv func(string) (string, bool)) time.Duration {
 		return worker.DefaultInterval
 	}
 	return time.Duration(ms) * time.Millisecond
+}
+
+// envEnabled 把 1/true/yes/on 视为开启，其余取值与未配置都按关闭处理。
+func envEnabled(lookupEnv func(string) (string, bool), key string) bool {
+	raw, ok := lookupEnv(key)
+	if !ok {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 // envValue 读取环境变量并去除首尾空白。
