@@ -71,14 +71,15 @@ test('图片数量超限时在展开前拒绝', () => {
   assert.match(result.error, /超过 3 张/)
 })
 
-test('单张超限时只报告该文件且不展开', () => {
+test('单张超限只跳过该项，不拒掉整个压缩包', () => {
   const archive = buildArchive({
     'big.jpg': new Uint8Array(500),
     'small.jpg': new Uint8Array(1),
   })
   const result = unpackZip(archive, { limits: { maxImageBytes: 100 } })
-  assert.ok(!result.ok)
-  assert.match(result.error, /big\.jpg 超过 100B 上限/)
+  assert.ok(result.ok)
+  assert.deepEqual(result.images.map((image) => image.name), ['small.jpg'])
+  assert.equal(result.skipped, 1)
 })
 
 test('展开总量超限时拒绝', () => {

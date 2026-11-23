@@ -4,7 +4,10 @@ import { baseName, extensionOf, formatBytes, isImageName, isVideoName, limitForM
 // 单段视频上限，与 Telegram 云端 getFile 的 20MB 硬限制一致。
 export const MAX_VIDEO_BYTES = 20000000
 // photo 模式下超过该体积的静态图先压缩再上传。
-export const PHOTO_COMPRESS_THRESHOLD = 10000000
+// 界面与提交统一使用十进制上限。
+export const PHOTO_LIMIT_BYTES = 10000000
+export const DOCUMENT_LIMIT_BYTES = 20000000
+export const PHOTO_COMPRESS_THRESHOLD = PHOTO_LIMIT_BYTES
 // 选图阶段只拦超 50MB 的静态图，具体上限在模式与开关确定后再判定。
 export const MEDIA_IMPORT_MAX_BYTES = 50000000
 // 压缩输入的安全上限：避免把整块内存交给超大原图。
@@ -15,6 +18,7 @@ export const COMPRESS_MAX_DIMENSION_SUM = 10000
 export const COMPRESS_MAX_ASPECT = 20
 // 压缩目标体积留出少量余量，避免边界处四舍五入后再超限。
 export const COMPRESS_TARGET_BYTES = 9800000
+export const COMPRESS_TARGET_DOCUMENT = 19800000
 
 export type MediaKind = 'image' | 'video'
 
@@ -80,9 +84,23 @@ export interface CompressResult {
 // 动图判定：GIF 按扩展名，WebP/PNG 检查动画标记，避免把动效静默压成静态图。
 export async function isAnimatedImage(blob: Blob, name: string): Promise<boolean> {
   if (extensionOf(name) === 'gif') return true
-  const bytes = new Uint8Array(await blob.slice(0, 4096).arrayBuffer())
-  const text = String.fromCharCode(...bytes)
-  return text.includes('ANIM') || text.includes('acTL')
+  // 只在前 1MiB 内按块标记判断，避免把普通文本里的同名字串误判成动图。
+  const bytes = new Uint8Array(await blob.slice(0, 1024 * 1024).arrayBuffer())
+  if (hasBytes(bytes, [0x52, 0x49, 0x46, 0x46]) && hasBytes(bytes, [0x57, 0x45, 0x42, 0x50])) {
+    return hasBytes(bytes, [0x41, 0x4e, 0x49, 0x4d]) || hasBytes(bytes, [0x41, 0x4e, 0x4d, 0x46])
+  }
+  // PNG 的动画控制块 acTL 必须位于 IHDR 之后。
+  return hasBytes(bytes, [0x61, 0x63, 0x54, 0x4c])
+}
+
+function hasBytes(bytes: Uint8Array, pattern: number[]): boolean {
+  outer: for (let index = 0; index + pattern.length <= bytes.length; index += 1) {
+    for (let offset = 0; offset < pattern.length; offset += 1) {
+      if (bytes[index + offset] !== pattern[offset]) continue outer
+    }
+    return true
+  }
+  return false
 }
 
 function loadBitmap(blob: Blob): Promise<{ bitmap: ImageBitmap | HTMLImageElement; close: () => void }> {
@@ -143,7 +161,7 @@ export function fitScale(width: number, height: number): { width: number; height
 }
 
 // compressImage 把静态图压到上限内：按体积逐档降质并缩放，产物满足宽高与长宽比约束。
-export async function compressImage(blob: Blob): Promise<CompressResult> {
+export async function compressImage(blob: Blob, target = COMPRESS_TARGET_BYTES): Promise<CompressResult> {
   if (blob.size > COMPRESS_MAX_INPUT_BYTES) {
     throw new Error('原图超过 64MB，请先用其他工具缩放')
   }
@@ -164,7 +182,7 @@ export async function compressImage(blob: Blob): Promise<CompressResult> {
     for (let round = 0; round < 6; round += 1) {
       for (const quality of qualities) {
         const encoded = await encodeScale(bitmap, width, height, quality)
-        if (encoded.size <= COMPRESS_TARGET_BYTES) {
+        if (encoded.size <= target) {
           return { blob: encoded, width, height, fromSize: blob.size, toSize: encoded.size }
         }
       }
@@ -311,15 +329,19 @@ export function evaluateMedia(input: {
   size: number
   compressed: boolean
   animated?: boolean
+  animatedKind?: 'gif' | 'other'
 }, mode: UploadMode, autoCompress: boolean): MediaEvaluation {
   if (input.kind === 'video') {
     return input.size <= MAX_VIDEO_BYTES ? { state: 'ok', label: '满足' } : { state: 'blocked', label: '超 20MB' }
   }
-  const limit = limitForMode(mode)
+  const limit = mode === 'document' ? DOCUMENT_LIMIT_BYTES : PHOTO_LIMIT_BYTES
   if (input.size <= limit) return { state: 'ok', label: '满足' }
   if (input.compressed) return { state: 'compressed', label: '已压缩' }
-  if (!autoCompress) return { state: 'blocked', label: `超 ${limit === limitForMode('photo') ? 10 : 20}MB` }
-  if (input.animated) return { state: 'blocked', label: 'GIF 超限' }
+  // 动图先于开关判定：任何开关状态都不能压平动效。
+  if (input.animated) {
+    return { state: 'blocked', label: input.animatedKind === 'gif' ? 'GIF 超限' : '动图超限' }
+  }
+  if (!autoCompress) return { state: 'blocked', label: `超 ${mode === 'document' ? 20 : 10}MB` }
   return { state: 'pending', label: '待压缩' }
 }
 

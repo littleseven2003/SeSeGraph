@@ -26,6 +26,8 @@ export interface WorkbenchImage {
   sourceBlob?: Blob
   /** 是否为无法压缩的动图 */
   animated?: boolean
+  /** 动图类型，用于角标文案 */
+  animatedKind?: 'gif' | 'other'
   /** 原图 MIME，恢复原图时使用 */
   sourceMime?: string
 }

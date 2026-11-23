@@ -87,6 +87,7 @@ export function unpackZip(data: Uint8Array, options: ArchiveOptions = {}): Unpac
   let overCount = 0
   let oversizeName = ''
   let oversizeLimit = limits.maxImageBytes
+  let oversizeCount = 0
   let overTotal = false
 
   // 第一遍：只登记条目，不展开任何数据。
@@ -101,11 +102,14 @@ export function unpackZip(data: Uint8Array, options: ArchiveOptions = {}): Unpac
         const size = file.originalSize
         // 视频按 20,000,000 字节限制，静态图上限由调用方按画质模式传入。
         const limit = isVideoName(file.name) ? limits.maxVideoBytes : limits.maxImageBytes
-        if (size > limit) {
+        if (size >= limit) {
+          // 单项超限只跳过该项，不因一个文件拒掉整个压缩包。
+          skipped += 1
           if (oversizeName === '') {
             oversizeName = baseName(file.name)
             oversizeLimit = limit
           }
+          oversizeCount += 1
           return false
         }
         if (totalBytes + size > limits.maxTotalBytes) {
@@ -137,12 +141,7 @@ export function unpackZip(data: Uint8Array, options: ArchiveOptions = {}): Unpac
   if (overCount > 0) {
     return { ok: false, error: `压缩包内图片超过 ${limits.maxImages} 张，请先精选后再上传` }
   }
-  if (oversizeName !== '') {
-    return {
-      ok: false,
-      error: `${oversizeName} 超过 ${formatSize(oversizeLimit)} 上限，请压缩后重试`,
-    }
-  }
+
   if (overTotal) {
     return {
       ok: false,

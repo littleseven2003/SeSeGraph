@@ -143,3 +143,14 @@ test('模式与开关切换后按原图重算', () => {
   assert.equal(evaluateMedia(large, 'document', false).label, '满足')
   assert.equal(evaluateMedia({ ...large, compressed: true }, 'photo', true).state, 'compressed')
 })
+
+test('十进制边界与动图角标文案', () => {
+  assert.equal(evaluateMedia({ kind: 'image', size: 10_000_000, compressed: false }, 'photo', true).label, '满足')
+  assert.equal(evaluateMedia({ kind: 'image', size: 10_000_001, compressed: false }, 'photo', true).state, 'pending')
+  assert.equal(evaluateMedia({ kind: 'image', size: 20_000_000, compressed: false }, 'document', true).label, '满足')
+  assert.equal(evaluateMedia({ kind: 'image', size: 20_000_001, compressed: false }, 'document', true).state, 'pending')
+  assert.equal(evaluateMedia({ kind: 'image', size: 10_000_001, compressed: false, animated: true, animatedKind: 'gif' }, 'photo', true).label, 'GIF 超限')
+  assert.equal(evaluateMedia({ kind: 'image', size: 10_000_001, compressed: false, animated: true, animatedKind: 'other' }, 'photo', false).label, '动图超限')
+  assert.equal(evaluateMedia({ kind: 'image', size: 10_000_001, compressed: false }, 'photo', false).label, '超 10MB')
+  assert.equal(evaluateMedia({ kind: 'image', size: 20_000_001, compressed: false }, 'document', false).label, '超 20MB')
+})

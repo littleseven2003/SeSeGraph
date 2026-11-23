@@ -10,6 +10,7 @@ import { ApiError } from '../api/client.ts'
 import { makeCover } from '../utils/cover.ts'
 import {
   MAX_IMAGE_COUNT,
+  extensionOf,
   baseName,
   formatBytes,
   isVideoName,
@@ -19,6 +20,8 @@ import {
 } from '../utils/image.ts'
 import {
   AUTO_COMPRESS_STORAGE_KEY,
+  COMPRESS_TARGET_BYTES,
+  COMPRESS_TARGET_DOCUMENT,
   MAX_VIDEO_BYTES,
   checkImportFile,
   compressImage,
@@ -240,6 +243,7 @@ interface TileExtra {
   sourceBlob?: Blob
   sourceMime?: string
   animated?: boolean
+  animatedKind?: 'gif' | 'other'
 }
 
 function addTile(name: string, blob: Blob, size: number, extra: TileExtra = {}): WorkbenchTile {
@@ -259,6 +263,7 @@ function addTile(name: string, blob: Blob, size: number, extra: TileExtra = {}):
     sourceBlob: extra.sourceBlob,
     sourceMime: extra.sourceMime,
     animated: extra.animated,
+    animatedKind: extra.animatedKind,
   }
 }
 
@@ -292,6 +297,7 @@ async function prepareTiles(
         sourceBlob: entry.blob,
         sourceMime: mimeForName(entry.name) || entry.blob.type,
         animated,
+        animatedKind: extensionOf(entry.name) === 'gif' ? 'gif' : 'other',
       }),
     )
   }
@@ -338,7 +344,8 @@ async function compressForSubmit(): Promise<string> {
     for (const [index, tile] of pending.entries()) {
       message.value = `正在压缩（${index + 1} / ${pending.length}）：${tile.name} (${formatBytes(tile.sourceSize ?? tile.size)})…`
       try {
-        const result = await compressImage(tile.sourceBlob ?? tile.blob)
+        const target = mode.value === 'document' ? COMPRESS_TARGET_DOCUMENT : COMPRESS_TARGET_BYTES
+        const result = await compressImage(tile.sourceBlob ?? tile.blob, target)
         const position = updated.findIndex((item) => item.id === tile.id)
         if (position >= 0) {
           updated[position] = {
@@ -756,8 +763,7 @@ async function ensureTask(): Promise<number | null> {
   if (postId.value > 0) {
     const current = snapshot.value
     if (current) {
-      const local: SnapshotFile[] = tiles.value.map((tile) => ({ name: tile.name, size: tile.size }))
-      const matched = matchSnapshotFiles(current.files, local)
+      const matched = matchSnapshotFiles(current.files, snapshotFiles())
       if ('error' in matched) {
         pushError(`${matched.error}。如需放弃上次任务，点「放弃此任务」`)
         return null
@@ -767,10 +773,12 @@ async function ensureTask(): Promise<number | null> {
   }
   const saved = snapshot.value
   if (saved) {
-    const local: SnapshotFile[] = tiles.value.map((tile) => ({ name: tile.name, size: tile.size }))
-    const matched = matchSnapshotFiles(saved.files, local)
+    const matched = matchSnapshotFiles(saved.files, snapshotFiles())
     if (!('error' in matched)) {
+      // 恢复已建任务的画质与压缩策略，避免续传混用新设置。
       postId.value = saved.postId
+      if (saved.mode) mode.value = saved.mode
+      if (typeof saved.autoCompress === 'boolean') autoCompress.value = saved.autoCompress
       return postId.value
     }
   }
