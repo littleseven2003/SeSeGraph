@@ -88,10 +88,12 @@ type settingsView struct {
 		Keep          int    `json:"keep"`
 		KeepSource    string `json:"keep_source"`
 	} `json:"backup"`
-	// Upload 汇报新任务默认画质及其来源。
+	// Upload 汇报新任务默认画质、来源与同时接收上传的服务端上限。
 	Upload struct {
 		DefaultMode string `json:"default_mode"`
 		ModeSource  string `json:"mode_source"`
+		// Concurrency 是本实例同时接收上传的上限，客户端据此决定派发宽度。
+		Concurrency int `json:"concurrency"`
 	} `json:"upload"`
 	// MediaThumbs 汇报逐图缩略图缓存的上限、占用与条目数。
 	MediaThumbs struct {
@@ -135,7 +137,7 @@ func splitMetaFilenames(raw string) []string {
 }
 
 // buildSettingsView 汇总生效配置。敏感项只输出布尔标记。
-func buildSettingsView(effective settings.Effective, publicURL, dataDir string) settingsView {
+func buildSettingsView(effective settings.Effective, publicURL, dataDir string, uploadConcurrency int) settingsView {
 	view := settingsView{PublicURL: publicURL, EnvManaged: []string{}}
 	view.Telegram.TokenSet = effective.TelegramToken.Set()
 	view.Telegram.TokenSource = effective.TelegramToken.Source
@@ -171,6 +173,11 @@ func buildSettingsView(effective settings.Effective, publicURL, dataDir string) 
 	view.Telegraph.PathModeSource = effective.TelegraphPathMode.Source
 	view.Upload.DefaultMode = effective.UploadMode.Value
 	view.Upload.ModeSource = effective.UploadMode.Source
+	// 上限与限流器口径一致：非正时回落到默认值，客户端据此收敛自己的派发宽度。
+	if uploadConcurrency <= 0 {
+		uploadConcurrency = DefaultUploadConcurrency
+	}
+	view.Upload.Concurrency = uploadConcurrency
 	view.MediaThumbs.LimitBytes = parseIntValue(effective.MediaThumbLimit.Value)
 	view.MediaThumbs.LimitSource = effective.MediaThumbLimit.Source
 	view.MediaThumbs.UsedBytes, view.MediaThumbs.Count = media.Usage(dataDir)
@@ -239,7 +246,7 @@ func settingsHandler(deps Deps) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取配置失败"})
 			return
 		}
-		c.JSON(http.StatusOK, buildSettingsView(effective, deps.PublicURL, deps.DataDir))
+		c.JSON(http.StatusOK, buildSettingsView(effective, deps.PublicURL, deps.DataDir, deps.UploadConcurrency))
 	}
 }
 
@@ -451,7 +458,7 @@ func updateSettingsHandler(deps Deps) gin.HandlerFunc {
 		if patch.MediaThumbLimit != nil {
 			_, _, _ = media.Evict(deps.DataDir, parseIntValue(effective.MediaThumbLimit.Value))
 		}
-		c.JSON(http.StatusOK, buildSettingsView(effective, deps.PublicURL, deps.DataDir))
+		c.JSON(http.StatusOK, buildSettingsView(effective, deps.PublicURL, deps.DataDir, deps.UploadConcurrency))
 	}
 }
 

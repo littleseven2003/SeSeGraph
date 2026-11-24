@@ -1083,3 +1083,48 @@ func TestSettingsHotAppliesTrafficAndBackup(t *testing.T) {
 		t.Errorf("设置页备份 = %+v", view.Backup)
 	}
 }
+
+// TestSettingsUploadConcurrency 验证服务端上传上限对外可见：客户端据此收敛派发宽度，
+// 选了 4 路也不会多占一个必然排队的名额。
+func TestSettingsUploadConcurrency(t *testing.T) {
+	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
+		deps.Settings = settings.NewResolver(settings.NewStore(handle), settings.Env{})
+		deps.UploadConcurrency = 2
+	})
+	cookie := env.setup(t)
+
+	rec := env.do(t, http.MethodGet, "/api/settings", "", cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("读取设置状态 = %d", rec.Code)
+	}
+	var view map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
+		t.Fatalf("解析响应失败: %v", err)
+	}
+	upload := view["upload"].(map[string]any)
+	if upload["concurrency"] != float64(2) {
+		t.Errorf("上传上限 = %v，期望 2", upload["concurrency"])
+	}
+}
+
+// TestSettingsUploadConcurrencyDefault 验证未配置时回落到默认上限，与限流器口径一致。
+func TestSettingsUploadConcurrencyDefault(t *testing.T) {
+	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
+		deps.Settings = settings.NewResolver(settings.NewStore(handle), settings.Env{})
+		deps.UploadConcurrency = 0
+	})
+	cookie := env.setup(t)
+
+	rec := env.do(t, http.MethodGet, "/api/settings", "", cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("读取设置状态 = %d", rec.Code)
+	}
+	var view map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
+		t.Fatalf("解析响应失败: %v", err)
+	}
+	upload := view["upload"].(map[string]any)
+	if upload["concurrency"] != float64(DefaultUploadConcurrency) {
+		t.Errorf("默认上传上限 = %v，期望 %d", upload["concurrency"], DefaultUploadConcurrency)
+	}
+}
