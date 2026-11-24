@@ -17,13 +17,13 @@ const emit = defineEmits<{ open: [id: number] }>()
 
 const { showBlur, activate, onCoverLeave } = useCoverReveal(() => props.blurred)
 
-// 缩略图上的点击按鼠标离开计时回遮；行内「打开」只做短时揭开，不改变已有计时。
+// 封面图点击保留「首击揭罩、再击打开」；行内按钮与其它操作一律直接执行，不经过遮罩。
 function onCoverOpen(event: MouseEvent): void {
   activate(() => emit('open', props.item.id), event, { fromCover: true })
 }
 
-function onRowOpen(event: MouseEvent): void {
-  activate(() => emit('open', props.item.id), event)
+function onRowOpen(): void {
+  emit('open', props.item.id)
 }
 
 const showViews = computed(() => showsViews(props.item))

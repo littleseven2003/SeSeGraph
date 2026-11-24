@@ -18,6 +18,7 @@ import {
   normalizeShareTemplate,
   pageWindow,
   postShareUrl,
+  thumbClickAction,
   shouldFeatureFirst,
   readShareTemplate,
   resolveRevealTrigger,
@@ -282,21 +283,36 @@ test('按激活事件区分鼠标、触屏与键盘三种回遮路径', () => {
   assert.ok(source.includes('pointerRevealed'), '鼠标揭开单独标记，离开即回遮')
 })
 
-test('只有指针直接点封面才由离开回遮，行内「打开」保留短时回遮', () => {
+test('行内「打开」直接打开详情，只有封面点按走揭示', () => {
   const row = readFileSync(new URL('../src/components/gallery/PostRow.vue', import.meta.url), 'utf8')
   assert.ok(row.includes('@click="onCoverOpen"'), '缩略图点击单独处理')
   assert.ok(row.includes('@click="onRowOpen"'), '行内打开按钮单独处理')
   const start = row.indexOf('function onRowOpen')
   const rowHandler = row.slice(start, row.indexOf('}', start))
-  assert.equal(rowHandler.includes('fromCover'), false, '行内按钮不交给离开回遮')
+  assert.equal(rowHandler.includes('activate('), false, '行内按钮不再经过遮罩揭示')
+  assert.ok(rowHandler.includes("emit('open', props.item.id)"), '行内按钮一次点击就打开详情')
 
   const hook = readFileSync(new URL('../src/components/gallery/useCoverReveal.ts', import.meta.url), 'utf8')
   assert.ok(hook.includes('options.fromCover === true'), '离开回遮只由封面点按触发')
-  assert.ok(hook.includes('scheduleShortRemask()'), '行内按钮走短时回遮')
-  // 首击来自键盘时，第二击鼠标打开详情仍要建立离开回遮，避免计时被清掉后失去路径。
-  const secondClick = hook.slice(hook.indexOf('if (!shouldRevealOnTap'))
-  assert.ok(secondClick.includes('if (onCover) pointerRevealed = true'), '第二次点按沿用离开回遮')
-  assert.equal(hook.includes('@mouseenter'), false, '封面不再需要移入取消计时')
+  assert.ok(hook.includes('scheduleShortRemask()'), '键盘与触屏走短时回遮')
+})
+
+test('缩略图点按一轮只推进一步', () => {
+  const base = { blurred: true, open: false, revealed: false, trigger: 'pointer' as const }
+  // 未开气泡：桌面点按直接「打开并揭开」，触屏与键盘只打开模糊气泡。
+  assert.equal(thumbClickAction(base), 'open-reveal')
+  assert.equal(thumbClickAction({ ...base, trigger: 'touch' }), 'open')
+  assert.equal(thumbClickAction({ ...base, trigger: 'key' }), 'open')
+  // 气泡刚被这次手势打开：鼠标与键盘把点按当成下一步，触屏维持首点模糊。
+  assert.equal(thumbClickAction({ ...base, open: true, fresh: true }), 'reveal')
+  assert.equal(thumbClickAction({ ...base, open: true, fresh: true, trigger: 'key' }), 'reveal')
+  assert.equal(thumbClickAction({ ...base, open: true, fresh: true, trigger: 'touch' }), 'stay')
+  // 手势结束后：未揭开则揭开，已揭开则收起。
+  assert.equal(thumbClickAction({ ...base, open: true }), 'reveal')
+  assert.equal(thumbClickAction({ ...base, open: true, revealed: true }), 'close')
+  // 全局关闭时保持现有清晰预览，点按只负责开合气泡。
+  assert.equal(thumbClickAction({ ...base, blurred: false }), 'open')
+  assert.equal(thumbClickAction({ ...base, blurred: false, open: true }), 'close')
 })
 
 test('少量标签时「全部标签」入口常驻，Esc 有焦点可归还', () => {
