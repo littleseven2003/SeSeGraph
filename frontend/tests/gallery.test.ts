@@ -303,15 +303,16 @@ test('缩略图点按一轮只推进一步', () => {
   assert.equal(thumbClickAction(base), 'open-reveal')
   assert.equal(thumbClickAction({ ...base, trigger: 'touch' }), 'open')
   assert.equal(thumbClickAction({ ...base, trigger: 'key' }), 'open')
-  // 气泡刚被这次手势打开：鼠标与键盘把点按当成下一步，触屏维持首点模糊。
-  assert.equal(thumbClickAction({ ...base, open: true, fresh: true }), 'reveal')
-  assert.equal(thumbClickAction({ ...base, open: true, fresh: true, trigger: 'key' }), 'reveal')
-  assert.equal(thumbClickAction({ ...base, open: true, fresh: true, trigger: 'touch' }), 'stay')
-  // 手势结束后：未揭开则揭开，已揭开则收起。
+  // 同一次手势里由 focus 打开：鼠标与键盘当作下一步，触屏维持首点模糊。
+  assert.equal(thumbClickAction({ ...base, open: true, sameGesture: true }), 'reveal')
+  assert.equal(thumbClickAction({ ...base, open: true, sameGesture: true, trigger: 'key' }), 'reveal')
+  assert.equal(thumbClickAction({ ...base, open: true, sameGesture: true, trigger: 'touch' }), 'stay')
+  // 独立的下一次点按：未揭开则揭开，已揭开则收起，与时间间隔无关。
   assert.equal(thumbClickAction({ ...base, open: true }), 'reveal')
   assert.equal(thumbClickAction({ ...base, open: true, revealed: true }), 'close')
-  // 全局关闭时保持现有清晰预览，点按只负责开合气泡。
+  // 全局关闭时：同一次手势只是打开气泡，下一次点按才收起。
   assert.equal(thumbClickAction({ ...base, blurred: false }), 'open')
+  assert.equal(thumbClickAction({ ...base, blurred: false, open: true, sameGesture: true }), 'stay')
   assert.equal(thumbClickAction({ ...base, blurred: false, open: true }), 'close')
 })
 

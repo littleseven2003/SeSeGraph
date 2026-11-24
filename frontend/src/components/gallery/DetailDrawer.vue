@@ -100,8 +100,11 @@ let coverAbort: AbortController | null = null
 let thumbPostId = 0
 let observer: IntersectionObserver | null = null
 let previewAnchor: HTMLElement | null = null
-// 触屏点按前浏览器可能补发一次 mouseenter，记下打开时刻避免同一次点按把它立刻关掉。
-let previewOpenedAt = 0
+// 手势状态：按下时浏览器会先聚焦缩略图，用「同一次手势」区分它和紧接着的下一次点按。
+let gestureAt = 0
+let gestureFocus = false
+// 键盘聚焦会把缩略图滚进视口，这次滚动只重新锚定，不算用户滚动。
+let focusScrollGuard = false
 // 气泡尺寸固定，方便定位时先按预估高度钳制，加载完成后再校正。
 const PREVIEW_WIDTH = 240
 const PREVIEW_HEIGHT = 264
@@ -495,7 +498,6 @@ function openPreview(order: number, event: Event): void {
   if (revealedOrder.value !== order) remask()
   previewAnchor = target
   previewOrder.value = order
-  previewOpenedAt = Date.now()
   thumbs?.pin(order)
   previewLoading.value = !thumbUrls.value.has(order)
   previewFailed.value = false
@@ -532,6 +534,7 @@ watch(previewUrl, (url) => {
 })
 
 function closePreview(): void {
+  focusScrollGuard = false
   remask()
   thumbs?.unpin(previewOrder.value)
   previewOrder.value = 0
@@ -539,7 +542,6 @@ function closePreview(): void {
   previewLoading.value = false
   previewFailed.value = false
   previewAnchor = null
-  previewOpenedAt = 0
 }
 
 // isRevealed 判断某一项此刻是否已被点开；只有当前项能同时影响行内小图与气泡。
@@ -575,6 +577,21 @@ function revealThumb(order: number, trigger: string): void {
   }, TOUCH_REVEAL_MS)
 }
 
+// onThumbPointerDown 标记新一轮手势开始，上一轮留下的聚焦标记随之作废。
+function onThumbPointerDown(): void {
+  gestureAt = Date.now()
+  gestureFocus = false
+  focusScrollGuard = false
+}
+
+// onThumbFocus 处理聚焦：手势内聚焦只记标记（触屏首点保持模糊）；
+// 聚焦本身可能把缩略图滚进视口，这次滚动按锚定处理，不当作关闭气泡的用户滚动。
+function onThumbFocus(order: number, event: Event): void {
+  if (Date.now() - gestureAt < 500) gestureFocus = true
+  focusScrollGuard = true
+  openPreview(order, event)
+}
+
 // onThumbClick 按输入来源推进一次状态：
 // 鼠标悬停已开气泡时点按只揭开；触屏与键盘首点看模糊、次点揭开、清晰后再点收起。
 function onThumbClick(order: number, event: MouseEvent): void {
@@ -585,7 +602,7 @@ function onThumbClick(order: number, event: MouseEvent): void {
     revealed: isRevealed(order),
     trigger,
     // 按下时浏览器会先聚焦按钮并打开气泡，这次手势不算「用户已经看过」。
-    fresh: Date.now() - previewOpenedAt < 400,
+    sameGesture: gestureFocus,
   })
   if (action === 'close') {
     closePreview()
@@ -620,12 +637,16 @@ function onDocumentClick(event: MouseEvent): void {
 }
 
 // onScrollerScroll 滚动时直接收起气泡，比跟随重算更稳，也避免滚动中反复重排。
-// 键盘聚焦会顺带把缩略图滚进视口，这次滚动紧跟打开动作，按重新锚定处理而不是立刻收起。
+// 唯一的例外是键盘聚焦把缩略图滚进视口：那次滚动只重新锚定，且仅当图片仍被遮罩；
+// 已经揭开的图无论哪种滚动都立刻回遮，不把清晰状态留在屏幕上。
 function onScrollerScroll(): void {
   if (previewOrder.value === 0) return
-  if (Date.now() - previewOpenedAt < 250) {
-    positionPreview()
-    return
+  if (focusScrollGuard) {
+    focusScrollGuard = false
+    if (!isRevealed(previewOrder.value)) {
+      positionPreview()
+      return
+    }
   }
   closePreview()
 }
@@ -1018,9 +1039,10 @@ watch(
                     class="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-line bg-canvas transition hover:border-brand/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand"
                     :aria-label="`放大预览第 ${image.sort_order} 项`"
                     :aria-expanded="previewOrder === image.sort_order"
+                    @pointerdown="onThumbPointerDown"
                     @mouseenter="openPreview(image.sort_order, $event)"
                     @mouseleave="onThumbLeave"
-                    @focus="openPreview(image.sort_order, $event)"
+                    @focus="onThumbFocus(image.sort_order, $event)"
                     @blur="closePreview"
                     @click="onThumbClick(image.sort_order, $event)"
                   >
@@ -1028,7 +1050,7 @@ watch(
                       v-if="thumbUrl(image) !== ''"
                       :src="thumbUrl(image)"
                       alt=""
-                      class="h-full w-full object-cover transition"
+                      class="h-full w-full object-cover"
                       :class="thumbBlurred(image.sort_order) ? 'scale-125 blur-[6px]' : ''"
                       loading="lazy"
                       decoding="async"
@@ -1236,7 +1258,7 @@ watch(
                 v-if="previewUrl !== ''"
                 :src="previewUrl"
                 alt=""
-                class="h-full w-full object-contain transition"
+                class="h-full w-full object-contain"
                 :class="thumbBlurred(previewOrder) ? 'scale-105 blur-[18px]' : ''"
               />
               <span v-else class="px-3 text-center text-xs text-muted">
