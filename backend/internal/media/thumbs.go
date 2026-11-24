@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -34,6 +35,30 @@ var ErrInvalidThumb = errors.New("缩略图不合法")
 // ErrTooLarge 表示缩略图超过硬上限。
 var ErrTooLarge = errors.New("缩略图超过上限")
 
+// ErrCacheFull 表示缓存上限已经排满，本次写入放不进去。
+var ErrCacheFull = errors.New("缩略图缓存已满")
+
+// ErrDiskFull 表示数据盘余量不足，暂停写入新的小图。
+var ErrDiskFull = errors.New("磁盘余量不足")
+
+// MinFreeReserve 是写入小图时必须留出的磁盘余量，避免把数据盘写满。
+const MinFreeReserve = 64 << 20
+
+// usageTTL 是占用统计的复用时长：离上限还远时不必每次写盘都遍历整个目录。
+const usageTTL = 30 * time.Second
+
+// usageState 是某个数据目录的占用缓存，扫描后短时复用，写入成功时增量更新。
+type usageState struct {
+	total int64
+	count int
+	at    time.Time
+}
+
+var (
+	usageMu    sync.Mutex
+	usageByDir = map[string]usageState{}
+)
+
 // ValidVersion 判断内容版本是否可用作文件名。
 func ValidVersion(version string) bool {
 	return versionPattern.MatchString(version)
@@ -55,8 +80,9 @@ func webpHeader(data []byte) bool {
 }
 
 // Store 校验后原子写入缩略图，返回相对路径与字节数。
-// 先写临时文件再改名，中断不会留下半个文件，也不会覆盖正在被读的旧版本。
-func Store(dataDir string, postID int64, sortOrder int, version string, data []byte) (string, int64, error) {
+// 写入前按生效上限腾出空间并确认磁盘余量；先写临时文件再改名，
+// 中断不会留下半个文件，也不会覆盖正在被读的旧版本。
+func Store(dataDir string, postID int64, sortOrder int, version string, data []byte, limit int64) (string, int64, error) {
 	if !ValidVersion(version) || sortOrder <= 0 || postID <= 0 {
 		return "", 0, ErrInvalidThumb
 	}
@@ -65,6 +91,14 @@ func Store(dataDir string, postID int64, sortOrder int, version string, data []b
 	}
 	if len(data) > MaxBytes {
 		return "", 0, ErrTooLarge
+	}
+	// 只收静态位图，且最长边不超过规格值，避免缓存被超大图占满。
+	info, err := InspectWebP(data)
+	if err != nil || info.Animated || info.Width <= 0 || info.Height <= 0 {
+		return "", 0, ErrInvalidThumb
+	}
+	if info.Width > TargetEdge || info.Height > TargetEdge {
+		return "", 0, ErrInvalidThumb
 	}
 
 	dir := filepath.Join(dataDir, Dir, strconv.FormatInt(postID, 10))
@@ -86,10 +120,81 @@ func Store(dataDir string, postID int64, sortOrder int, version string, data []b
 	if err := temp.Close(); err != nil {
 		return "", 0, errors.New("写入缩略图失败")
 	}
+	// 内容已经落到临时文件，占用检查放在改名之前，超限时只丢掉这一份。
+	if err := reserve(dataDir, int64(len(data)), limit); err != nil {
+		return "", 0, err
+	}
 	if err := os.Rename(tempName, filepath.Join(dir, name)); err != nil {
 		return "", 0, errors.New("写入缩略图失败")
 	}
 	return filepath.ToSlash(filepath.Join(Dir, strconv.FormatInt(postID, 10), name)), int64(len(data)), nil
+}
+
+// reserve 在落盘前腾出位置：超出上限时按最近最少使用淘汰旧图，
+// 并确认磁盘仍有安全余量。调用方只在本次内容已写入临时文件后调用。
+func reserve(dataDir string, incoming, limit int64) error {
+	usageMu.Lock()
+	defer usageMu.Unlock()
+
+	if state, ok := usageByDir[dataDir]; ok && time.Since(state.at) < usageTTL &&
+		(limit <= 0 || state.total+incoming <= limit) && diskHasRoom(dataDir, incoming) {
+		state.total += incoming
+		state.count++
+		usageByDir[dataDir] = state
+		return nil
+	}
+
+	// 需要核对真实占用：整目录扫描一次，再按最近最少使用淘汰到能容纳本次写入。
+	list, err := scan(dataDir)
+	if err != nil {
+		return errors.New("统计缩略图占用失败")
+	}
+	var total int64
+	for _, item := range list {
+		total += item.size
+	}
+	if limit > 0 && total+incoming > limit {
+		for _, item := range list {
+			if total+incoming <= limit {
+				break
+			}
+			if err := os.Remove(item.path); err != nil {
+				continue
+			}
+			total -= item.size
+		}
+		if total+incoming > limit {
+			return ErrCacheFull
+		}
+	}
+	if !diskHasRoom(dataDir, incoming) {
+		return ErrDiskFull
+	}
+	// 本轮淘汰后的真实条数以现存文件为准，只把本次新增计入。
+	kept := 0
+	for _, item := range list {
+		if _, statErr := os.Stat(item.path); statErr == nil {
+			kept++
+		}
+	}
+	usageByDir[dataDir] = usageState{total: total + incoming, count: kept + 1, at: time.Now()}
+	return nil
+}
+
+// diskHasRoom 判断数据盘在写入本次内容后是否仍留有余量；探测不到时不阻塞写入。
+func diskHasRoom(dataDir string, incoming int64) bool {
+	free, ok := diskFree(dataDir)
+	if !ok {
+		return true
+	}
+	return free >= incoming+MinFreeReserve
+}
+
+// resetUsage 丢弃占用缓存，目录被整体清理或外部改动后重新统计。
+func resetUsage(dataDir string) {
+	usageMu.Lock()
+	delete(usageByDir, dataDir)
+	usageMu.Unlock()
 }
 
 // Open 打开已写入的缩略图；路径必须落在缩略图目录内。
@@ -210,7 +315,7 @@ func sortByMtime(list []entry) {
 	}
 }
 
-// Usage 汇总当前占用的字节数与条目数。
+// Usage 汇总当前占用的字节数与条目数，同时刷新占用缓存。
 func Usage(dataDir string) (int64, int) {
 	list, err := scan(dataDir)
 	if err != nil {
@@ -220,6 +325,9 @@ func Usage(dataDir string) (int64, int) {
 	for _, item := range list {
 		total += item.size
 	}
+	usageMu.Lock()
+	usageByDir[dataDir] = usageState{total: total, count: len(list), at: time.Now()}
+	usageMu.Unlock()
 	return total, len(list)
 }
 
@@ -249,6 +357,7 @@ func Evict(dataDir string, limit int64) (int, int64, error) {
 		freed += item.size
 		removed++
 	}
+	resetUsage(dataDir)
 	return removed, freed, nil
 }
 
@@ -258,5 +367,6 @@ func Clear(dataDir string) (int, int64, error) {
 	if err := os.RemoveAll(filepath.Join(dataDir, Dir)); err != nil {
 		return 0, 0, err
 	}
+	resetUsage(dataDir)
 	return count, bytesBefore, nil
 }

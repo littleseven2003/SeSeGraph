@@ -8,33 +8,60 @@ import (
 	"time"
 )
 
-// sampleWebP 构造一个带正确文件头的最小 WebP 字节串，只用于落盘校验。
+// sampleWebP 构造一张指定宽高、总长固定的静态 WebP（VP8L 图像块 + 填充块），
+// 用于落盘校验与尺寸解析测试。
 func sampleWebP(size int) []byte {
-	data := make([]byte, size)
-	copy(data, []byte("RIFF"))
-	copy(data[8:], []byte("WEBP"))
-	for index := 12; index < size; index++ {
-		data[index] = byte(index % 251)
+	return sizedWebP(size, 320, 240)
+}
+
+// sizedWebP 生成总字节数恰好为 size 的静态 WebP，宽高写入 VP8L 头。
+func sizedWebP(size, width, height int) []byte {
+	if size < 34 || (size-34)%2 != 0 {
+		panic("sample size must be even and >= 34")
 	}
+	data := make([]byte, size)
+	copy(data[0:4], []byte("RIFF"))
+	putUint32LE(data[4:8], uint32(size-8))
+	copy(data[8:12], []byte("WEBP"))
+	copy(data[12:16], []byte("VP8L"))
+	putUint32LE(data[16:20], 5)
+	data[20] = 0x2f
+	putUint32LE(data[21:25], uint32(width-1)|uint32(height-1)<<14)
+	data[25] = 0
+	// 剩余空间用一个 JUNK 块填满，保证总长精确且解析器能跳过。
+	rest := size - 26
+	copy(data[26:30], []byte("JUNK"))
+	putUint32LE(data[30:34], uint32(rest-8))
 	return data
+}
+
+// putUint32LE 按小端写入 32 位无符号整数。
+func putUint32LE(dst []byte, value uint32) {
+	dst[0] = byte(value)
+	dst[1] = byte(value >> 8)
+	dst[2] = byte(value >> 16)
+	dst[3] = byte(value >> 24)
 }
 
 func TestStoreValidatesHeaderVersionAndSize(t *testing.T) {
 	dir := t.TempDir()
-	if _, _, err := Store(dir, 1, 1, "0123456789ab", []byte("not-a-webp")); err != ErrInvalidThumb {
+	if _, _, err := Store(dir, 1, 1, "0123456789ab", []byte("not-a-webp"), 0); err != ErrInvalidThumb {
 		t.Fatalf("非 WebP 内容应被拒绝，实际 %v", err)
 	}
-	if _, _, err := Store(dir, 1, 1, "短版本", sampleWebP(64)); err != ErrInvalidThumb {
+	if _, _, err := Store(dir, 1, 1, "短版本", sampleWebP(64), 0); err != ErrInvalidThumb {
 		t.Fatalf("非法版本应被拒绝，实际 %v", err)
 	}
-	if _, _, err := Store(dir, 1, 0, "0123456789ab", sampleWebP(64)); err != ErrInvalidThumb {
+	if _, _, err := Store(dir, 1, 0, "0123456789ab", sampleWebP(64), 0); err != ErrInvalidThumb {
 		t.Fatalf("非法序号应被拒绝，实际 %v", err)
 	}
-	if _, _, err := Store(dir, 1, 1, "0123456789ab", sampleWebP(MaxBytes+1)); err != ErrTooLarge {
+	tooBig := make([]byte, MaxBytes+1)
+	copy(tooBig, []byte("RIFF"))
+	copy(tooBig[8:], []byte("WEBP"))
+	if _, _, err := Store(dir, 1, 1, "0123456789ab", tooBig, 0); err != ErrTooLarge {
 		t.Fatalf("超限应被拒绝，实际 %v", err)
 	}
 
-	rel, size, err := Store(dir, 7, 3, "0123456789ab", sampleWebP(1024))
+	rel, size, err := Store(dir, 7, 3, "0123456789ab", sampleWebP(1024), 0)
 	if err != nil {
 		t.Fatalf("写入失败: %v", err)
 	}
@@ -66,7 +93,7 @@ func TestOpenRejectsPathEscape(t *testing.T) {
 
 func TestRemoveAndRemovePost(t *testing.T) {
 	dir := t.TempDir()
-	rel, _, err := Store(dir, 5, 2, "0123456789ab", sampleWebP(128))
+	rel, _, err := Store(dir, 5, 2, "0123456789ab", sampleWebP(128), 0)
 	if err != nil {
 		t.Fatalf("写入失败: %v", err)
 	}
@@ -80,7 +107,7 @@ func TestRemoveAndRemovePost(t *testing.T) {
 		t.Fatalf("空路径应忽略: %v", err)
 	}
 
-	if _, _, err := Store(dir, 5, 3, "1123456789ab", sampleWebP(128)); err != nil {
+	if _, _, err := Store(dir, 5, 3, "1123456789ab", sampleWebP(128), 0); err != nil {
 		t.Fatalf("写入失败: %v", err)
 	}
 	if err := RemovePost(dir, 5); err != nil {
@@ -96,7 +123,7 @@ func TestUsageAndEvictByLeastRecentlyUsed(t *testing.T) {
 	versions := []string{"0123456789ab", "1123456789ab", "2123456789ab"}
 	rels := make([]string, 0, len(versions))
 	for index, version := range versions {
-		rel, _, err := Store(dir, 9, index+1, version, sampleWebP(100))
+		rel, _, err := Store(dir, 9, index+1, version, sampleWebP(100), 0)
 		if err != nil {
 			t.Fatalf("写入失败: %v", err)
 		}
@@ -145,7 +172,7 @@ func TestUsageAndEvictByLeastRecentlyUsed(t *testing.T) {
 func TestClearRemovesEverything(t *testing.T) {
 	dir := t.TempDir()
 	for index := 0; index < 2; index++ {
-		if _, _, err := Store(dir, 3, index+1, []string{"0123456789ab", "1123456789ab"}[index], sampleWebP(256)); err != nil {
+		if _, _, err := Store(dir, 3, index+1, []string{"0123456789ab", "1123456789ab"}[index], sampleWebP(256), 0); err != nil {
 			t.Fatalf("写入失败: %v", err)
 		}
 	}
