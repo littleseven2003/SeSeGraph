@@ -334,7 +334,11 @@ function resumeIdFromRoute(): number {
 // 避免旧任务的文件、进度与轮询带到新路由上。
 function resetForRoute(): void {
   stopPolling()
-  // 切页或重新初始化时取消进行中的解压，线程持有的整包字节随之释放。
+  // 切页或重新初始化时取消进行中的解压与上传，旧任务的在途请求不再继续。
+  if (uploadAbort !== null) {
+    uploadAbort.abort()
+    uploadAbort = null
+  }
   cancelArchive()
   closePreview()
   localThumbs.reset()
@@ -1058,15 +1062,21 @@ function onSelectCover(id: string): void {
   if (postId.value === 0 || coverLocked.value) return
   const tile = tiles.value.find((item) => item.id === id)
   if (tile === undefined) return
+  const target = postId.value
+  const round = initSeq
   void (async () => {
     try {
       const cover = await makeCover(tile.posterBlob ?? tile.blob)
-      await changeCover(postId.value, tile.sortOrder, cover.dataUrl)
+      // 生成期间可能切到了别的任务：旧封面不能写给新任务。
+      if (round !== initSeq || postId.value !== target) return
+      await changeCover(target, tile.sortOrder, cover.dataUrl)
+      if (round !== initSeq || postId.value !== target) return
       if (serverProgress.value !== null) {
         serverProgress.value = { ...serverProgress.value, cover_sort_order: tile.sortOrder }
       }
       message.value = '封面已更新'
     } catch (error) {
+      if (round !== initSeq || postId.value !== target) return
       // 失败时回到服务端实际封面，不让界面显示一份没生效的选择。
       const actual = serverProgress.value?.cover_sort_order ?? 0
       const fallback = tiles.value.find((item) => item.sortOrder === actual)
@@ -1109,9 +1119,11 @@ function applyServerProgress(progress: ServerProgress): void {
   statuses.value = next
 }
 
-async function refreshProgress(id: number): Promise<void> {
+async function refreshProgress(id: number, round = initSeq): Promise<void> {
   try {
     const progress = await fetchProgress(id)
+    // 切换任务或路由后旧响应不再写回：编号与轮次都要对得上。
+    if (round !== initSeq || postId.value !== id) return
     applyServerProgress(progress)
     // 存图完成后仍可能处于发布中，发布任务结束前继续轮询。
     if (!isActiveStatus(progress.status) && !publishActive(progress)) {
@@ -1134,9 +1146,10 @@ async function refreshProgress(id: number): Promise<void> {
 // 轮询服务端进度，任务活跃期间每 2 秒刷新一次。
 function startPolling(id: number): void {
   stopPolling()
-  void refreshProgress(id)
+  const round = initSeq
+  void refreshProgress(id, round)
   pollTimer = window.setInterval(() => {
-    void refreshProgress(id)
+    void refreshProgress(id, round)
   }, pollIntervalMs)
 }
 
@@ -1236,7 +1249,7 @@ function clearAll(): void {
 }
 
 // 建任务：已存在任务或上次未完成任务时复用，避免重复建帖。
-async function ensureTask(intent: 'auto' | 'manual'): Promise<number | null> {
+async function ensureTask(intent: 'auto' | 'manual', routeRound = initSeq): Promise<number | null> {
   if (postId.value > 0) {
     const current = snapshot.value
     if (current) {
@@ -1273,6 +1286,8 @@ async function ensureTask(intent: 'auto' | 'manual'): Promise<number | null> {
     publish_intent: intent === 'auto' ? 'auto' : undefined,
     tags: draft.value.tags,
   })
+  // 建任务期间切走了：不要把旧任务编号与快照写进新页面。
+  if (routeRound !== initSeq) return null
   postId.value = created.id
   // 快照按原始体积生成，后续压缩不改变续传身份；同时固化模式与压缩策略。
   const files = snapshotFiles()
@@ -1346,8 +1361,10 @@ async function publish(intent: 'auto' | 'manual' = 'manual'): Promise<void> {
 
 // runUpload 建任务并按服务端进度补传；由 publish 在提交锁内调用。
 async function runUpload(intent: 'auto' | 'manual'): Promise<void> {
+  const routeRound = initSeq
   try {
-    const id = await ensureTask(intent)
+    const id = await ensureTask(intent, routeRound)
+    if (routeRound !== initSeq) return
     if (id === null) {
       // 文件与任务不匹配：恢复按钮状态，保留重新选择与放弃入口。
       phase.value = 'idle'
@@ -1355,6 +1372,7 @@ async function runUpload(intent: 'auto' | 'manual'): Promise<void> {
     }
 
     const progress = await fetchProgress(id)
+    if (routeRound !== initSeq || postId.value !== id) return
     statuses.value = initialStatuses(progress)
     if (progress.status !== 'uploading') {
       // 任务已进入队列或已结束，交给服务端继续处理，这里只展示进度。
@@ -1386,9 +1404,11 @@ async function runUpload(intent: 'auto' | 'manual'): Promise<void> {
       rules.value.uploadConcurrency,
     )
     const failure = await runUploadPool(queue, concurrency, async (item) => {
+      if (routeRound !== initSeq || postId.value !== id) return
       statuses.value = { ...statuses.value, [item.sortOrder]: 'uploading' }
       try {
         const uploaded = await uploadImage(id, item.sortOrder, item.tile.blob, item.tile.mime, round, uploadAbort?.signal)
+        if (routeRound !== initSeq || postId.value !== id) return
         statuses.value = { ...statuses.value, [item.sortOrder]: 'uploaded' }
         // 小图失败不影响存图与发布：服务端缺这份时抽屉会按需补。生成与回存走串行队列。
         queueThumbQuietly(id, item.sortOrder, item.tile, uploaded.media_version)
@@ -1397,6 +1417,7 @@ async function runUpload(intent: 'auto' | 'manual'): Promise<void> {
         throw error
       }
     })
+    if (routeRound !== initSeq) return
     if (failure !== null) {
       const item = queue[failure.index]
       if (uploadAbort?.signal.aborted === true) {
@@ -1420,6 +1441,7 @@ async function runUpload(intent: 'auto' | 'manual'): Promise<void> {
     }
 
     const committed = await commitPost(id)
+    if (routeRound !== initSeq || postId.value !== id) return
     phase.value = committed.status === 'queued' ? 'queued' : 'failed'
     if (committed.missing && committed.missing.length > 0) {
       pushError('还有图片未上传完整，请继续上传')
