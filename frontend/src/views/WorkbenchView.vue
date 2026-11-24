@@ -23,6 +23,7 @@ import { ApiError } from '../api/client.ts'
 import { makeCover } from '../utils/cover.ts'
 import { changeCover } from '../api/posts.ts'
 import { THUMB_MAX_PIXELS, renderThumb } from '../utils/thumbs.ts'
+import { LocalThumbScheduler } from '../utils/local-thumbs.ts'
 import { createSerialQueue } from '../utils/serial.ts'
 import { blurEnabled } from '../utils/blur.ts'
 import {
@@ -566,20 +567,29 @@ function applyTiles(next: WorkbenchTile[]): void {
   for (const tile of tiles.value) queueLocalThumb(tile)
 }
 
+// localThumbs 按稳定 ID 去重并校验回写：重排、删除、清空与离页都有确定的回收口径。
+// 生成前与回写前各确认一次该项仍在列表里，迟到的结果不会挂回网格。
+const localThumbs = new LocalThumbScheduler(thumbQueue, {
+  isAlive: (id) => tiles.value.some((tile) => tile.id === id),
+  render: async (id) => {
+    const tile = tiles.value.find((item) => item.id === id)
+    if (tile === undefined) throw new Error('该项已不在列表中')
+    const source = tile.kind === 'video' ? (tile.posterBlob ?? tile.blob) : tile.blob
+    return renderThumb(source, THUMB_MAX_PIXELS)
+  },
+  attach: (id, blob) => {
+    const tile = tiles.value.find((item) => item.id === id)
+    if (tile === undefined) return
+    tile.thumbBlob = blob
+    tile.thumbUrl = URL.createObjectURL(blob)
+  },
+})
+
 // queueLocalThumb 生成网格用的 512px 小图；网格只挂这份小图，绝不挂原图 Blob。
 // 失败保留静默占位，等抽屉按需补齐或重试。
 function queueLocalThumb(tile: WorkbenchTile): void {
   if (tile.thumbUrl !== '' || tile.thumbBlob !== undefined) return
-  void thumbQueue.push(async () => {
-    try {
-      const source = tile.kind === 'video' ? (tile.posterBlob ?? tile.blob) : tile.blob
-      const thumb = await renderThumb(source, THUMB_MAX_PIXELS)
-      tile.thumbBlob = thumb
-      tile.thumbUrl = URL.createObjectURL(thumb)
-    } catch {
-      // 生成失败不影响其余项，占位继续显示
-    }
-  })
+  localThumbs.request(tile.id)
 }
 
 // restoreOrder 用名称与体积把本地文件放回上次任务的顺序；失败时给出提示。
@@ -985,6 +995,8 @@ function discardSnapshot(): void {
 
 function clearAll(): void {
   if (!ready.value) return
+  // 换一批文件：作废在途生成，迟到的结果不再挂回空网格。
+  localThumbs.reset()
   releaseTiles(tiles.value)
   tiles.value = []
   coverId.value = ''
@@ -1201,6 +1213,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onPreviewKeydown)
   stopPolling()
   closePreview()
+  localThumbs.dispose()
   releaseTiles(tiles.value)
 })
 </script>

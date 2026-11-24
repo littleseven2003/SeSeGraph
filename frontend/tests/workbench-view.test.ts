@@ -34,6 +34,13 @@ test('提交前压缩按模式上限判定，无收益或失败时保留原图',
 })
 
 
+test('小图调度按稳定 ID 去重并在生成前后确认有效性', () => {
+  assert.ok(source.includes('new LocalThumbScheduler('), '小图走统一调度器')
+  assert.ok(source.includes('isAlive: (id) => tiles.value.some((tile) => tile.id === id)'), '按稳定 ID 判断有效性')
+  assert.ok(source.includes('localThumbs.reset()'), '清空后作废在途结果')
+  assert.ok(source.includes('localThumbs.dispose()'), '离页后丢弃迟到结果')
+})
+
 test('新建图集默认干净新建态，只在显式续传时加载任务', () => {
   assert.ok(source.includes("targetID > 0 ? loadTaskFor(storage, targetID) : null"), '默认不自动续传')
   assert.ok(source.includes('resumableHint.value = targetID > 0 ? null : loadTask(storage)'), '非续传时只给轻提示')
