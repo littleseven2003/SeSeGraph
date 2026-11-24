@@ -29,6 +29,13 @@ func TestTasksListReturnsStagesAndControl(t *testing.T) {
 		t.Fatalf("暂停失败: %v", err)
 	}
 
+	// 三张都收下后存频道失败：任务是失败态，但图片仍在库里。
+	if _, err := env.handle.ExecContext(ctx,
+		`UPDATE posts SET status = ?, publish_state = ?, error_message = ? WHERE id = ?`,
+		posts.StatusFailed, posts.PublishIdle, "存频道失败", postID); err != nil {
+		t.Fatalf("更新任务状态失败: %v", err)
+	}
+
 	rec := env.do(t, http.MethodGet, "/api/tasks?page=1&page_size=10", "", cookie)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("状态码 = %d，响应: %s", rec.Code, rec.Body.String())
@@ -41,6 +48,7 @@ func TestTasksListReturnsStagesAndControl(t *testing.T) {
 			ControlState  string `json:"control_state"`
 			ImageCount    int    `json:"image_count"`
 			StoredCount   int    `json:"stored_count"`
+			ReceivedCount int    `json:"received_count"`
 			UploadedCount int    `json:"uploaded_count"`
 			ChannelCount  int    `json:"channel_count"`
 		} `json:"items"`
@@ -57,7 +65,7 @@ func TestTasksListReturnsStagesAndControl(t *testing.T) {
 		t.Errorf("任务行 = %+v", item)
 	}
 	// 已接收 1 张但尚未存入频道：三段状态不能互相冒充。
-	if item.UploadedCount != 1 || item.ChannelCount != 0 {
+	if item.UploadedCount != 1 || item.ChannelCount != 0 || item.ReceivedCount != 1 {
 		t.Errorf("任务行 = %+v", item)
 	}
 
@@ -192,5 +200,121 @@ func TestTasksListFiltersBeforePaging(t *testing.T) {
 	if row.StoredCount != 2 || row.UploadedCount != 1 || row.ChannelCount != 1 {
 		t.Errorf("三段计数 = 已接收 %d / 已上传 %d / 已入频道 %d，期望 2 / 1 / 1",
 			row.StoredCount, row.UploadedCount, row.ChannelCount)
+	}
+}
+
+// TestTasksListKeepsReceivedAfterChannelFailure 验证存频道失败不会倒退成未接收。
+func TestTasksListKeepsReceivedAfterChannelFailure(t *testing.T) {
+	env, _ := newEditEnv(t)
+	cookie := env.setup(t)
+	ctx := context.Background()
+
+	postID, err := env.posts.Create(ctx, posts.Post{Title: "频道失败", ImageCount: 3, Status: posts.StatusUploading})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+	statuses := []string{posts.ImageStatusStored, posts.ImageStatusStored, posts.ImageStatusFailed}
+	for index, status := range statuses {
+		if _, err := env.posts.AttachImage(ctx, posts.Image{
+			PostID: postID, SortOrder: index + 1, Status: status, MimeType: "image/jpeg",
+		}); err != nil {
+			t.Fatalf("保存图片失败: %v", err)
+		}
+		// 附件插入后按目标状态落库，模拟上传成功再存频道失败。
+		if status != posts.ImageStatusStored {
+			if _, err := env.handle.ExecContext(ctx,
+				`UPDATE post_images SET status = ? WHERE post_id = ? AND sort_order = ?`,
+				status, postID, index+1); err != nil {
+				t.Fatalf("更新图片状态失败: %v", err)
+			}
+		}
+	}
+
+	// 三张都收下后存频道失败：任务是失败态，但图片仍在库里。
+	if _, err := env.handle.ExecContext(ctx,
+		`UPDATE posts SET status = ?, publish_state = ?, error_message = ? WHERE id = ?`,
+		posts.StatusFailed, posts.PublishIdle, "存频道失败", postID); err != nil {
+		t.Fatalf("更新任务状态失败: %v", err)
+	}
+
+	rec := env.do(t, http.MethodGet, "/api/tasks?page=1&page_size=10", "", cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("状态码 = %d，响应: %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Items []struct {
+			ID            int64 `json:"id"`
+			StoredCount   int   `json:"stored_count"`
+			ReceivedCount int   `json:"received_count"`
+			UploadedCount int   `json:"uploaded_count"`
+			ChannelCount  int   `json:"channel_count"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("解析任务失败: %v", err)
+	}
+	if len(body.Items) != 1 || body.Items[0].ID != postID {
+		t.Fatalf("任务行 = %+v", body.Items)
+	}
+	row := body.Items[0]
+	// 3 张都已收到，2 张入频道；兼容口径 stored_count 仍是上传加入库。
+	if row.ReceivedCount != 3 || row.ChannelCount != 2 || row.UploadedCount != 0 {
+		t.Errorf("计数 = 已接收 %d / 频道 %d / 上传中 %d，期望 3 / 2 / 0",
+			row.ReceivedCount, row.ChannelCount, row.UploadedCount)
+	}
+	if row.StoredCount != 2 {
+		t.Errorf("兼容 stored_count = %d，期望 2", row.StoredCount)
+	}
+}
+
+// TestTasksListClampsPageAfterShrink 验证命中数变少时请求页被钳回有效页。
+func TestTasksListClampsPageAfterShrink(t *testing.T) {
+	env, _ := newEditEnv(t)
+	cookie := env.setup(t)
+	ctx := context.Background()
+
+	ids := make([]int64, 0, 21)
+	for index := 0; index < 21; index++ {
+		id, err := env.posts.Create(ctx, posts.Post{Title: "任务", ImageCount: 1, Status: posts.StatusUploading})
+		if err != nil {
+			t.Fatalf("创建帖子失败: %v", err)
+		}
+		ids = append(ids, id)
+	}
+
+	type page struct {
+		Items    []json.RawMessage `json:"items"`
+		Total    int               `json:"total"`
+		Page     int               `json:"page"`
+		PageSize int               `json:"page_size"`
+	}
+	read := func(pageNo int) page {
+		rec := env.do(t, http.MethodGet, fmt.Sprintf("/api/tasks?page=%d&page_size=20", pageNo), "", cookie)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("第 %d 页状态码 = %d，响应: %s", pageNo, rec.Code, rec.Body.String())
+		}
+		var body page
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("解析任务失败: %v", err)
+		}
+		return body
+	}
+
+	second := read(2)
+	if second.Total != 21 || len(second.Items) != 1 || second.Page != 2 {
+		t.Fatalf("第 2 页 = %d 条 / 共 %d / 页 %d，期望 1 条共 21 页 2",
+			len(second.Items), second.Total, second.Page)
+	}
+
+	// 两条任务被移除或完成出列表后总页数只剩 1 页，第 2 页应回落到有效页。
+	for _, id := range ids[:2] {
+		if _, err := env.handle.ExecContext(ctx, `UPDATE posts SET pending_delete = 1 WHERE id = ?`, id); err != nil {
+			t.Fatalf("移除任务失败: %v", err)
+		}
+	}
+	clamped := read(2)
+	if clamped.Total != 19 || clamped.Page != 1 || len(clamped.Items) != 19 {
+		t.Errorf("钳制后 = %d 条 / 共 %d / 页 %d，期望 19 条共 19 页 1",
+			len(clamped.Items), clamped.Total, clamped.Page)
 	}
 }
