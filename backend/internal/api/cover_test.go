@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -187,5 +188,66 @@ func TestChangeCoverRejectsOutOfRange(t *testing.T) {
 	var body map[string]string
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body["error"] == "" {
 		t.Errorf("响应缺少错误说明: %s", rec.Body.String())
+	}
+}
+
+// TestChangeCoverExposesVersionedCoverURL 验证换封面后详情与列表都能读到新缩略图。
+// 早期只认「编号.webp」，版本化文件名会让 cover_url 变空、卡片图 404。
+func TestChangeCoverExposesVersionedCoverURL(t *testing.T) {
+	env, _ := newEditEnv(t)
+	cookie := env.setup(t)
+	postID, _ := multiImagePost(t, env, 2, false)
+
+	encoded := base64.StdEncoding.EncodeToString([]byte("webp-bytes"))
+	body := fmt.Sprintf(`{"sort_order":2,"cover_thumbnail":%q}`, encoded)
+	rec := env.do(t, http.MethodPut, fmt.Sprintf("/api/posts/%d/cover", postID), body, cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("换封面状态码 = %d，响应: %s", rec.Code, rec.Body.String())
+	}
+
+	var detail struct {
+		ID             int64  `json:"id"`
+		CoverSortOrder int    `json:"cover_sort_order"`
+		CoverURL       string `json:"cover_url"`
+	}
+	rec = env.do(t, http.MethodGet, fmt.Sprintf("/api/posts/%d", postID), "", cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("详情状态码 = %d，响应: %s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("解析详情失败: %v", err)
+	}
+	if detail.CoverSortOrder != 2 {
+		t.Errorf("封面序号 = %d，期望 2", detail.CoverSortOrder)
+	}
+	if !strings.HasPrefix(detail.CoverURL, "/api/thumbs/") {
+		t.Fatalf("封面地址 = %q，期望以 /api/thumbs/ 开头", detail.CoverURL)
+	}
+	if !strings.Contains(detail.CoverURL, fmt.Sprintf("%d-", postID)) {
+		t.Errorf("封面地址 = %q，期望带版本化文件名", detail.CoverURL)
+	}
+
+	// 卡片列表必须指向同一份缩略图，否则换封面后卡片仍是旧图或 404。
+	rec = env.do(t, http.MethodGet, "/api/posts", "", cookie)
+	var list struct {
+		Items []struct {
+			ID       int64  `json:"id"`
+			CoverURL string `json:"cover_url"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("解析列表失败: %v", err)
+	}
+	if len(list.Items) != 1 || list.Items[0].CoverURL != detail.CoverURL {
+		t.Fatalf("列表封面 = %+v，期望与详情一致", list.Items)
+	}
+
+	// 地址本身能取到刚写入的缩略图，旧封面文件仍在时可继续读取。
+	thumb := env.do(t, http.MethodGet, detail.CoverURL, "", cookie)
+	if thumb.Code != http.StatusOK {
+		t.Fatalf("读取缩略图状态码 = %d，响应: %s", thumb.Code, thumb.Body.String())
+	}
+	if thumb.Body.String() != "webp-bytes" {
+		t.Errorf("缩略图内容 = %q", thumb.Body.String())
 	}
 }

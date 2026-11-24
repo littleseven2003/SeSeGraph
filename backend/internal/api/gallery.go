@@ -16,8 +16,9 @@ import (
 // galleryMaxTagRunes 与建帖时的标签长度限制保持一致。
 const galleryMaxTagRunes = 30
 
-// thumbNamePattern 限定封面文件名为封面写入时使用的格式。
-var thumbNamePattern = regexp.MustCompile(`^[0-9]+\.webp$`)
+// thumbNamePattern 限定封面文件名为封面写入时使用的格式：
+// 早期是「帖子编号.webp」，换封面版本化后是「帖子编号-12 位十六进制.webp」，两者都要能读。
+var thumbNamePattern = regexp.MustCompile(`^[0-9]+(-[0-9a-f]{12})?\.webp$`)
 
 // galleryItemResponse 是画廊卡片的接口结构。
 type galleryItemResponse struct {

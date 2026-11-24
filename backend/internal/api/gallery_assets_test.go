@@ -103,3 +103,38 @@ func TestThumbNeedsSessionAfterLogout(t *testing.T) {
 		t.Errorf("登出后状态码 = %d，期望 401", after.Code)
 	}
 }
+
+// TestThumbServesVersionedCoverFile 验证换封面后写入的「编号-12位十六进制.webp」也能读取。
+func TestThumbServesVersionedCoverFile(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	cookie := env.setup(t)
+	dir := filepath.Join(env.dataDir, posts.CoverDir)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatalf("创建封面目录失败: %v", err)
+	}
+	name := "9-0123456789ab.webp"
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("webp-bytes"), 0o640); err != nil {
+		t.Fatalf("写入封面失败: %v", err)
+	}
+
+	rec := env.do(t, http.MethodGet, "/api/thumbs/"+name, "", cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("状态码 = %d，期望 200，响应: %s", rec.Code, rec.Body.String())
+	}
+	if rec.Body.String() != "webp-bytes" {
+		t.Errorf("响应体 = %q", rec.Body.String())
+	}
+
+	// 越界或不合规的文件名仍要拒绝，避免把封面目录当成通用静态目录。
+	for _, bad := range []string{
+		"9-0123.webp",
+		"9-0123456789AZ.webp",
+		"9-.webp",
+		"9-0123456789ab.webp.bak",
+		"../9-0123456789ab.webp",
+	} {
+		if got := env.do(t, http.MethodGet, "/api/thumbs/"+bad, "", cookie); got.Code != http.StatusNotFound {
+			t.Errorf("%s 状态码 = %d，期望 404", bad, got.Code)
+		}
+	}
+}
