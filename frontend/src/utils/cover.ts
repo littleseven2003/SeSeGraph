@@ -31,8 +31,24 @@ export function toDataUrl(bytes: Uint8Array, mime: string): string {
   return `data:${mime};base64,${btoa(binary)}`
 }
 
+// 大图解码上限：封面只要 400px 宽，超过这个体积的原图按 1600px 宽解码即可，
+// 避免把几千万像素的画面整张展开进内存。小图按原尺寸解码，不会被放大。
+export const COVER_DECODE_MAX_BYTES = 4_000_000
+export const COVER_DECODE_MAX_WIDTH = 1600
+
 async function loadImage(blob: Blob): Promise<{ source: CanvasImageSource; width: number; height: number }> {
   if (typeof createImageBitmap === 'function') {
+    if (blob.size > COVER_DECODE_MAX_BYTES) {
+      try {
+        const scaled = await createImageBitmap(blob, {
+          resizeWidth: COVER_DECODE_MAX_WIDTH,
+          resizeQuality: 'medium',
+        })
+        return { source: scaled, width: scaled.width, height: scaled.height }
+      } catch {
+        // 浏览器不接受缩放参数时退回原尺寸解码。
+      }
+    }
     const bitmap = await createImageBitmap(blob)
     return { source: bitmap, width: bitmap.width, height: bitmap.height }
   }
