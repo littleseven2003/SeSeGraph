@@ -188,6 +188,13 @@ func Migrate(ctx context.Context, handle *sql.DB) error {
 	if err := ensureColumn(ctx, tx, "post_images", "thumb_at", "ALTER TABLE post_images ADD COLUMN thumb_at DATETIME DEFAULT NULL"); err != nil {
 		return errors.New("升级小图时间失败")
 	}
+	// 旧库升级：为已有媒体补一个稳定的内容版本。没有版本的记录会让抽屉跳过回存，
+	// 这里一次性写入 12 位十六进制值，之后只有覆盖上传才换新。
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE post_images SET media_version = lower(substr(hex(randomblob(6)), 1, 12))
+		 WHERE COALESCE(media_version, '') = ''`); err != nil {
+		return errors.New("回填媒体内容版本失败")
+	}
 	// 旧库升级：首次入队时冻结的链接生成方式与随机短码，重启后沿用同一套取值。
 	if err := ensureColumn(ctx, tx, "posts", "publish_path_mode", "ALTER TABLE posts ADD COLUMN publish_path_mode TEXT DEFAULT ''"); err != nil {
 		return errors.New("升级链接生成方式失败")
