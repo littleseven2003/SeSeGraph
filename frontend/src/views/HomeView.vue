@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ApiError, logout } from '../api/client'
+import { ApiError } from '../api/client'
 import {
   deletePost,
   fetchGallery,
@@ -16,18 +16,17 @@ import {
   createLatestGuard,
   deleteFailureText,
   pageWindow,
-  readBlurPreference,
   readViewPreference,
-  saveBlurPreference,
   saveViewPreference,
   type GalleryView,
 } from '../utils/gallery'
+import AppHeader from '../components/AppHeader.vue'
 import DetailDrawer from '../components/gallery/DetailDrawer.vue'
-import BrandMark from '../components/BrandMark.vue'
 import PostCard from '../components/gallery/PostCard.vue'
 import PostList from '../components/gallery/PostList.vue'
 import FocusCarousel from '../components/gallery/FocusCarousel.vue'
 import TagFilter from '../components/gallery/TagFilter.vue'
+import { blurEnabled } from '../utils/blur.ts'
 
 const PAGE_SIZE = 12
 const router = useRouter()
@@ -40,10 +39,9 @@ const keyword = ref('')
 const selectedTags = ref<string[]>([])
 const loading = ref(false)
 const error = ref('')
-const blurEnabled = ref(true)
+// 防社死开关由统一顶栏维护，页面只读它的值。
 const viewMode = ref<GalleryView>('gallery')
 
-const signingOut = ref(false)
 const drawerOpen = ref(false)
 const detail = ref<PostDetail | null>(null)
 const detailLoading = ref(false)
@@ -151,11 +149,6 @@ function clearFilters(): void {
   keyword.value = ''
   selectedTags.value = []
   resetAndLoad()
-}
-
-function toggleBlur(): void {
-  blurEnabled.value = !blurEnabled.value
-  saveBlurPreference(window.localStorage, blurEnabled.value)
 }
 
 async function openDetail(id: number): Promise<void> {
@@ -274,18 +267,6 @@ function closeDetail(): void {
   }
 }
 
-async function signOut(): Promise<void> {
-  if (signingOut.value) return
-  signingOut.value = true
-  try {
-    await logout()
-  } catch {
-    // 登出失败也回到登录页，避免停留在已失效的界面
-  }
-  signingOut.value = false
-  await router.replace({ name: 'login' })
-}
-
 watch(keyword, () => {
   if (searchTimer !== undefined) clearTimeout(searchTimer)
   searchTimer = setTimeout(() => {
@@ -294,7 +275,6 @@ watch(keyword, () => {
 })
 
 onMounted(() => {
-  blurEnabled.value = readBlurPreference(window.localStorage)
   viewMode.value = readViewPreference(window.localStorage)
   void loadTags()
   void loadList()
@@ -308,38 +288,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="min-h-full">
-    <header class="border-b border-line/60">
-      <div class="mx-auto flex w-full max-w-[1240px] items-center justify-between gap-4 px-5 py-3">
-        <div class="flex min-w-0 items-center gap-2.5">
-          <BrandMark :width="132" />
-          <span class="hidden h-4 w-px shrink-0 bg-line sm:block" aria-hidden="true"></span>
-          <span class="hidden shrink-0 text-xs font-medium tracking-[0.04em] text-muted sm:inline">SeSe图册</span>
-        </div>
-
-        <div class="flex items-center gap-1">
-          <router-link
-            :to="{ name: 'tasks' }"
-            class="inline-flex h-11 items-center rounded-full px-3.5 text-sm text-muted transition hover:bg-canvas hover:text-ink"
-          >
-            任务
-          </router-link>
-          <router-link
-            :to="{ name: 'settings' }"
-            class="inline-flex h-11 items-center rounded-full px-3.5 text-sm text-muted transition hover:bg-canvas hover:text-ink"
-          >
-            设置
-          </router-link>
-          <button
-            type="button"
-            :disabled="signingOut"
-            class="inline-flex h-11 items-center rounded-full px-3.5 text-sm text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
-            @click="signOut"
-          >
-            {{ signingOut ? '正在退出…' : '退出登录' }}
-          </button>
-        </div>
-      </div>
-    </header>
+    <AppHeader />
 
     <main class="mx-auto w-full max-w-[1240px] px-5 py-7">
       <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -379,30 +328,6 @@ onBeforeUnmount(() => {
           </label>
 
           <div class="flex w-full items-center gap-2 sm:w-auto">
-            <button
-              type="button"
-              class="inline-flex h-11 flex-1 shrink-0 items-center justify-center gap-2 rounded-full px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink sm:flex-none"
-              :aria-pressed="blurEnabled"
-              @click="toggleBlur"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4 shrink-0" aria-hidden="true">
-                <path d="M2.5 12S6 6.5 12 6.5 21.5 12 21.5 12 18 17.5 12 17.5 2.5 12 2.5 12Z" stroke-linecap="round" />
-                <circle cx="12" cy="12" r="2.6" />
-                <path v-if="blurEnabled" d="M4 20L20 4" stroke-linecap="round" />
-              </svg>
-              <span
-                class="relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition motion-safe:active:scale-95"
-                :class="blurEnabled ? 'bg-accent' : 'bg-line'"
-                aria-hidden="true"
-              >
-                <span
-                  class="absolute h-3 w-3 rounded-full bg-white transition"
-                  :class="blurEnabled ? 'left-3.5' : 'left-0.5'"
-                ></span>
-              </span>
-              防社死模糊
-            </button>
-
             <router-link
               :to="{ name: 'workbench' }"
               class="inline-flex h-11 flex-1 shrink-0 items-center justify-center rounded-full bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong sm:flex-none"

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import AppHeader from '../components/AppHeader.vue'
 import DropZone from '../components/workbench/DropZone.vue'
 import ImageGrid from '../components/workbench/ImageGrid.vue'
 import ModeSwitch from '../components/workbench/ModeSwitch.vue'
@@ -1167,41 +1168,21 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="min-h-full">
-    <header class="sticky top-0 z-20 border-b border-line bg-surface">
-      <div class="mx-auto flex w-full max-w-[1240px] items-center justify-between gap-4 px-5 py-3">
-        <div class="flex min-w-0 items-center gap-1.5">
-          <router-link
-            :to="{ name: 'home' }"
-            class="-ml-2 flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted transition hover:bg-canvas hover:text-ink"
-            aria-label="返回图集"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4">
-              <path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-          </router-link>
-          <div class="min-w-0">
-            <p class="truncate text-sm font-semibold tracking-tight">新建图集</p>
-            <p class="mt-0.5 truncate text-xs text-muted">导入 · 整理 · 发布</p>
-          </div>
-        </div>
-
-        <div class="flex shrink-0 items-center gap-2">
-          <span class="tnum hidden text-xs text-muted sm:inline"
-            >{{ imageCount }} 项 · {{ formatBytes(totalSize) }}</span
-          >
-          <button
-            v-if="tiles.length > 0 && !locked"
-            type="button"
-            class="h-11 rounded-md border border-line px-3 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas"
-            @click="clearAll"
-          >
-            清空
-          </button>
-        </div>
-      </div>
-    </header>
+    <AppHeader />
 
     <main class="mx-auto w-full max-w-[1240px] px-5 py-6">
+      <div class="mb-3 flex items-center justify-end gap-2">
+        <span class="tnum text-xs text-muted">{{ imageCount }} 项 · {{ formatBytes(totalSize) }}</span>
+        <button
+          v-if="tiles.length > 0 && !locked"
+          type="button"
+          class="h-11 rounded-md border border-line px-3 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas"
+          @click="clearAll"
+        >
+          清空
+        </button>
+      </div>
+
       <p v-if="message" class="mb-4 rounded-2xl bg-surface px-3.5 py-2.5 text-sm text-muted shadow-[0_1px_0_0_rgba(27,26,23,0.05)]" role="status">
         {{ message }}
       </p>

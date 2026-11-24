@@ -19,6 +19,7 @@ import {
   type SettingsView,
   type TrafficStats,
 } from '../api/settings.ts'
+import AppHeader from '../components/AppHeader.vue'
 import { fetchGallery, fetchPostDetail, type GalleryItem } from '../api/gallery.ts'
 import { fetchMediaBlob, uploadThumb } from '../api/posts.ts'
 import { renderThumb, THUMB_MAX_PIXELS } from '../utils/thumbs.ts'
@@ -620,44 +621,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="min-h-full">
-    <header class="sticky top-0 z-20 border-b border-line bg-surface">
-      <div class="mx-auto flex w-full max-w-[1240px] items-center justify-between gap-4 px-5 py-3">
-        <div class="flex min-w-0 items-center gap-1.5">
-          <router-link
-            :to="{ name: 'home' }"
-            class="-ml-2 flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted transition hover:bg-canvas hover:text-ink"
-            aria-label="返回图集"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4">
-              <path d="M15 5l-7 7 7 7" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-          </router-link>
-          <div class="min-w-0">
-            <p class="truncate text-sm font-semibold tracking-tight">设置</p>
-            <p class="mt-0.5 truncate text-xs text-muted">上游 · 发帖 · 自检 · 流量</p>
-          </div>
-        </div>
-        <router-link
-          :to="{ name: 'home' }"
-          class="inline-flex h-11 shrink-0 items-center rounded-full border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
-        >
-          返回图集
-        </router-link>
-      </div>
-
-      <nav class="flex gap-2 overflow-x-auto border-t border-line px-5 py-2 lg:hidden" aria-label="设置分组">
-        <a
-          v-for="item in SETTING_NAV"
-          :key="item.id"
-          :href="'#' + item.id"
-          class="inline-flex h-11 shrink-0 items-center rounded-full border px-3.5 text-xs font-medium transition"
-          :class="activeSection === item.id ? 'border-brand-soft bg-brand-soft text-ink' : 'border-line text-muted hover:bg-canvas hover:text-ink'"
-          @click="selectSection(item.id)"
-        >
-          {{ item.label }}
-        </a>
-      </nav>
-    </header>
+    <AppHeader />
 
     <main class="mx-auto w-full max-w-[1240px] px-5 py-7">
       <div class="flex items-start gap-8">

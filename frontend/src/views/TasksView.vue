@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ApiError } from '../api/client.ts'
 import { fetchTasks, pauseTask, resumeTask, stopTask, type TaskFilter, type TaskRow } from '../api/posts.ts'
 import { formatPublishedAt } from '../utils/gallery.ts'
+import AppHeader from '../components/AppHeader.vue'
 import {
   TASK_FILTERS,
   badgeOf,
@@ -29,6 +30,9 @@ const busyId = ref(0)
 let timer: ReturnType<typeof setInterval> | undefined
 // 请求序号用于丢弃迟到的响应：切筛选或翻页后，旧轮询不会覆盖新结果。
 let requestSeq = 0
+// 每页只保留一个在途请求；隐藏时停轮询，恢复可见立即补一次。
+const POLL_MS = 2000
+let inFlight = false
 
 const pages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
 const filtered = computed(() => filter.value !== '')
@@ -50,9 +54,9 @@ const STAGE_VALUE_CLASS: Record<TaskTone, string> = {
   muted: 'text-muted',
 }
 
-async function load(): Promise<void> {
+async function load(silent = false): Promise<void> {
   const seq = (requestSeq += 1)
-  loading.value = true
+  if (!silent) loading.value = true
   error.value = ''
   try {
     const result = await fetchTasks(page.value, pageSize, filter.value)
@@ -71,8 +75,40 @@ async function load(): Promise<void> {
     if (seq !== requestSeq) return
     error.value = cause instanceof ApiError ? cause.message : '读取任务失败，请稍后重试'
   } finally {
-    if (seq === requestSeq) loading.value = false
+    if (seq === requestSeq && !silent) loading.value = false
   }
+}
+
+// poll 只在页面可见且没有在途请求时刷新，避免叠加请求。
+async function poll(): Promise<void> {
+  if (inFlight || document.visibilityState === 'hidden') return
+  inFlight = true
+  try {
+    await load(true)
+  } finally {
+    inFlight = false
+  }
+}
+
+function startPolling(): void {
+  stopPolling()
+  timer = setInterval(() => void poll(), POLL_MS)
+}
+
+function stopPolling(): void {
+  if (timer === undefined) return
+  clearInterval(timer)
+  timer = undefined
+}
+
+// onVisibility 切回页面时立即补拉一次，离开时停掉轮询。
+function onVisibility(): void {
+  if (document.visibilityState === 'visible') {
+    void load(true)
+    startPolling()
+    return
+  }
+  stopPolling()
 }
 
 function setFilter(next: TaskFilter): void {
@@ -115,41 +151,19 @@ function go(delta: number): void {
 
 onMounted(() => {
   void load()
-  timer = setInterval(() => void load(), 10_000)
+  startPolling()
+  document.addEventListener('visibilitychange', onVisibility)
 })
 
 onBeforeUnmount(() => {
-  if (timer !== undefined) clearInterval(timer)
+  stopPolling()
+  document.removeEventListener('visibilitychange', onVisibility)
 })
 </script>
 
 <template>
   <div class="min-h-full">
-    <header class="sticky top-0 z-20 border-b border-line bg-surface">
-      <div class="mx-auto flex w-full max-w-[1240px] items-center justify-between gap-4 px-5 py-3">
-        <div class="flex min-w-0 items-center gap-1.5">
-          <router-link
-            :to="{ name: 'home' }"
-            class="-ml-2 flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted transition hover:bg-canvas hover:text-ink"
-            aria-label="返回图集"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4">
-              <path d="M15 5l-7 7 7 7" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-          </router-link>
-          <div class="min-w-0">
-            <p class="truncate text-sm font-semibold tracking-tight">任务</p>
-            <p class="mt-0.5 truncate text-xs text-muted">上传 · 存频道 · 发布</p>
-          </div>
-        </div>
-        <router-link
-          :to="{ name: 'workbench' }"
-          class="inline-flex h-11 shrink-0 items-center rounded-full bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong"
-        >
-          新建图集
-        </router-link>
-      </div>
-    </header>
+    <AppHeader />
 
     <main class="mx-auto w-full max-w-[960px] px-5 py-7">
       <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -157,17 +171,6 @@ onBeforeUnmount(() => {
         <p class="tnum rounded-full border border-line bg-surface px-2.5 py-0.5 text-xs text-muted">
           共 {{ total }} 个<template v-if="filtered"> · {{ filterLabel }}</template>
         </p>
-        <div class="flex w-full items-center justify-between gap-2 sm:ml-auto sm:w-auto">
-          <p class="text-xs text-muted">每 10 秒刷新一次</p>
-          <button
-            type="button"
-            class="inline-flex h-11 shrink-0 items-center rounded-full border border-line bg-surface px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
-            :disabled="loading"
-            @click="load"
-          >
-            {{ loading ? '刷新中…' : '刷新' }}
-          </button>
-        </div>
       </div>
 
       <div class="mt-3 max-w-full overflow-x-auto overscroll-x-contain">

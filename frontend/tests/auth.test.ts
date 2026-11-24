@@ -22,7 +22,7 @@ test('登录与初始化共用字标并支持密码显隐', () => {
   const mark = source('components/BrandMark.vue')
   assert.ok(mark.includes("'/sesegraph-wordmark.svg'"), '顶栏与登录共用完整艺术字标')
   assert.ok(mark.includes('184') && mark.includes('40'), '字标按原始比例缩放，避免拉伸')
-  assert.ok(source('views/HomeView.vue').includes('SeSe图册'), '顶栏保留响应式中文副标')
+  assert.ok(source('components/AppHeader.vue').includes('SeSe图册'), '全站顶栏保留中文副标')
   for (const file of ['views/LoginView.vue', 'views/SetupView.vue']) {
     assert.ok(source(file).includes('SeSe图册'), `${file} 保留中文副标`)
   }

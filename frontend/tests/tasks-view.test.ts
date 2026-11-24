@@ -3,14 +3,19 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 const source = readFileSync(new URL('../src/views/TasksView.vue', import.meta.url), 'utf8')
+// sourceFile 读取仓库内其它源文件，用于核对共享组件的结构。
+const sourceFile = (relative: string): string => readFileSync(new URL('../src/' + relative, import.meta.url), 'utf8')
 
-test('任务页沿用全站吸顶顶栏与返回结构', () => {
-  assert.ok(source.includes('sticky top-0 z-20 border-b border-line bg-surface'), '顶栏要吸顶并带底色')
-  assert.ok(source.includes('max-w-[1240px]'), '顶栏内宽与全站一致')
+test('任务页使用全站统一顶栏并移除手动刷新', () => {
+  assert.ok(source.includes('<AppHeader />'), '改用全站统一顶栏')
+  const header = sourceFile('components/AppHeader.vue')
+  assert.ok(header.includes('sticky top-0'), '顶栏要吸顶')
+  assert.ok(header.includes('max-w-[1240px]'), '顶栏内宽与全站一致')
   assert.ok(source.includes('max-w-[960px]'), '主内容收束，避免大屏单列过宽')
-  assert.ok(source.includes('aria-label="返回图集"'), '返回入口要有可读名称')
-  assert.ok(source.includes('上传 · 存频道 · 发布'), '副标题说明三段流程')
-  assert.ok(source.includes('bg-brand px-4'), '新建图集用日落珊瑚主色')
+  assert.equal(source.includes('每 10 秒刷新一次'), false, '不再展示定时刷新说明')
+  assert.equal(source.includes('刷新中…'), false, '不再提供手动刷新按钮')
+  assert.ok(source.includes('POLL_MS = 2000'), '可见时按 2 秒轮询')
+  assert.ok(source.includes("addEventListener('visibilitychange'"), '隐藏停轮询、恢复立即补拉')
 })
 
 test('筛选在窄屏局部横滑且不影响整页', () => {
