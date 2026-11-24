@@ -22,6 +22,7 @@ import { ApiError } from '../api/client.ts'
 import { makeCover } from '../utils/cover.ts'
 import { changeCover } from '../api/posts.ts'
 import { renderThumb } from '../utils/thumbs.ts'
+import { createSerialQueue } from '../utils/serial.ts'
 import {
   MAX_IMAGE_COUNT,
   extensionOf,
@@ -207,13 +208,13 @@ function onPreviewKeydown(event: KeyboardEvent): void {
   if (event.key === 'Escape') closePreview()
 }
 
-// thumbChain 让逐图小图串行生成：上传虽两路并行，解码仍只排一队，
+// thumbQueue 让逐图小图串行生成：上传虽两路并行，解码仍只排一队，
 // 避免同时把两张原图展开进内存，低配机器不会被解码峰值顶爆。
-let thumbChain: Promise<void> = Promise.resolve()
+const thumbQueue = createSerialQueue()
 
 // queueThumbQuietly 把一次生成排进串行队列，失败不会打断后续项。
 function queueThumbQuietly(postId: number, sortOrder: number, tile: WorkbenchTile, version: string): void {
-  thumbChain = thumbChain.then(() => storeThumbQuietly(postId, sortOrder, tile, version)).catch(() => {})
+  void thumbQueue.push(() => storeThumbQuietly(postId, sortOrder, tile, version))
 }
 
 // storeThumbQuietly 在上传成功后顺手生成 512px 小图并回存；
