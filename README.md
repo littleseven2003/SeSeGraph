@@ -39,7 +39,7 @@ SeSeGraph 是一个自托管的私人图册发布与管理程序。你把本地�
 
 1. 一台可访问 Telegram 与 Telegraph 接口（或可配置 HTTP/SOCKS5 代理）的 Linux 服务器。
 2. 一个已解析到该服务器的 HTTPS 域名（用于拼接外链、分享文案与 RSS）。
-3. 通过 [@BotFather](https://t.me/BotFather) 创建的 Telegram Bot Token，以及一个**私有频道**（需将该 Bot 设为频道管理员并授予发消息权限）。频道数字编号形如 `-1001234567890`，可把频道里的任意一条消息转发给 [@JsonDumpBot](https://t.me/JsonDumpBot)，在返回内容的 `forward_from_chat.id` 中取得。
+3. 通过 [@BotFather](https://t.me/BotFather) 创建的 Telegram Bot Token，以及一个**私有频道**（需将该 Bot 设为频道管理员并授予发消息权限）。频道数字编号形如 `-1001234567890`，拿法是用你自己的 Bot 读一次更新：把 Bot 设为频道管理员后在频道里发一条测试消息，再访问 `https://api.telegram.org/bot你的BotToken/getUpdates`，在返回 JSON 的 `channel_post.chat.id` 里就是该编号（读完后可在频道里撤回这条消息）。
 
 ## 核心特点
 
@@ -68,7 +68,7 @@ SeSeGraph 是一个自托管的私人图册发布与管理程序。你把本地�
 
 ## 界面预览
 
-| 图集详情（含浏览量与行内换封面） | 发布工作台 |
+| 图集详情（含浏览量、分享模板与媒体清单） | 发布工作台 |
 | :---: | :---: |
 | ![图集详情](docs/screenshots/gallery-detail.webp) | ![发布工作台](docs/screenshots/workbench.webp) |
 | 浏览量、分享文案与媒体清单（行内缩略图与设封面见上手指南） | 拖入图片/ZIP/MP4 即可排序、自动压缩并预填元信息 |
@@ -144,18 +144,21 @@ curl -fsS http://127.0.0.1:8080/api/health
 上面的单元只监听 `127.0.0.1:8080`，还需要一层 HTTPS 反向代理才能用域名访问：
 
 ```bash
-# Caddy：把 deploy/Caddyfile.example 里的域名改成自己的，然后加载
+# Caddy：示例里的 gallery.example.com 要换成你的域名，证书由 Caddy 自动申请；
+# 已有 Caddy 时不要覆盖整份配置，只把示例里的站点段合并进现有 Caddyfile。
 install -d /etc/caddy
-curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.4.2/deploy/Caddyfile.example -o /etc/caddy/Caddyfile
-$EDITOR /etc/caddy/Caddyfile
+curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.4.2/deploy/Caddyfile.example -o /tmp/sesegraph.caddy
+$EDITOR /tmp/sesegraph.caddy          # 改域名，必要时补 tls 证书路径
+cat /tmp/sesegraph.caddy >> /etc/caddy/Caddyfile
 systemctl reload caddy
 
-# 或 Nginx：参考 deploy/nginx.conf.example，注意关闭响应缓冲并放开请求体上限
+# 或 Nginx：文件名换成你的域名，证书路径改成实际证书；注意关闭响应缓冲并放开请求体上限
 curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.4.2/deploy/nginx.conf.example -o /etc/nginx/conf.d/sesegraph.conf
+$EDITOR /etc/nginx/conf.d/sesegraph.conf
 nginx -t && systemctl reload nginx
 ```
 
-反代生效后用 `https://你的域名/api/health` 确认可以访问，再回填 `.env` 里的 `PUBLIC_URL` 并重启服务。systemd 单元通过 `StateDirectory` 自动创建并授权 `/var/lib/sesegraph`。Linux（amd64/arm64）、macOS（arm64）与 Windows（amd64）产物及 `SHA256SUMS` 均在 Release 页面提供。
+反代生效后用 `https://你的域名/api/health` 确认可以访问，再把 `/etc/sesegraph/sesegraph.env` 里的 `PUBLIC_URL` 改成这个 HTTPS 地址并 `systemctl restart sesegraph`。systemd 单元通过 `StateDirectory` 自动创建并授权 `/var/lib/sesegraph`。Linux（amd64/arm64）、macOS（arm64）与 Windows（amd64）产物及 `SHA256SUMS` 均在 Release 页面提供。
 
 ## 上手指南
 
@@ -236,7 +239,13 @@ make cross                   # 交叉编译四个平台二进制
 
 - **自动迁移**：从 `v1.0.0` 起升级时，数据库会在启动时自动迁移到当前结构版本（版本 11），无需手工执行 SQL，旧图集顺序与链接保持不变。
 - **升级前备份**：建议先停止服务并复制整个数据目录，或在 **设置** 页点击 **「立即备份」** 生成一致性快照。
-- **Compose 更新**：确认 `.env` 中 `SESEGRAPH_VERSION` 为目标版本后执行 `docker compose pull sesegraph && docker compose up -d sesegraph`，宿主机数据目录与 Caddy 证书卷均会保留。
+- **Compose 更新**：先重新下载编排文件（新版本可能新增环境变量透传，只更新 `.env` 不会生效），再确认 `.env` 中 `SESEGRAPH_VERSION` 为目标版本：
+  ```bash
+  cd /opt/sesegraph
+  curl -fsSLO https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.4.2/docker-compose.yml
+  docker compose pull sesegraph && docker compose up -d sesegraph
+  ```
+  宿主机数据目录与 Caddy 证书卷均会保留。
 
 ## 版本与许可
 
