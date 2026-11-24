@@ -289,12 +289,13 @@ func TestPendingDeleteBlocksImageRetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建帖子失败: %v", err)
 	}
-	shortCode, err := env.posts.AttachImage(context.Background(), posts.Image{
+	attached, err := env.posts.AttachImage(context.Background(), posts.Image{
 		PostID: postID, SortOrder: 1, Status: posts.ImageStatusFailed, MimeType: "image/jpeg",
 	})
 	if err != nil {
 		t.Fatalf("保存图片失败: %v", err)
 	}
+	shortCode := attached.ShortCode
 	if _, err := env.handle.Exec(`UPDATE post_images SET status = ? WHERE short_code = ?`, posts.ImageStatusFailed, shortCode); err != nil {
 		t.Fatalf("写入失败状态失败: %v", err)
 	}

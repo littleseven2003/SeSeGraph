@@ -103,8 +103,11 @@ func TestAttachImageReplacesSameOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("重复保存图片失败: %v", err)
 	}
-	if previous != "tmp/1/first.part" {
-		t.Errorf("应返回被替换的旧路径，实际 %q", previous)
+	if previous.PreviousTemp != "tmp/1/first.part" {
+		t.Errorf("应返回被替换的旧路径，实际 %q", previous.PreviousTemp)
+	}
+	if len(previous.MediaVersion) != 12 {
+		t.Errorf("覆盖上传应分配新的内容版本，实际 %q", previous.MediaVersion)
 	}
 
 	images, err := repo.ListImages(ctx, id)

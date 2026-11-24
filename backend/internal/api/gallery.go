@@ -50,6 +50,10 @@ type galleryImageResponse struct {
 	MIME      string `json:"mime_type"`
 	FileSize  int64  `json:"file_size"`
 	Status    string `json:"status"`
+	// MediaVersion 是内容版本，客户端生成缩略图后带上它回存。
+	MediaVersion string `json:"media_version"`
+	// ThumbURL 有值时直接取这份小图，不再回源原媒体。
+	ThumbURL string `json:"thumb_url"`
 }
 
 // galleryDetailResponse 是帖子详情的接口结构。
@@ -229,11 +233,18 @@ func postDetailHandler(deps Deps) gin.HandlerFunc {
 		images := make([]galleryImageResponse, 0, len(detail.Images))
 		for _, image := range detail.Images {
 			images = append(images, galleryImageResponse{
-				SortOrder: image.SortOrder,
-				ShortCode: image.ShortCode,
-				MIME:      image.MimeType,
-				FileSize:  image.FileSize,
-				Status:    image.Status,
+				SortOrder:    image.SortOrder,
+				ShortCode:    image.ShortCode,
+				MIME:         image.MimeType,
+				FileSize:     image.FileSize,
+				Status:       image.Status,
+				MediaVersion: image.MediaVersion,
+				ThumbURL: mediaThumbURL(&posts.Image{
+					PostID:       postID,
+					SortOrder:    image.SortOrder,
+					MediaVersion: image.MediaVersion,
+					ThumbPath:    image.ThumbPath,
+				}),
 			})
 		}
 		paths := detail.Paths

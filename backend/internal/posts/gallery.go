@@ -96,6 +96,10 @@ type GalleryImage struct {
 	MimeType  string
 	FileSize  int64
 	Status    string
+	// MediaVersion 是内容版本，客户端回存缩略图时带上它。
+	MediaVersion string
+	// ThumbPath 非空表示已有逐图小图。
+	ThumbPath string
 }
 
 // GalleryDetail 是帖子详情，包含正文、进度与图片清单。
@@ -295,7 +299,8 @@ func (r *Repository) GalleryDetail(ctx context.Context, id int64) (*GalleryDetai
 // galleryImages 读取详情的图片清单，按序号升序。
 func (r *Repository) galleryImages(ctx context.Context, postID int64) ([]GalleryImage, error) {
 	rows, err := r.handle.QueryContext(ctx,
-		`SELECT sort_order, short_code, mime_type, file_size, status
+		`SELECT sort_order, short_code, mime_type, file_size, status,
+		        COALESCE(media_version, ''), COALESCE(thumb_path, '')
 		 FROM post_images WHERE post_id = ? ORDER BY sort_order`, postID)
 	if err != nil {
 		return nil, errors.New("读取图片清失败")
@@ -306,7 +311,7 @@ func (r *Repository) galleryImages(ctx context.Context, postID int64) ([]Gallery
 	for rows.Next() {
 		var image GalleryImage
 		if err := rows.Scan(&image.SortOrder, &image.ShortCode, &image.MimeType,
-			&image.FileSize, &image.Status); err != nil {
+			&image.FileSize, &image.Status, &image.MediaVersion, &image.ThumbPath); err != nil {
 			return nil, errors.New("读取图片清单失败")
 		}
 		images = append(images, image)

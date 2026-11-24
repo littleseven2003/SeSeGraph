@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"math/big"
@@ -111,6 +112,13 @@ type Image struct {
 	RemoteFileID string
 	Status       string
 	ErrorMessage string
+	// MediaVersion 是这段媒体的内容版本，每次覆盖上传都会换新值。
+	MediaVersion string
+	// ThumbPath 是逐图缩略图相对数据目录的路径，空表示还没有。
+	ThumbPath  string
+	ThumbBytes int64
+	// ThumbAt 是缩略图写入时间，用于判断新鲜度。
+	ThumbAt string
 }
 
 // Repository 负责帖子与图片记录的读写。
@@ -777,11 +785,18 @@ func (r *Repository) SetCoverSelectionGuarded(ctx context.Context, id int64, sor
 // ImageByOrder 读取指定序号的图片记录，供管理员受控预览使用。
 func (r *Repository) ImageByOrder(ctx context.Context, postID int64, sortOrder int) (*Image, error) {
 	image := &Image{PostID: postID}
+	var thumbAt sql.NullString
 	err := r.handle.QueryRowContext(ctx,
-		`SELECT id, sort_order, short_code, mime_type, file_size, temp_file_path, remote_file_id, status
+		`SELECT id, sort_order, short_code, mime_type, file_size, temp_file_path, remote_file_id, status,
+		        COALESCE(media_version, ''), COALESCE(thumb_path, ''), COALESCE(thumb_bytes, 0),
+		        thumb_at
 		 FROM post_images WHERE post_id = ? AND sort_order = ?`, postID, sortOrder).
 		Scan(&image.ID, &image.SortOrder, &image.ShortCode, &image.MimeType, &image.FileSize,
-			&image.TempFilePath, &image.RemoteFileID, &image.Status)
+			&image.TempFilePath, &image.RemoteFileID, &image.Status,
+			&image.MediaVersion, &image.ThumbPath, &image.ThumbBytes, &thumbAt)
+	if thumbAt.Valid {
+		image.ThumbAt = thumbAt.String
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -831,22 +846,34 @@ func (r *Repository) UpdateStatus(ctx context.Context, id int64, status string) 
 	return nil
 }
 
+// AttachResult 汇总一次写图记录的结果：新内容版本、被替换的临时文件与缩略图。
+type AttachResult struct {
+	// MediaVersion 是这次上传新分配的内容版本，客户端生成缩略图时带上它。
+	MediaVersion string
+	// ShortCode 是这一项的短码，未生成时为本次新分配的取值。
+	ShortCode string
+	// PreviousTemp 是被替换掉的原媒体临时文件，调用方负责删除。
+	PreviousTemp string
+	// PreviousThumb 是被替换掉的缩略图路径，调用方负责删除。
+	PreviousThumb string
+}
+
 // AttachImage 在短事务内复核帖子状态并写入唯一的 (post_id, sort_order) 记录。
-// 返回被替换掉的旧文件路径（与本次路径相同时返回空），由调用方负责删除。
-func (r *Repository) AttachImage(ctx context.Context, image Image) (string, error) {
+// 返回被替换掉的旧文件与缩略图，由调用方负责删除。
+func (r *Repository) AttachImage(ctx context.Context, image Image) (AttachResult, error) {
 	return r.attachImage(ctx, image, -1)
 }
 
 // AttachImageWithRound 在写图记录前复核任务仍运行且上传轮次一致。
 // 暂停后迅速恢复会递增轮次，暂停前发出的迟到请求因此被拒绝。
-func (r *Repository) AttachImageWithRound(ctx context.Context, image Image, round int) (string, error) {
+func (r *Repository) AttachImageWithRound(ctx context.Context, image Image, round int) (AttachResult, error) {
 	return r.attachImage(ctx, image, round)
 }
 
-func (r *Repository) attachImage(ctx context.Context, image Image, round int) (string, error) {
+func (r *Repository) attachImage(ctx context.Context, image Image, round int) (AttachResult, error) {
 	tx, err := r.handle.BeginTx(ctx, nil)
 	if err != nil {
-		return "", errors.New("开启图片事务失败")
+		return AttachResult{}, errors.New("开启图片事务失败")
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -856,58 +883,159 @@ func (r *Repository) attachImage(ctx context.Context, image Image, round int) (s
 		`SELECT status, COALESCE(control_state, 'running'), COALESCE(upload_round, 0)
 		 FROM posts WHERE id = ?`, image.PostID).Scan(&status, &control, &currentRound)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", ErrNotFound
+		return AttachResult{}, ErrNotFound
 	}
 	if err != nil {
-		return "", errors.New("读取帖子状态失败")
+		return AttachResult{}, errors.New("读取帖子状态失败")
 	}
 	if control != ControlRunning {
-		return "", ErrControlInvalid
+		return AttachResult{}, ErrControlInvalid
 	}
 	if round >= 0 && round != currentRound {
-		return "", ErrControlInvalid
+		return AttachResult{}, ErrControlInvalid
 	}
 	if status != StatusUploading {
-		return "", ErrNotUploading
+		return AttachResult{}, ErrNotUploading
 	}
 
-	var previous string
+	var previous, previousThumb string
 	err = tx.QueryRowContext(ctx,
-		`SELECT temp_file_path FROM post_images WHERE post_id = ? AND sort_order = ?`,
-		image.PostID, image.SortOrder).Scan(&previous)
+		`SELECT temp_file_path, COALESCE(thumb_path, '') FROM post_images WHERE post_id = ? AND sort_order = ?`,
+		image.PostID, image.SortOrder).Scan(&previous, &previousThumb)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return "", errors.New("读取图片记录失败")
+		return AttachResult{}, errors.New("读取图片记录失败")
 	}
 
 	if image.ShortCode == "" {
 		code, codeErr := newShortCode()
 		if codeErr != nil {
-			return "", codeErr
+			return AttachResult{}, codeErr
 		}
 		image.ShortCode = code
 	}
 
+	// 每次覆盖上传都换一个内容版本，并用它作废旧缩略图记录。
+	version, versionErr := newMediaVersion()
+	if versionErr != nil {
+		return AttachResult{}, versionErr
+	}
+
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO post_images (post_id, sort_order, short_code, mime_type, file_size, temp_file_path, status)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO post_images (post_id, sort_order, short_code, mime_type, file_size, temp_file_path, status, media_version)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(post_id, sort_order) DO UPDATE SET
 			mime_type = excluded.mime_type,
 			file_size = excluded.file_size,
 			temp_file_path = excluded.temp_file_path,
 			status = excluded.status,
-			error_message = ''`,
-		image.PostID, image.SortOrder, image.ShortCode, image.MimeType, image.FileSize, image.TempFilePath, image.Status,
+			error_message = '',
+			media_version = excluded.media_version,
+			thumb_path = '',
+			thumb_bytes = 0,
+			thumb_at = NULL`,
+		image.PostID, image.SortOrder, image.ShortCode, image.MimeType, image.FileSize, image.TempFilePath,
+		image.Status, version,
 	); err != nil {
-		return "", errors.New("保存图片记录失败")
+		return AttachResult{}, errors.New("保存图片记录失败")
 	}
 
 	if err := tx.Commit(); err != nil {
-		return "", errors.New("提交图片事务失败")
+		return AttachResult{}, errors.New("提交图片事务失败")
 	}
 	if previous == image.TempFilePath {
 		previous = ""
 	}
-	return previous, nil
+	if previousThumb == "" {
+		return AttachResult{MediaVersion: version, ShortCode: image.ShortCode, PreviousTemp: previous}, nil
+	}
+	return AttachResult{
+		MediaVersion:  version,
+		ShortCode:     image.ShortCode,
+		PreviousTemp:  previous,
+		PreviousThumb: previousThumb,
+	}, nil
+}
+
+// ErrStaleMedia 表示缩略图对应的媒体内容已被替换，写入被拒绝。
+var ErrStaleMedia = errors.New("媒体内容已更新")
+
+// ErrThumbMismatch 表示缩略图请求与当前记录不匹配。
+var ErrThumbMismatch = errors.New("缩略图与媒体不匹配")
+
+// SetThumb 记录缩略图落盘结果，只接受与当前内容版本一致的写入。
+// 迟到的请求不会覆盖替换后媒体的缩略图，也不会把旧版本的文件记到新记录上。
+func (r *Repository) SetThumb(ctx context.Context, postID int64, sortOrder int, version, relPath string, size int64) error {
+	result, err := r.handle.ExecContext(ctx,
+		`UPDATE post_images
+		    SET thumb_path = ?, thumb_bytes = ?, thumb_at = CURRENT_TIMESTAMP
+		  WHERE post_id = ? AND sort_order = ? AND COALESCE(media_version, '') = ?`,
+		relPath, size, postID, sortOrder, version)
+	if err != nil {
+		return errors.New("保存缩略图记录失败")
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return ErrStaleMedia
+	}
+	return nil
+}
+
+// ClearThumb 清掉某一项的缩略图记录，用于淘汰或重建。
+func (r *Repository) ClearThumb(ctx context.Context, postID int64, sortOrder int) error {
+	_, err := r.handle.ExecContext(ctx,
+		`UPDATE post_images SET thumb_path = '', thumb_bytes = 0, thumb_at = NULL
+		  WHERE post_id = ? AND sort_order = ?`, postID, sortOrder)
+	if err != nil {
+		return errors.New("清除缩略图记录失败")
+	}
+	return nil
+}
+
+// ClearAllThumbRecords 清掉全部缩略图记录，用于设置页的整体清理。
+func (r *Repository) ClearAllThumbRecords(ctx context.Context) error {
+	if _, err := r.handle.ExecContext(ctx,
+		`UPDATE post_images SET thumb_path = '', thumb_bytes = 0, thumb_at = NULL
+		  WHERE COALESCE(thumb_path, '') <> ''`); err != nil {
+		return errors.New("清理缩略图记录失败")
+	}
+	return nil
+}
+
+// ListMissingThumbs 返回某帖中还没有缩略图的静态媒体序号，供有界回填使用。
+func (r *Repository) ListMissingThumbs(ctx context.Context, postID int64) ([]Image, error) {
+	rows, err := r.handle.QueryContext(ctx,
+		`SELECT sort_order, mime_type, file_size, COALESCE(media_version, '')
+		   FROM post_images
+		  WHERE post_id = ? AND status = ? AND COALESCE(thumb_path, '') = ''
+		    AND mime_type NOT LIKE 'video/%'
+		  ORDER BY sort_order`, postID, ImageStatusStored)
+	if err != nil {
+		return nil, errors.New("读取待补缩略图失败")
+	}
+	defer func() { _ = rows.Close() }()
+
+	items := make([]Image, 0, 16)
+	for rows.Next() {
+		var item Image
+		item.PostID = postID
+		if err := rows.Scan(&item.SortOrder, &item.MimeType, &item.FileSize, &item.MediaVersion); err != nil {
+			return nil, errors.New("读取待补缩略图失败")
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.New("读取待补缩略图失败")
+	}
+	return items, nil
+}
+
+// newMediaVersion 生成 12 位十六进制内容版本，用作缩略图文件名与写入校验。
+func newMediaVersion() (string, error) {
+	buffer := make([]byte, 6)
+	if _, err := rand.Read(buffer); err != nil {
+		return "", errors.New("生成媒体版本失败")
+	}
+	return hex.EncodeToString(buffer), nil
 }
 
 // FreezePublishPath 在首次入队时写入链接生成方式与随机短码，已有取值时不覆盖。

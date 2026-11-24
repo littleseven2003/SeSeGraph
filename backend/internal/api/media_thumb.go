@@ -1,0 +1,152 @@
+package api
+
+import (
+	"errors"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/media"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
+)
+
+// maxThumbBodyBytes 是缩略图上传请求体上限，比硬上限留一点余量用于拒绝超限。
+const maxThumbBodyBytes = media.MaxBytes + 1024
+
+// mediaThumbURL 返回某一项的小图地址；没有落盘记录时为空，客户端据此显示占位。
+func mediaThumbURL(image *posts.Image) string {
+	if image == nil || strings.TrimSpace(image.ThumbPath) == "" || image.MediaVersion == "" {
+		return ""
+	}
+	return "/api/posts/" + strconv.FormatInt(image.PostID, 10) + "/media/" + strconv.Itoa(image.SortOrder) +
+		"/thumb?v=" + image.MediaVersion
+}
+
+// mediaThumbHandler 读取逐图缩略图：命中时直接返回 WebP，不再回源原媒体。
+func mediaThumbHandler(deps Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		postID, sortOrder, ok := thumbTarget(c)
+		if !ok {
+			return
+		}
+		image, err := deps.Posts.ImageByOrder(c.Request.Context(), postID, sortOrder)
+		if errors.Is(err, posts.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "缩略图不存在"})
+			return
+		}
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取缩略图失败"})
+			return
+		}
+		if strings.TrimSpace(image.ThumbPath) == "" {
+			c.JSON(http.StatusNotFound, gin.H{"error": "缩略图不存在"})
+			return
+		}
+
+		file, info, openErr := media.Open(deps.DataDir, image.ThumbPath)
+		if openErr != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "缩略图不存在"})
+			return
+		}
+		defer func() { _ = file.Close() }()
+
+		// 访问时间即 LRU 依据，命中就前移一位。
+		media.Touch(deps.DataDir, image.ThumbPath)
+		c.Header("Content-Type", "image/webp")
+		c.Header("Cache-Control", "private, max-age=60")
+		c.Header("X-Content-Type-Options", "nosniff")
+		http.ServeContent(c.Writer, c.Request, strconv.Itoa(image.SortOrder)+".webp", info.ModTime(), file)
+	}
+}
+
+// mediaThumbUploadHandler 接收客户端生成的缩略图并落盘。
+// 只接受与当前内容版本一致的写入，迟到的请求会被拒绝，不会覆盖替换后的媒体。
+func mediaThumbUploadHandler(deps Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		postID, sortOrder, ok := thumbTarget(c)
+		if !ok {
+			return
+		}
+		version := strings.TrimSpace(c.Query("version"))
+		if !media.ValidVersion(version) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "缩略图版本不合法"})
+			return
+		}
+
+		image, err := deps.Posts.ImageByOrder(c.Request.Context(), postID, sortOrder)
+		switch {
+		case errors.Is(err, posts.ErrNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": "图片不存在"})
+			return
+		case err != nil:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取图片失败"})
+			return
+		}
+		if image.MediaVersion != version {
+			c.JSON(http.StatusConflict, gin.H{"error": "媒体内容已更新，请重新生成缩略图"})
+			return
+		}
+
+		body, readErr := io.ReadAll(io.LimitReader(c.Request.Body, maxThumbBodyBytes+1))
+		if readErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "读取缩略图失败"})
+			return
+		}
+		if int64(len(body)) > maxThumbBodyBytes {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "缩略图超过上限"})
+			return
+		}
+
+		relPath, size, storeErr := media.Store(deps.DataDir, postID, sortOrder, version, body)
+		switch {
+		case errors.Is(storeErr, media.ErrTooLarge):
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "缩略图超过上限"})
+			return
+		case errors.Is(storeErr, media.ErrInvalidThumb):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "缩略图内容不合法"})
+			return
+		case storeErr != nil:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存缩略图失败"})
+			return
+		}
+
+		if err := deps.Posts.SetThumb(c.Request.Context(), postID, sortOrder, version, relPath, size); err != nil {
+			// 记录没写成时删掉刚写的文件，避免留下无人引用的副本。
+			media.Remove(deps.DataDir, relPath)
+			if errors.Is(err, posts.ErrStaleMedia) {
+				c.JSON(http.StatusConflict, gin.H{"error": "媒体内容已更新，请重新生成缩略图"})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存缩略图失败"})
+			return
+		}
+
+		// 换成新文件后清掉上一份，磁盘只留当前版本。
+		if image.ThumbPath != "" && image.ThumbPath != relPath {
+			media.Remove(deps.DataDir, image.ThumbPath)
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"stored":    true,
+			"bytes":     size,
+			"thumb_url": "/api/posts/" + strconv.FormatInt(postID, 10) + "/media/" + strconv.Itoa(sortOrder) + "/thumb?v=" + version,
+		})
+	}
+}
+
+// thumbTarget 解析路径里的帖子编号与序号。
+func thumbTarget(c *gin.Context) (int64, int, bool) {
+	postID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || postID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "帖子编号不合法"})
+		return 0, 0, false
+	}
+	sortOrder, err := strconv.Atoi(c.Param("sort"))
+	if err != nil || sortOrder <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "序号不合法"})
+		return 0, 0, false
+	}
+	return postID, sortOrder, true
+}

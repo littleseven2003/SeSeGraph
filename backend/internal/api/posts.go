@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/media"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/settings"
 )
@@ -104,6 +105,11 @@ func deletePostHandler(deps Deps) gin.HandlerFunc {
 			}
 		}
 		if err := os.RemoveAll(filepath.Join(deps.DataDir, "tmp", strconv.FormatInt(postID, 10))); err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "本地文件清理失败，已保留待删除记录，可稍后重试"})
+			return
+		}
+		// 逐图缩略图跟着帖子一起清掉，避免留下无人引用的缓存。
+		if err := media.RemovePost(deps.DataDir, postID); err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "本地文件清理失败，已保留待删除记录，可稍后重试"})
 			return
 		}

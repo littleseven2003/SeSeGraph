@@ -108,6 +108,7 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		BackupEnabled:     envValue(lookupEnv, "BACKUP_ENABLED"),
 		BackupTime:        backupTimeEnv(lookupEnv),
 		BackupKeep:        envValue(lookupEnv, "BACKUP_KEEP"),
+		MediaThumbLimit:   envValue(lookupEnv, "MEDIA_THUMB_LIMIT_BYTES"),
 	})
 	effective, err := resolver.Effective(ctx)
 	if err != nil {

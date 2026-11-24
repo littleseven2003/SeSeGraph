@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/media"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
 )
 
@@ -166,8 +167,9 @@ func uploadImageHandler(deps Deps, limiter *uploadLimiter) gin.HandlerFunc {
 		}, round)
 		switch {
 		case attachErr == nil:
-			// 覆盖旧序号后清理被替换的文件。
-			posts.RemoveTempFile(deps.DataDir, previous)
+			// 覆盖旧序号后清理被替换的原文件与缩略图。
+			posts.RemoveTempFile(deps.DataDir, previous.PreviousTemp)
+			media.Remove(deps.DataDir, previous.PreviousThumb)
 		case errors.Is(attachErr, posts.ErrNotFound):
 			posts.RemoveTempFile(deps.DataDir, saved.Path)
 			c.JSON(http.StatusNotFound, gin.H{"error": "帖子不存在"})
@@ -187,6 +189,7 @@ func uploadImageHandler(deps Deps, limiter *uploadLimiter) gin.HandlerFunc {
 		}
 
 		c.JSON(http.StatusOK, gin.H{
+			"media_version": previous.MediaVersion,
 			"post_id":    postID,
 			"sort_order": sortOrder,
 			"file_size":  saved.FileSize,

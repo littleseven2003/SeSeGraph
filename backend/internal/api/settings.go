@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/media"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/netclient"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/provider"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/settings"
@@ -92,6 +93,13 @@ type settingsView struct {
 		DefaultMode string `json:"default_mode"`
 		ModeSource  string `json:"mode_source"`
 	} `json:"upload"`
+	// MediaThumbs 汇报逐图缩略图缓存的上限、占用与条目数。
+	MediaThumbs struct {
+		LimitBytes  int64  `json:"limit_bytes"`
+		LimitSource string `json:"limit_source"`
+		UsedBytes   int64  `json:"used_bytes"`
+		Count       int    `json:"count"`
+	} `json:"media_thumbs"`
 	// Meta 是压缩包说明文件的候选名与默认解析方式。
 	Meta struct {
 		Filenames []string `json:"filenames"`
@@ -127,7 +135,7 @@ func splitMetaFilenames(raw string) []string {
 }
 
 // buildSettingsView 汇总生效配置。敏感项只输出布尔标记。
-func buildSettingsView(effective settings.Effective, publicURL string) settingsView {
+func buildSettingsView(effective settings.Effective, publicURL, dataDir string) settingsView {
 	view := settingsView{PublicURL: publicURL, EnvManaged: []string{}}
 	view.Telegram.TokenSet = effective.TelegramToken.Set()
 	view.Telegram.TokenSource = effective.TelegramToken.Source
@@ -163,6 +171,9 @@ func buildSettingsView(effective settings.Effective, publicURL string) settingsV
 	view.Telegraph.PathModeSource = effective.TelegraphPathMode.Source
 	view.Upload.DefaultMode = effective.UploadMode.Value
 	view.Upload.ModeSource = effective.UploadMode.Source
+	view.MediaThumbs.LimitBytes = parseIntValue(effective.MediaThumbLimit.Value)
+	view.MediaThumbs.LimitSource = effective.MediaThumbLimit.Source
+	view.MediaThumbs.UsedBytes, view.MediaThumbs.Count = media.Usage(dataDir)
 	view.Meta.Filenames = splitMetaFilenames(effective.MetaFilenames.Value)
 	view.Meta.ParseMode = effective.MetaParseMode.Value
 	view.Meta.Source = effective.MetaFilenames.Source
@@ -188,6 +199,7 @@ func buildSettingsView(effective settings.Effective, publicURL string) settingsV
 		{"backup.enabled", effective.BackupEnabled},
 		{"backup.time", effective.BackupTime},
 		{"backup.keep", effective.BackupKeep},
+		{"media_thumbs.limit_bytes", effective.MediaThumbLimit},
 	}
 	for _, field := range fields {
 		if field.value.Source == settings.SourceEnv {
@@ -227,7 +239,7 @@ func settingsHandler(deps Deps) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取配置失败"})
 			return
 		}
-		c.JSON(http.StatusOK, buildSettingsView(effective, deps.PublicURL))
+		c.JSON(http.StatusOK, buildSettingsView(effective, deps.PublicURL, deps.DataDir))
 	}
 }
 
@@ -254,6 +266,9 @@ type settingsPatchRequest struct {
 		Time    *string `json:"time"`
 		Keep    *int64  `json:"keep"`
 	} `json:"backup"`
+	MediaThumbs *struct {
+		LimitBytes *int64 `json:"limit_bytes"`
+	} `json:"media_thumbs"`
 	Meta *struct {
 		Filenames *[]string `json:"filenames"`
 		ParseMode *string   `json:"parse_mode"`
@@ -298,6 +313,9 @@ func (r settingsPatchRequest) toPatch() settings.Patch {
 	if r.Meta != nil {
 		patch.MetaFilenames = r.Meta.Filenames
 		patch.MetaParseMode = r.Meta.ParseMode
+	}
+	if r.MediaThumbs != nil {
+		patch.MediaThumbLimit = r.MediaThumbs.LimitBytes
 	}
 	return patch
 }
@@ -429,7 +447,29 @@ func updateSettingsHandler(deps Deps) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取配置失败"})
 			return
 		}
-		c.JSON(http.StatusOK, buildSettingsView(effective, deps.PublicURL))
+		// 上限调小后立刻按最近最少使用淘汰，占用不会停在旧水位。
+		if patch.MediaThumbLimit != nil {
+			_, _, _ = media.Evict(deps.DataDir, parseIntValue(effective.MediaThumbLimit.Value))
+		}
+		c.JSON(http.StatusOK, buildSettingsView(effective, deps.PublicURL, deps.DataDir))
+	}
+}
+
+// mediaThumbClearHandler 清空逐图缩略图缓存，返回删除数与释放字节数。
+func mediaThumbClearHandler(deps Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		count, freed, err := media.Clear(deps.DataDir)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "清理缩略图失败"})
+			return
+		}
+		if deps.Posts != nil {
+			if err := deps.Posts.ClearAllThumbRecords(c.Request.Context()); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "清理缩略图记录失败"})
+				return
+			}
+		}
+		c.JSON(http.StatusOK, gin.H{"removed": count, "freed_bytes": freed})
 	}
 }
 

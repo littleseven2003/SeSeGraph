@@ -8,7 +8,7 @@ import (
 )
 
 // SchemaVersion 是当前代码期望的数据库结构版本，写入 SQLite 的 user_version。
-const SchemaVersion = 11
+const SchemaVersion = 12
 
 // schemaStatements 是首次建库所需的语句，顺序即执行顺序。
 var schemaStatements = []string{
@@ -173,6 +173,20 @@ func Migrate(ctx context.Context, handle *sql.DB) error {
 	if _, err := tx.ExecContext(ctx,
 		`CREATE INDEX IF NOT EXISTS idx_post_tags_tag_id ON post_tags(tag_id)`); err != nil {
 		return errors.New("创建标签索引失败")
+	}
+	// 旧库升级：逐图缩略图的内容版本与落盘记录。内容版本随每次覆盖上传刷新，
+	// 迟到的缩略图请求带着旧版本会被拒绝，不会覆盖替换后的媒体。
+	if err := ensureColumn(ctx, tx, "post_images", "media_version", "ALTER TABLE post_images ADD COLUMN media_version TEXT DEFAULT ''"); err != nil {
+		return errors.New("升级媒体内容版本失败")
+	}
+	if err := ensureColumn(ctx, tx, "post_images", "thumb_path", "ALTER TABLE post_images ADD COLUMN thumb_path TEXT DEFAULT ''"); err != nil {
+		return errors.New("升级小图路径失败")
+	}
+	if err := ensureColumn(ctx, tx, "post_images", "thumb_bytes", "ALTER TABLE post_images ADD COLUMN thumb_bytes INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return errors.New("升级小图体积失败")
+	}
+	if err := ensureColumn(ctx, tx, "post_images", "thumb_at", "ALTER TABLE post_images ADD COLUMN thumb_at DATETIME DEFAULT NULL"); err != nil {
+		return errors.New("升级小图时间失败")
 	}
 	// 旧库升级：首次入队时冻结的链接生成方式与随机短码，重启后沿用同一套取值。
 	if err := ensureColumn(ctx, tx, "posts", "publish_path_mode", "ALTER TABLE posts ADD COLUMN publish_path_mode TEXT DEFAULT ''"); err != nil {
