@@ -207,6 +207,15 @@ function onPreviewKeydown(event: KeyboardEvent): void {
   if (event.key === 'Escape') closePreview()
 }
 
+// thumbChain 让逐图小图串行生成：上传虽两路并行，解码仍只排一队，
+// 避免同时把两张原图展开进内存，低配机器不会被解码峰值顶爆。
+let thumbChain: Promise<void> = Promise.resolve()
+
+// queueThumbQuietly 把一次生成排进串行队列，失败不会打断后续项。
+function queueThumbQuietly(postId: number, sortOrder: number, tile: WorkbenchTile, version: string): void {
+  thumbChain = thumbChain.then(() => storeThumbQuietly(postId, sortOrder, tile, version)).catch(() => {})
+}
+
 // storeThumbQuietly 在上传成功后顺手生成 512px 小图并回存；
 // 任何失败都只当作缓存缺失，不影响存图与发布。
 async function storeThumbQuietly(
@@ -1098,8 +1107,8 @@ async function runUpload(): Promise<void> {
       try {
         const uploaded = await uploadImage(id, item.sortOrder, item.tile.blob, item.tile.mime, round, uploadAbort?.signal)
         statuses.value = { ...statuses.value, [item.sortOrder]: 'uploaded' }
-        // 小图失败不影响存图与发布：服务端缺这份时抽屉会按需补。
-        void storeThumbQuietly(id, item.sortOrder, item.tile, uploaded.media_version)
+        // 小图失败不影响存图与发布：服务端缺这份时抽屉会按需补。生成与回存走串行队列。
+        queueThumbQuietly(id, item.sortOrder, item.tile, uploaded.media_version)
       } catch (error) {
         statuses.value = { ...statuses.value, [item.sortOrder]: 'failed' }
         throw error
