@@ -52,6 +52,7 @@ test('放大气泡用 Teleport 出裁切容器，左侧定位并受安全区约�
   assert.ok(source.includes("scroller.value?.addEventListener('scroll', onScrollerScroll"), '滚动时收起')
   assert.ok(source.includes("window.addEventListener('resize', onViewportResize)"), '窗口缩放时重新锚定')
   assert.ok(source.includes('@click="togglePreview(image.sort_order, $event)"'), '触控可点击预览')
+  assert.ok(source.includes('previewOpenedAt'), '同一次点按的 hover 不会把气泡立刻关掉')
   assert.ok(source.includes("teardownThumbs()"), '关闭或切帖释放缩略图与观察器')
 })
 

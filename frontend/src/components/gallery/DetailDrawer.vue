@@ -92,6 +92,8 @@ let coverAbort: AbortController | null = null
 let thumbPostId = 0
 let observer: IntersectionObserver | null = null
 let previewAnchor: HTMLElement | null = null
+// 触屏点按前浏览器可能补发一次 mouseenter，记下打开时刻避免同一次点按把它立刻关掉。
+let previewOpenedAt = 0
 // 气泡尺寸固定，方便定位时先按预估高度钳制，加载完成后再校正。
 const PREVIEW_WIDTH = 240
 const PREVIEW_HEIGHT = 264
@@ -482,6 +484,7 @@ function openPreview(order: number, event: Event): void {
   thumbs?.unpin(previewOrder.value)
   previewAnchor = target
   previewOrder.value = order
+  previewOpenedAt = Date.now()
   thumbs?.pin(order)
   previewLoading.value = !thumbUrls.value.has(order)
   previewFailed.value = false
@@ -516,11 +519,14 @@ function closePreview(): void {
   previewLoading.value = false
   previewFailed.value = false
   previewAnchor = null
+  previewOpenedAt = 0
 }
 
 // togglePreview 供触控与键盘使用：点一下打开，再点关闭。
+// 刚由同一次点按的 hover 补发打开时保持展开，避免触屏上一点就闪没。
 function togglePreview(order: number, event: Event): void {
   if (previewOrder.value === order) {
+    if (Date.now() - previewOpenedAt < 500) return
     closePreview()
     return
   }
