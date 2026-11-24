@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"testing"
 )
@@ -112,6 +113,70 @@ func TestStagesRejectCompressedCountOverflow(t *testing.T) {
 
 	rec := env.do(t, http.MethodPost, "/api/posts",
 		`{"title":"越界","image_count":2,"compressed_count":3}`, cookie)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("状态码 = %d，期望 400", rec.Code)
+	}
+}
+
+// TestCreatePostPublishIntent 验证提交时的发布意图落库，并在建任务时冻结链接口径；
+// 仅存图与旧任务保持空意图，不改变原有发布权限。
+func TestCreatePostPublishIntent(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	cookie := env.setup(t)
+
+	rec := env.do(t, http.MethodPost, "/api/posts",
+		`{"title":"提交并发布","image_count":1,"publish_intent":"auto"}`, cookie)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("状态码 = %d，响应: %s", rec.Code, rec.Body.String())
+	}
+	var created struct {
+		ID            int64  `json:"id"`
+		PublishIntent string `json:"publish_intent"`
+	}
+	if err := decodeJSON(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("解析响应失败: %v", err)
+	}
+	if created.PublishIntent != "auto" {
+		t.Errorf("发布意图 = %q，期望 auto", created.PublishIntent)
+	}
+	info, err := env.posts.PublishInfo(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("读取发布信息失败: %v", err)
+	}
+	if info.PathMode != "title" {
+		t.Errorf("冻结的链接口径 = %q，期望 title", info.PathMode)
+	}
+
+	// 仅存图不冻结口径，也不带意图。
+	rec = env.do(t, http.MethodPost, "/api/posts", `{"title":"仅存图","image_count":1}`, cookie)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("状态码 = %d", rec.Code)
+	}
+	var manual struct {
+		ID            int64  `json:"id"`
+		PublishIntent string `json:"publish_intent"`
+	}
+	if err := decodeJSON(rec.Body.Bytes(), &manual); err != nil {
+		t.Fatalf("解析响应失败: %v", err)
+	}
+	if manual.PublishIntent != "" {
+		t.Errorf("仅存图意图 = %q，期望空", manual.PublishIntent)
+	}
+	info, err = env.posts.PublishInfo(context.Background(), manual.ID)
+	if err != nil {
+		t.Fatalf("读取发布信息失败: %v", err)
+	}
+	if info.PathMode != "" {
+		t.Errorf("仅存图不应冻结口径，得到 %q", info.PathMode)
+	}
+}
+
+// TestCreatePostRejectsUnknownIntent 验证未知发布意图被拒绝。
+func TestCreatePostRejectsUnknownIntent(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	cookie := env.setup(t)
+	rec := env.do(t, http.MethodPost, "/api/posts",
+		`{"title":"非法意图","image_count":1,"publish_intent":"always"}`, cookie)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("状态码 = %d，期望 400", rec.Code)
 	}

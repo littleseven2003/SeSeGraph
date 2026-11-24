@@ -54,6 +54,8 @@ export interface InitializationResult {
   progress: ServerProgress | null
   /** 续传任务原来的画质；没有快照或读取失败时为 null */
   resumeMode: UploadMode | null
+  /** progressError 是读取进度失败的原因；null 表示读取成功或不需要读取 */
+  progressError: unknown
 }
 
 /**
@@ -71,16 +73,17 @@ export async function loadWorkbenchInitialization(input: InitializationInput): P
   const defaults = defaultsFromSettings(view)
 
   if (input.snapshot === null) {
-    return { defaults, progress: null, resumeMode: null }
+    return { defaults, progress: null, resumeMode: null, progressError: null }
   }
 
   try {
     const progress = await input.loadProgress(input.snapshot.postId)
     const resumeMode: UploadMode | null =
       progress.upload_mode === 'document' || progress.upload_mode === 'photo' ? progress.upload_mode : null
-    return { defaults, progress, resumeMode }
-  } catch {
-    return { defaults, progress: null, resumeMode: null }
+    return { defaults, progress, resumeMode, progressError: null }
+  } catch (cause) {
+    // 网络失败与「任务确实不存在」要分开：前者保留快照，只有后者才清除。
+    return { defaults, progress: null, resumeMode: null, progressError: cause }
   }
 }
 

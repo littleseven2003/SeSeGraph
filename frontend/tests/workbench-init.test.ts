@@ -141,3 +141,22 @@ test('初始化完成前不能放弃续传，旧任务不会复活', async () =>
   // 上传进行中仍然禁止放弃。
   assert.equal(canLeaveResume(true, 'uploading'), false)
 })
+
+test('进度读取失败与任务不存在分开上报', async () => {
+  const offline = await loadWorkbenchInitialization({
+    loadSettings: async () => settings(),
+    loadProgress: async () => {
+      throw new Error('network down')
+    },
+    snapshot,
+  })
+  assert.equal(offline.progress, null)
+  assert.ok(offline.progressError instanceof Error, '网络失败要能区分')
+
+  const online = await loadWorkbenchInitialization({
+    loadSettings: async () => settings(),
+    loadProgress: async () => progress('document'),
+    snapshot,
+  })
+  assert.equal(online.progressError, null)
+})

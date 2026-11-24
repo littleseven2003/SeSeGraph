@@ -152,8 +152,14 @@ func newEnv(t *testing.T) *env {
 
 func (e *env) queuedPost(t *testing.T, imageCount int, mode string) int64 {
 	t.Helper()
+	return e.queuedPostWithIntent(t, imageCount, mode, "")
+}
+
+// queuedPostWithIntent 用指定的发布意图建任务，其余步骤与普通任务一致。
+func (e *env) queuedPostWithIntent(t *testing.T, imageCount int, mode, intent string) int64 {
+	t.Helper()
 	ctx := context.Background()
-	post := posts.Post{Title: "上传任务", ImageCount: imageCount, UploadMode: mode}
+	post := posts.Post{Title: "上传任务", ImageCount: imageCount, UploadMode: mode, PublishIntent: intent}
 	id, err := e.repo.Create(ctx, post)
 	if err != nil {
 		t.Fatalf("创建帖子失败: %v", err)
@@ -667,5 +673,62 @@ func TestProcessHonorsPauseAndStop(t *testing.T) {
 	}
 	if e.provider.calls != before {
 		t.Errorf("停止后仍上传了 %d 次", e.provider.calls-before)
+	}
+}
+
+// TestProcessEnqueuesAutoPublish 验证提交时选了自动发布的任务在同步完成后直接入队，
+// 不需要管理员再点一次；只存图的任务保持未发布。
+func TestProcessEnqueuesAutoPublish(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	autoID := e.queuedPostWithIntent(t, 2, "photo", posts.PublishIntentAuto)
+	manualID := e.queuedPost(t, 2, "photo")
+
+	for _, id := range []int64{autoID, manualID} {
+		if _, ok, err := e.repo.ClaimNext(ctx); err != nil || !ok {
+			t.Fatalf("领取失败: ok=%v err=%v", ok, err)
+		}
+		if err := e.worker.Process(ctx, id); err != nil {
+			t.Fatalf("处理失败: %v", err)
+		}
+	}
+
+	state, _, public, err := e.repo.PublishStatus(ctx, autoID)
+	if err != nil {
+		t.Fatalf("读取发布状态失败: %v", err)
+	}
+	if state != posts.PublishPending || !public {
+		t.Errorf("自动发布任务状态 = %q / public=%v，期望 pending / true", state, public)
+	}
+
+	state, _, public, err = e.repo.PublishStatus(ctx, manualID)
+	if err != nil {
+		t.Fatalf("读取发布状态失败: %v", err)
+	}
+	if state != posts.PublishIdle || public {
+		t.Errorf("仅存图任务状态 = %q / public=%v，期望 idle / false", state, public)
+	}
+}
+
+// TestProcessDoesNotAutoPublishStopped 验证停止后收尾不会把任务送进发布队列。
+func TestProcessDoesNotAutoPublishStopped(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	id := e.queuedPostWithIntent(t, 1, "photo", posts.PublishIntentAuto)
+	if _, ok, err := e.repo.ClaimNext(ctx); err != nil || !ok {
+		t.Fatalf("领取失败: ok=%v err=%v", ok, err)
+	}
+	if err := e.repo.Stop(ctx, id); err != nil {
+		t.Fatalf("停止失败: %v", err)
+	}
+	if err := e.worker.Process(ctx, id); err != nil {
+		t.Fatalf("处理失败: %v", err)
+	}
+	state, _, _, err := e.repo.PublishStatus(ctx, id)
+	if err != nil {
+		t.Fatalf("读取发布状态失败: %v", err)
+	}
+	if state == posts.PublishPending || state == posts.PublishPublishing {
+		t.Errorf("停止的任务不应入发布队列，状态 = %q", state)
 	}
 }

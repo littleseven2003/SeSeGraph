@@ -36,6 +36,8 @@ interface PendingTask {
   resolve: (outcome: ZipOutcome) => void
   images: ArchiveImage[]
   fail: (error: string) => void
+  /** onImage 给出时逐项交接，客户端不再累积整包展开字节 */
+  onImage?: (image: ArchiveImage) => void
 }
 
 let worker: Worker | null = null
@@ -57,7 +59,10 @@ function ensureWorker(): Worker | null {
     if (task === undefined) return
     if (reply.type === 'image') {
       if (reply.name !== undefined && reply.data !== undefined) {
-        task.images.push({ name: reply.name, data: new Uint8Array(reply.data) })
+        const image = { name: reply.name, data: new Uint8Array(reply.data) }
+        // 有逐项回调就立刻交接，主线程只短暂持有单张字节。
+        if (task.onImage !== undefined) task.onImage(image)
+        else task.images.push(image)
       }
       return
     }
@@ -91,12 +96,19 @@ function ensureWorker(): Worker | null {
  * 有 Worker 时整包交给线程池逐项展开；否则在同一套逐项流程里同步执行，
  * 两种路径的排序、限制与说明文件解析完全一致。
  */
-export async function unpackArchive(file: File, options: ZipOptions = {}): Promise<ZipOutcome> {
+export async function unpackArchive(
+  file: File,
+  options: ZipOptions = {},
+  onImage?: (image: ArchiveImage) => void,
+): Promise<ZipOutcome> {
   const buffer = await file.arrayBuffer()
   const target = ensureWorker()
   if (target === null) {
     const images: ArchiveImage[] = []
-    const result = unpackZipProgressive(new Uint8Array(buffer), options, (image) => images.push(image))
+    const result = unpackZipProgressive(new Uint8Array(buffer), options, (image) => {
+      if (onImage !== undefined) onImage(image)
+      else images.push(image)
+    })
     if (!result.ok) return result
     return { ...result, images }
   }
@@ -106,6 +118,7 @@ export async function unpackArchive(file: File, options: ZipOptions = {}): Promi
     pending.set(id, {
       resolve,
       images: [],
+      onImage,
       fail: (error) => resolve({ ok: false, error }),
     })
     target.postMessage(

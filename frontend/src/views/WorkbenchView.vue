@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import AppHeader from '../components/AppHeader.vue'
 import DropZone from '../components/workbench/DropZone.vue'
 import ImageGrid from '../components/workbench/ImageGrid.vue'
@@ -24,6 +25,7 @@ import { makeCover } from '../utils/cover.ts'
 import { changeCover } from '../api/posts.ts'
 import { THUMB_MAX_PIXELS, renderThumb } from '../utils/thumbs.ts'
 import { LocalThumbScheduler } from '../utils/local-thumbs.ts'
+import { LocalCompressScheduler } from '../utils/local-compress.ts'
 import { createSerialQueue } from '../utils/serial.ts'
 import { blurEnabled } from '../utils/blur.ts'
 import {
@@ -107,6 +109,9 @@ import type { WorkbenchPhase } from '../utils/workbench.ts'
 type Phase = WorkbenchPhase
 
 const storage: StorageLike | null = browserStorage()
+const route = useRoute()
+// initSeq 给每次路由初始化编号：旧响应晚到时直接丢弃，不覆盖当前页面。
+let initSeq = 0
 
 const mode = ref<UploadMode>('photo')
 // 自动压缩默认开启，选择会记住；只影响草稿，续传沿用建任务时的策略。
@@ -141,6 +146,8 @@ const statuses = ref<Record<number, UploadStatus>>({})
 const snapshot = ref<TaskSnapshot | null>(null)
 // resumableHint 是本机存在可续传任务时的轻提示，只在空态展示，不阻断拖入。
 const resumableHint = ref<TaskSnapshot | null>(null)
+// pendingIntent 是本次提交选择的发布意图，只在新建任务时随请求上报。
+let pendingIntent: 'auto' | 'manual' = 'manual'
 // compressDone 是本轮压缩已处理的项数，建任务时随请求上报，四阶段的第一段据此展示。
 const compressDone = ref<number | null>(null)
 const serverProgress = ref<ServerProgress | null>(null)
@@ -248,6 +255,17 @@ const showStages = computed(
   () => serverProgress.value !== null || phase.value !== 'idle' || submitting.value || compressDone.value !== null,
 )
 
+// newDraft 表示还没建任务：只有这种状态才需要选择发布意图。
+const newDraft = computed(() => postId.value === 0 && serverProgress.value === null)
+
+// submitLabel 按当前状态给出主按钮文案；新草稿默认「提交并发布」。
+const submitLabel = computed(() => {
+  if (busy.value) return '正在上传…'
+  if (finished.value) return '已存入频道'
+  if (serverProgress.value?.status === 'uploading') return '继续上传'
+  return newDraft.value ? '提交并发布' : '提交存图'
+})
+
 // progressText 是右栏与移动底栏的一行概况，明细只在阶段条里呈现。
 const progressText = computed(() => {
   if (phase.value === 'idle' && serverProgress.value === null) return ''
@@ -292,14 +310,59 @@ async function storeThumbQuietly(
 
 onMounted(() => {
   window.addEventListener('keydown', onPreviewKeydown)
-  void bootstrap()
+  void applyRoute(resumeIdFromRoute())
 })
 
-// bootstrap 先把设置与续传进度读完再开放文件入口，
+// 同页切换 ?resume=<id> 不会重新挂载组件，这里跟着路由重新初始化。
+watch(
+  () => route.query.resume,
+  () => {
+    if (route.name !== 'workbench') return
+    void applyRoute(resumeIdFromRoute())
+  },
+)
+
+// resumeIdFromRoute 只认正整数编号，其余一律按新建处理。
+function resumeIdFromRoute(): number {
+  const raw = Number(route.query.resume ?? '')
+  return Number.isInteger(raw) && raw > 0 ? raw : 0
+}
+
+// resetForRoute 在进入另一个初始化之前清掉上一个页面的状态，
+// 避免旧任务的文件、进度与轮询带到新路由上。
+function resetForRoute(): void {
+  stopPolling()
+  closePreview()
+  localThumbs.reset()
+  localCompress.reset()
+  releaseTiles(tiles.value)
+  tiles.value = []
+  coverId.value = ''
+  coverPreview.value = ''
+  coverDataUrl.value = ''
+  coverBytes.value = 0
+  statuses.value = {}
+  serverProgress.value = null
+  snapshot.value = null
+  resumableHint.value = null
+  postId.value = 0
+  phase.value = 'idle'
+  resumeUnsafe.value = false
+  compressDone.value = null
+  metaText.value = ''
+  metaSource.value = ''
+  draft.value = { title: '', description: '', tags: [], author: '' }
+  message.value = ''
+  modeTouched = false
+  resetProgress()
+}
+
+// applyRoute 先把设置与续传进度读完再开放文件入口，
 // 避免用户先拖入 ZIP 或先重选原图时用到还没确定的规则。
-async function bootstrap(): Promise<void> {
-  const requested = Number(new URLSearchParams(window.location.search).get('resume') ?? '')
-  const targetID = Number.isInteger(requested) && requested > 0 ? requested : 0
+async function applyRoute(targetID: number): Promise<void> {
+  const seq = (initSeq += 1)
+  ready.value = false
+  resetForRoute()
   // 只有显式带 ?resume=<id> 才进入续传；默认保持干净新建态，不被上次任务阻断。
   const saved = targetID > 0 ? loadTaskFor(storage, targetID) : null
   if (saved) snapshot.value = saved
@@ -310,6 +373,8 @@ async function bootstrap(): Promise<void> {
     loadProgress: fetchProgress,
     snapshot: saved,
   })
+  // 旧响应晚到时丢弃：期间可能已经切到另一个路由。
+  if (seq !== initSeq) return
   rules.value = init.defaults
   metaNames.value = init.defaults.metaNames
   metaParseMode.value = init.defaults.parseMode
@@ -321,8 +386,12 @@ async function bootstrap(): Promise<void> {
   }
   if (saved && init.progress !== null) {
     hydrate(saved, init.progress)
+  } else if (saved && init.progressError !== null) {
+    // 网络失败不能清快照：保留续传信息，稍后重试仍可继续。
+    snapshot.value = saved
+    message.value = '网络异常，未能读取任务进度；续传信息已保留，可稍后刷新重试'
   } else if (saved) {
-    // 续传任务已不存在（例如数据目录被清空）时丢弃快照。
+    // 任务确实已不存在（服务端返回 404）时才丢弃快照。
     clearTask(storage, saved.postId)
     snapshot.value = null
     resetToDefaultMode()
@@ -332,6 +401,7 @@ async function bootstrap(): Promise<void> {
   if (saved === null && targetID > 0) {
     try {
       const progress = await fetchProgress(targetID)
+      if (seq !== initSeq) return
       postId.value = progress.id
       serverProgress.value = progress
       applyServerProgress(progress)
@@ -475,6 +545,8 @@ async function compressForSubmit(
   frozenMode: UploadMode,
   frozenCompress: boolean,
 ): Promise<{ problem: string; summary: string }> {
+  // 提交时接管压缩：后台队列里未开始的项作废，避免同一张图被压两次。
+  localCompress.reset()
   const limit = frozenMode === 'document' ? DOCUMENT_LIMIT_BYTES : PHOTO_LIMIT_BYTES
   const pending: WorkbenchTile[] = []
   const blocked: string[] = []
@@ -607,8 +679,11 @@ async function refreshCover(): Promise<void> {
 function applyTiles(next: WorkbenchTile[]): void {
   tiles.value = assignSortOrders(next)
   coverId.value = selectCover(tiles.value, coverId.value)
-  // 导入后立刻排队生成网格小图：整个工作台同一时刻只解码一项。
-  for (const tile of tiles.value) queueLocalThumb(tile)
+  // 导入后立刻排队生成网格小图并压好超阈值的静态图：整条队列同一时刻只解码一项。
+  for (const tile of tiles.value) {
+    queueLocalThumb(tile)
+    queueLocalCompress(tile)
+  }
 }
 
 // localThumbs 按稳定 ID 去重并校验回写：重排、删除、清空与离页都有确定的回收口径。
@@ -634,6 +709,84 @@ const localThumbs = new LocalThumbScheduler(thumbQueue, {
 function queueLocalThumb(tile: WorkbenchTile): void {
   if (tile.thumbUrl !== '' || tile.thumbBlob !== undefined) return
   localThumbs.request(tile.id)
+}
+
+// localCompress 在导入后就把超出阈值的静态图压好，提交时直接复用结果；
+// 与缩略图共用同一条串行队列，同一时刻只有一张原图展开进内存。
+const localCompress = new LocalCompressScheduler(thumbQueue, {
+  isAlive: (id) => tiles.value.some((tile) => tile.id === id),
+  run: async (id) => {
+    await compressTile(id)
+  },
+})
+
+// compressTile 压缩一项并写回结果：无收益或失败但原图合规时保留原图。
+async function compressTile(id: string): Promise<void> {
+  const find = (): WorkbenchTile | undefined => tiles.value.find((tile) => tile.id === id)
+  const tile = find()
+  if (tile === undefined) return
+  const verdict = evaluateMedia(
+    {
+      kind: tile.kind ?? 'image',
+      size: tile.sourceSize ?? tile.size,
+      compressed: false,
+      animated: tile.animated,
+      animatedKind: tile.animatedKind,
+      failed: tile.compressFailed,
+      keptOriginal: tile.keptOriginal,
+    },
+    mode.value,
+    autoCompress.value,
+  )
+  if (verdict.state !== 'pending') return
+  const limit = mode.value === 'document' ? DOCUMENT_LIMIT_BYTES : PHOTO_LIMIT_BYTES
+  const target = mode.value === 'document' ? COMPRESS_TARGET_DOCUMENT : COMPRESS_TARGET_BYTES
+  try {
+    const result = await compressImage(tile.sourceBlob ?? tile.blob, target)
+    // 压缩期间可能切了模式或清空，回写前再确认一次。
+    const current = find()
+    if (current === undefined) return
+    if (keepOriginalAfterCompress(current.sourceSize ?? current.size, result.toSize, limit)) {
+      current.keptOriginal = true
+      current.compressFailed = undefined
+      return
+    }
+    current.blob = result.blob
+    current.size = result.toSize
+    current.mime = result.blob.type || 'image/webp'
+    current.compressedFrom = result.fromSize
+    current.keptOriginal = undefined
+    current.compressFailed = undefined
+  } catch {
+    const current = find()
+    if (current === undefined) return
+    if (compressFallback(current.sourceSize ?? current.size, limit) === 'keep') {
+      current.keptOriginal = true
+      current.compressFailed = undefined
+    } else {
+      current.compressFailed = true
+    }
+  }
+}
+
+// queueLocalCompress 只把「当前策略下确实需要压」的项排进队列，动图与视频不动。
+function queueLocalCompress(tile: WorkbenchTile): void {
+  const verdict = evaluateMedia(
+    {
+      kind: tile.kind ?? 'image',
+      size: tile.sourceSize ?? tile.size,
+      compressed: false,
+      animated: tile.animated,
+      animatedKind: tile.animatedKind,
+      failed: tile.compressFailed,
+      keptOriginal: tile.keptOriginal,
+    },
+    mode.value,
+    autoCompress.value,
+  )
+  if (verdict.state !== 'pending') return
+  if (tile.compressedFrom !== undefined) return
+  localCompress.request(tile.id)
 }
 
 // restoreOrder 用名称与体积把本地文件放回上次任务的顺序；失败时给出提示。
@@ -663,6 +816,8 @@ async function setMode(next: UploadMode): Promise<void> {
   modeTouched = true
   // 模式只影响判定与提交时的压缩目标，草稿可自由切换并回到原图重新评估。
   resetToSource()
+  localCompress.reset()
+  for (const tile of tiles.value) queueLocalCompress(tile)
   announceStatus()
   void refreshCover()
 }
@@ -672,6 +827,8 @@ function onAutoCompress(enabled: boolean): void {
   autoCompress.value = enabled
   saveAutoCompress(storage, enabled)
   resetToSource()
+  localCompress.reset()
+  for (const tile of tiles.value) queueLocalCompress(tile)
   announceStatus()
 }
 
@@ -709,33 +866,38 @@ async function onZip(file: File): Promise<void> {
   working.value = true
   message.value = '正在解压压缩包…'
   try {
-    // 解压放到 Worker 里逐项展开：大包不会占住主线程，内存峰值只有单张体积。
-    const result = await unpackArchive(file, {
-      metaNames: metaNames.value,
-      // photo 模式下允许更大的静态图进入压缩流程；视频始终按 20,000,000 字节。
-      limits: {
-        maxImageBytes: 50000000,
+    // 解压放到 Worker 里逐项展开：大包不会占住主线程，展开一项就交接成 Blob，
+    // 客户端不再累积整包展开字节，内存峰值压在单张体积上。
+    const entries: { name: string; blob: Blob }[] = []
+    const result = await unpackArchive(
+      file,
+      {
+        metaNames: metaNames.value,
+        // photo 模式下允许更大的静态图进入压缩流程；视频始终按 20,000,000 字节。
+        limits: {
+          maxImageBytes: 50000000,
+        },
       },
-    })
+      (image) => {
+        entries.push({
+          name: image.name,
+          blob: imageBlob(image, mimeForName(image.name) || 'application/octet-stream'),
+        })
+      },
+    )
     message.value = ''
     if (!result.ok) {
       pushError(result.error)
       return
     }
-    if (result.images.length > MAX_IMAGE_COUNT) {
+    if (entries.length > MAX_IMAGE_COUNT) {
       pushError(`单个帖子最多 ${MAX_IMAGE_COUNT} 张图片，请先精简压缩包`)
       return
     }
     releaseTiles(tiles.value)
     // 压缩包内同样统一预处理：视频读首帧、photo 模式超大静态图先压缩。
     const problems: string[] = []
-    const next = await prepareTiles(
-      result.images.map((image) => ({
-        name: image.name,
-        blob: imageBlob(image, mimeForName(image.name) || 'application/octet-stream'),
-      })),
-      problems,
-    )
+    const next = await prepareTiles(entries, problems)
     if (problems.length > 0) pushError(problems.join('；'))
     metaText.value = result.metaText
     metaSource.value = result.metaText === '' ? '' : result.metaName
@@ -1033,8 +1195,9 @@ function discardSnapshot(): void {
 
 function clearAll(): void {
   if (!ready.value) return
-  // 换一批文件：作废在途生成，迟到的结果不再挂回空网格。
+  // 换一批文件：作废在途生成与压缩，迟到的结果不再挂回空网格。
   localThumbs.reset()
+  localCompress.reset()
   releaseTiles(tiles.value)
   tiles.value = []
   coverId.value = ''
@@ -1084,6 +1247,8 @@ async function ensureTask(): Promise<number | null> {
     cover_sort_order: coverTile.value?.sortOrder ?? 0,
     // 压缩在浏览器侧一次性完成，建任务时把已处理项数一并上报。
     compressed_count: compressDone.value ?? undefined,
+    // 只有新任务能选发布意图；续传沿用任务建好时的授权。
+    publish_intent: pendingIntent === 'auto' ? 'auto' : undefined,
     tags: draft.value.tags,
   })
   postId.value = created.id
@@ -1103,7 +1268,9 @@ async function ensureTask(): Promise<number | null> {
 }
 
 // 发布：建任务 → 按服务端进度补传 → 提交入队，快照保留以便刷新后查看与重试。
-async function publish(): Promise<void> {
+// intent=auto 表示管理员在提交时明确选了「提交并发布」，服务端会持久化并在同步完成后自动入队。
+async function publish(intent: 'auto' | 'manual' = 'manual'): Promise<void> {
+  pendingIntent = intent
   // 提交锁覆盖压缩与上传整段：双击、换模式、排序都不能插进来。
   // 压缩/上传进行中、正在追加文件或解包 ZIP 时都不接受新的提交。
   if (submitBlocked({ busy: busy.value, submitting: submitting.value }) || working.value) return
@@ -1256,6 +1423,7 @@ onBeforeUnmount(() => {
   stopPolling()
   closePreview()
   localThumbs.dispose()
+  localCompress.dispose()
   disposeArchiveWorker()
   releaseTiles(tiles.value)
 })
@@ -1466,9 +1634,17 @@ onBeforeUnmount(() => {
                     type="button"
                     class="h-11 w-full rounded-full bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
                     :disabled="busy || phase === 'queued' || finished"
-                    @click="publish"
+                    @click="publish(newDraft ? 'auto' : 'manual')"
                   >
-                    {{ busy ? '正在上传…' : finished ? '已存入频道' : serverProgress?.status === 'uploading' ? '继续上传' : '提交存图' }}
+                    {{ submitLabel }}
+                  </button>
+                  <button
+                    v-if="newDraft && !busy && !finished"
+                    type="button"
+                    class="h-11 w-full rounded-full border border-line px-4 text-sm font-medium text-muted transition hover:border-ink/25 hover:bg-canvas hover:text-ink"
+                    @click="publish('manual')"
+                  >
+                    仅存图（稍后手动发布）
                   </button>
                   <button
                     v-if="finished"
@@ -1520,12 +1696,20 @@ onBeforeUnmount(() => {
               重新开始
             </button>
             <button
+              v-if="newDraft && !busy && !finished"
+              type="button"
+              class="h-11 shrink-0 rounded-full border border-line px-3 text-xs font-medium text-muted transition hover:border-ink/25 hover:bg-canvas hover:text-ink"
+              @click="publish('manual')"
+            >
+              仅存图
+            </button>
+            <button
               type="button"
               class="h-11 shrink-0 rounded-full bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
               :disabled="busy || phase === 'queued' || finished"
-              @click="publish"
+              @click="publish(newDraft ? 'auto' : 'manual')"
             >
-              {{ busy ? '正在上传…' : finished ? '已存入频道' : serverProgress?.status === 'uploading' ? '继续上传' : '提交存图' }}
+              {{ submitLabel }}
             </button>
           </div>
         </div>

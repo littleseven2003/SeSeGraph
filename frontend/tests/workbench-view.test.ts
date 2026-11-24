@@ -76,3 +76,45 @@ test('空态不显示数量与清空，续传提示放在拖放区下方', () =>
   assert.ok(count > media && clear > count, '标题行右侧依次是数量与清空')
   assert.ok(source.slice(clear - 260, clear).includes('rounded-full'), '清空按钮为胶囊形态')
 })
+
+test('提交时明确选择发布意图，续传沿用原任务', () => {
+  assert.ok(source.includes("publish_intent: pendingIntent === 'auto' ? 'auto' : undefined"), '新任务随请求上报发布意图')
+  assert.ok(source.includes("async function publish(intent: 'auto' | 'manual' = 'manual')"), '提交入口带意图参数')
+  assert.ok(source.includes("return newDraft.value ? '提交并发布' : '提交存图'"), '新草稿默认提交并发布')
+  assert.ok(source.includes('仅存图（稍后手动发布）'), '桌面端保留仅存图入口')
+  assert.ok(source.includes('仅存图'), '移动端同样可选仅存图')
+  assert.ok(source.includes("publish(newDraft ? 'auto' : 'manual')"), '续传不会改写原任务的发布权限')
+  assert.ok(source.includes('const newDraft = computed'), '只在没有任务时提供选择')
+})
+
+test('导入即压缩，提交复用结果并接管压缩', () => {
+  assert.ok(source.includes('new LocalCompressScheduler('), '压缩走独立调度')
+  assert.ok(source.includes('queueLocalCompress(tile)'), '导入后排队压缩')
+  assert.ok(source.includes('localCompress.reset()'), '清空或换模式后作废在途结果')
+  assert.ok(source.includes('localCompress.dispose()'), '离页后不再压缩')
+  assert.ok(source.includes('await compressTile(id)'), '压缩结果直接写回卡片')
+  // 提交时先接管压缩，已压好的项不会重复压。
+  const submit = source.slice(source.indexOf('async function compressForSubmit'), source.indexOf('// snapshotFiles'))
+  assert.ok(submit.indexOf('localCompress.reset()') < submit.indexOf('const pending'), '提交前先作废后台队列')
+  assert.ok(submit.includes("verdict.state === 'pending'"), '只压仍待处理的项')
+})
+
+test('压缩包逐项交接成 Blob，不再累积展开字节', () => {
+  assert.ok(source.includes('const entries: { name: string; blob: Blob }[] = []'), '按项收集 Blob')
+  assert.ok(source.includes('(image) => {'), '使用逐项回调')
+  assert.ok(source.includes('const next = await prepareTiles(entries, problems)'), '只处理逐项交接的 Blob')
+  const zip = source.slice(source.indexOf('async function onZip'), source.indexOf('async function onImages'))
+  assert.equal(zip.includes('result.images'), false, '不再读取整包图片数组')
+})
+
+test('同页切换续传会重新初始化，旧响应不覆盖新页面', () => {
+  assert.ok(source.includes('watch(') && source.includes('route.query.resume'), '监听续传参数变化')
+  assert.ok(source.includes('async function applyRoute('), '初始化可重复执行')
+  assert.ok(source.includes('const seq = (initSeq += 1)'), '每次初始化取序号')
+  assert.ok(source.includes('if (seq !== initSeq) return'), '旧响应直接丢弃')
+  assert.ok(source.includes('function resumeIdFromRoute()'), '只认正整数编号')
+  assert.ok(source.includes('function resetForRoute()'), '切路由前清掉上一份状态')
+  assert.ok(source.includes('localThumbs.reset()') && source.includes('localCompress.reset()'), '旧任务的小图与压缩一起作废')
+  assert.ok(source.includes("message.value = '网络异常，未能读取任务进度；续传信息已保留，可稍后刷新重试'"), '网络失败保留快照')
+  assert.ok(source.includes('clearTask(storage, saved.postId)'), '只有确认不存在才清快照')
+})

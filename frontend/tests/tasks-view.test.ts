@@ -62,7 +62,12 @@ test('筛选后命中变少时回到有效页，不留假空态', () => {
 test('旧轮询不会覆盖新筛选结果', () => {
   assert.ok(source.includes('const seq = (requestSeq += 1)'), '每次加载取序号')
   assert.ok(source.includes('if (seq !== requestSeq) return'), '过期响应直接丢弃')
-  assert.ok(source.includes('fetchTasks(page.value, pageSize, filter.value)'), '请求必须带当前筛选')
+  assert.ok(source.includes('fetchTasks(requestedPage, pageSize, requestedFilter)'), '请求带发起时的条件')
+  // 慢请求期间切筛选或翻页，旧条件的响应不能改回当前页码。
+  assert.ok(source.includes('requestedFilter !== filter.value || requestedPage !== page.value'), '条件变化后整份结果丢弃')
+  const loadStart = source.indexOf('async function load(')
+  const load = source.slice(loadStart, source.indexOf('// requestLoad', loadStart))
+  assert.ok(load.indexOf('requestedPage !== page.value') < load.indexOf('page.value = Math.max'), '先判断再改页码')
 })
 
 test('卡片结构、空态与控件热区', () => {

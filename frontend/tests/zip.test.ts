@@ -262,3 +262,32 @@ test('解压入口沿用同一套数量与单项限制', async () => {
   assert.deepEqual(oversize.images.map((image) => image.name), ['small.jpg'])
   assert.equal(oversize.skipped, 1)
 })
+
+test('逐项交接：每张图展开后立刻回调，客户端不再累积整包字节', async () => {
+  const archive = buildArchive({
+    'pack/2.jpg': new Uint8Array([2]),
+    'pack/1.jpg': new Uint8Array([1]),
+    'info.txt': '标题：逐项交接',
+  })
+  const handed: string[] = []
+  const result = await unpackArchive(new File([archive], 'pack.zip'), {}, (image) => {
+    handed.push(image.name)
+  })
+  assert.ok(result.ok)
+  assert.deepEqual(handed, ['pack/1.jpg', 'pack/2.jpg'])
+  // 有回调时不再把整包图片攒进结果，避免内存里同时留两份。
+  assert.deepEqual(result.images, [])
+  assert.equal(result.metaText, '标题：逐项交接')
+})
+
+test('逐项交接仍执行同一套数量与单项限制', async () => {
+  const entries: Record<string, Uint8Array> = {}
+  for (let index = 1; index <= 4; index += 1) entries[`${index}.jpg`] = new Uint8Array([index])
+  const handed: string[] = []
+  const result = await unpackArchive(new File([buildArchive(entries)], 'many.zip'), { limits: { maxImages: 3 } }, (image) => {
+    handed.push(image.name)
+  })
+  assert.ok(!result.ok)
+  assert.match(result.error, /超过 3 张/)
+  assert.deepEqual(handed, [])
+})

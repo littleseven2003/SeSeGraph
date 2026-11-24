@@ -40,6 +40,9 @@ const (
 	PublishFailed     = "failed"
 )
 
+// PublishIntentAuto 表示提交时选择了「提交并发布」，同步完成后自动入发布队列。
+const PublishIntentAuto = "auto"
+
 // 图片状态取值。
 const (
 	ImageStatusUploaded = "uploaded"
@@ -74,7 +77,9 @@ type Post struct {
 	UploadRound    int
 	// CompressedCount 是提交时浏览器已处理的项数；nil 表示旧任务没有这项记录。
 	CompressedCount *int
-	Tags            []string
+	// PublishIntent 是提交时选择的发布意图：auto 表示同步完成后自动入发布队列。
+	PublishIntent string
+	Tags          []string
 }
 
 // PublishInfo 是发布一帖所需的元数据与已存图列表。
@@ -148,10 +153,10 @@ func (r *Repository) Create(ctx context.Context, post Post) (int64, error) {
 	defer func() { _ = tx.Rollback() }()
 
 	result, err := tx.ExecContext(ctx,
-		`INSERT INTO posts (title, description, author_name, cover_thumb_path, image_count, upload_mode, status, compressed_count)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO posts (title, description, author_name, cover_thumb_path, image_count, upload_mode, status, compressed_count, publish_intent)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		post.Title, post.Description, post.AuthorName, post.CoverThumbPath, post.ImageCount, post.UploadMode, post.Status,
-		post.CompressedCount,
+		post.CompressedCount, post.PublishIntent,
 	)
 	if err != nil {
 		return 0, errors.New("保存帖子失败")
@@ -420,10 +425,12 @@ func (r *Repository) Get(ctx context.Context, id int64) (*Post, error) {
 	var compressed sql.NullInt64
 	err := r.handle.QueryRowContext(ctx,
 		`SELECT title, description, author_name, cover_thumb_path, image_count, upload_mode, status,
-		        COALESCE(control_state, 'running'), COALESCE(upload_round, 0), compressed_count
+		        COALESCE(control_state, 'running'), COALESCE(upload_round, 0), compressed_count,
+		        COALESCE(publish_intent, '')
 		 FROM posts WHERE id = ?`, id,
 	).Scan(&post.Title, &post.Description, &post.AuthorName, &post.CoverThumbPath,
-		&post.ImageCount, &post.UploadMode, &post.Status, &post.ControlState, &post.UploadRound, &compressed)
+		&post.ImageCount, &post.UploadMode, &post.Status, &post.ControlState, &post.UploadRound, &compressed,
+		&post.PublishIntent)
 	if compressed.Valid {
 		count := int(compressed.Int64)
 		post.CompressedCount = &count
@@ -486,6 +493,20 @@ func (r *Repository) RequestPublishWithPath(ctx context.Context, postID int64, m
 	}
 	if affected, _ := result.RowsAffected(); affected == 0 {
 		return r.missingOrPending(ctx, postID)
+	}
+	return nil
+}
+
+// EnqueueAutoPublish 在同步完成后把自动发布意图的任务送入发布队列。
+// 只处理提交时明确选了自动发布、仍处于运行态且尚未发布的任务；旧任务不受影响。
+func (r *Repository) EnqueueAutoPublish(ctx context.Context, postID int64) error {
+	_, err := r.handle.ExecContext(ctx,
+		`UPDATE posts SET is_public = 1, publish_state = ?, publish_error = '', updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND COALESCE(publish_intent, '') = ? AND status = ?
+		   AND publish_state = ? AND COALESCE(control_state, 'running') = ? AND pending_delete = 0`,
+		PublishPending, postID, PublishIntentAuto, StatusCompleted, PublishIdle, ControlRunning)
+	if err != nil {
+		return errors.New("自动入发布队列失败")
 	}
 	return nil
 }

@@ -69,10 +69,19 @@ export function compressStage(input: Pick<StageInput, 'imageCount' | 'compressed
 }
 
 // uploadStageView 与任务页口径一致：仍在上传与已入频道的图片都算接收成功。
-export function uploadStageView(input: Pick<StageInput, 'imageCount' | 'receivedCount' | 'status'>): StageView {
+// 暂停或停止只标在实际受影响的这一段，不把整条任务都说成停止。
+export function uploadStageView(
+  input: Pick<StageInput, 'imageCount' | 'receivedCount' | 'status' | 'controlState'>,
+): StageView {
   if (input.imageCount <= 0) return stage('upload', '无媒体', 'muted', 0)
   const received = Math.max(0, input.receivedCount)
   if (received >= input.imageCount) return stage('upload', '完成', 'ok', 1)
+  if (input.controlState === 'paused' && input.status === 'uploading') {
+    return stage('upload', '已暂停', 'warn', ratioOf(received, input.imageCount))
+  }
+  if (input.controlState === 'stopped' && input.status === 'uploading') {
+    return stage('upload', '已停止', 'danger', ratioOf(received, input.imageCount))
+  }
   if (input.status === 'failed') {
     return stage('upload', `${received}/${input.imageCount}`, 'danger', ratioOf(received, input.imageCount))
   }
@@ -83,10 +92,18 @@ export function uploadStageView(input: Pick<StageInput, 'imageCount' | 'received
 }
 
 // syncStageView 只认确实已入频道的张数，不与已接收合并。
-export function syncStageView(input: Pick<StageInput, 'imageCount' | 'channelCount' | 'status'>): StageView {
+export function syncStageView(
+  input: Pick<StageInput, 'imageCount' | 'channelCount' | 'status' | 'controlState'>,
+): StageView {
   if (input.imageCount <= 0) return stage('sync', '无媒体', 'muted', 0)
   const stored = Math.max(0, input.channelCount)
   if (stored >= input.imageCount) return stage('sync', '完成', 'ok', 1)
+  if (input.controlState === 'paused' && input.status === 'queued') {
+    return stage('sync', '已暂停', 'warn', ratioOf(stored, input.imageCount))
+  }
+  if (input.controlState === 'stopped' && (input.status === 'queued' || input.status === 'stopped')) {
+    return stage('sync', '已停止', 'danger', ratioOf(stored, input.imageCount))
+  }
   if (input.status === 'failed') {
     return stage('sync', `${stored}/${input.imageCount}`, 'danger', ratioOf(stored, input.imageCount))
   }
@@ -95,17 +112,21 @@ export function syncStageView(input: Pick<StageInput, 'imageCount' | 'channelCou
 }
 
 // publishStageView 只看 publish_state，不借用前两段的状态。
+// 排队与进行中都是未知进度，不编一个固定百分比。
 export function publishStageView(input: Pick<StageInput, 'publishState' | 'controlState'>): StageView {
-  if (input.controlState === 'paused' && input.publishState !== 'published') {
+  if (input.controlState === 'paused' && (input.publishState === 'pending' || input.publishState === 'publishing')) {
     return stage('publish', '已暂停', 'warn', 0)
+  }
+  if (input.controlState === 'stopped' && (input.publishState === 'pending' || input.publishState === 'publishing')) {
+    return stage('publish', '已停止', 'danger', 0)
   }
   switch (input.publishState) {
     case 'published':
       return stage('publish', '已发布', 'ok', 1)
     case 'publishing':
-      return stage('publish', '发布中', 'run', 0.6)
+      return stage('publish', '发布中', 'run', 0)
     case 'pending':
-      return stage('publish', '排队中', 'run', 0.2)
+      return stage('publish', '排队中', 'run', 0)
     case 'failed':
       return stage('publish', '发布失败', 'danger', 0)
     default:

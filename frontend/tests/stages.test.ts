@@ -40,29 +40,40 @@ test('压缩段如实区分完成、进行中与未记录', () => {
 })
 
 test('上传段按已接收张数推进，失败转危险色', () => {
-  assert.equal(uploadStageView({ imageCount: 4, receivedCount: 0, status: 'uploading' }).value, '等待')
-  assert.equal(uploadStageView({ imageCount: 4, receivedCount: 2, status: 'uploading' }).value, '2/4')
-  assert.equal(uploadStageView({ imageCount: 4, receivedCount: 4, status: 'queued' }).tone, 'ok')
-  assert.equal(uploadStageView({ imageCount: 4, receivedCount: 2, status: 'failed' }).tone, 'danger')
+  assert.equal(uploadStageView({ imageCount: 4, receivedCount: 0, status: 'uploading', controlState: 'running' }).value, '等待')
+  assert.equal(uploadStageView({ imageCount: 4, receivedCount: 2, status: 'uploading', controlState: 'running' }).value, '2/4')
+  assert.equal(uploadStageView({ imageCount: 4, receivedCount: 4, status: 'queued', controlState: 'running' }).tone, 'ok')
+  assert.equal(uploadStageView({ imageCount: 4, receivedCount: 2, status: 'failed', controlState: 'running' }).tone, 'danger')
   // 已接收等于总数时即使任务失败也算完成，避免把已收齐误报成失败。
-  assert.equal(uploadStageView({ imageCount: 4, receivedCount: 4, status: 'failed' }).tone, 'ok')
+  assert.equal(uploadStageView({ imageCount: 4, receivedCount: 4, status: 'failed', controlState: 'running' }).tone, 'ok')
+  // 暂停与停止只标在实际受影响的阶段。
+  assert.equal(uploadStageView({ imageCount: 4, receivedCount: 1, status: 'uploading', controlState: 'paused' }).value, '已暂停')
+  assert.equal(uploadStageView({ imageCount: 4, receivedCount: 1, status: 'uploading', controlState: 'stopped' }).value, '已停止')
+  assert.equal(uploadStageView({ imageCount: 4, receivedCount: 1, status: 'queued', controlState: 'paused' }).value, '1/4')
 })
 
 test('同步段只认已入频道的张数', () => {
-  assert.equal(syncStageView({ imageCount: 4, channelCount: 0, status: 'queued' }).value, '等待')
-  assert.equal(syncStageView({ imageCount: 4, channelCount: 3, status: 'queued' }).value, '3/4')
-  assert.equal(syncStageView({ imageCount: 4, channelCount: 4, status: 'completed' }).tone, 'ok')
-  assert.equal(syncStageView({ imageCount: 4, channelCount: 1, status: 'failed' }).tone, 'danger')
+  assert.equal(syncStageView({ imageCount: 4, channelCount: 0, status: 'queued', controlState: 'running' }).value, '等待')
+  assert.equal(syncStageView({ imageCount: 4, channelCount: 3, status: 'queued', controlState: 'running' }).value, '3/4')
+  assert.equal(syncStageView({ imageCount: 4, channelCount: 4, status: 'completed', controlState: 'running' }).tone, 'ok')
+  assert.equal(syncStageView({ imageCount: 4, channelCount: 1, status: 'failed', controlState: 'running' }).tone, 'danger')
+  assert.equal(syncStageView({ imageCount: 4, channelCount: 1, status: 'queued', controlState: 'paused' }).value, '已暂停')
 })
 
 test('发布段只看发布状态，暂停单独标注', () => {
   assert.equal(publishStageView({ publishState: 'idle', controlState: 'running' }).value, '未开始')
   assert.equal(publishStageView({ publishState: 'pending', controlState: 'running' }).value, '排队中')
   assert.equal(publishStageView({ publishState: 'publishing', controlState: 'running' }).tone, 'run')
+  // 排队与进行中不编固定百分比。
+  assert.equal(publishStageView({ publishState: 'pending', controlState: 'running' }).ratio, 0)
+  assert.equal(publishStageView({ publishState: 'publishing', controlState: 'running' }).ratio, 0)
   assert.equal(publishStageView({ publishState: 'published', controlState: 'running' }).tone, 'ok')
   assert.equal(publishStageView({ publishState: 'failed', controlState: 'running' }).tone, 'danger')
-  assert.equal(publishStageView({ publishState: 'idle', controlState: 'paused' }).value, '已暂停')
-  assert.equal(publishStageView({ publishState: 'idle', controlState: 'paused' }).tone, 'warn')
+  // 发布还没开始时暂停不算这一段的暂停，只有排队或进行中才标。
+  assert.equal(publishStageView({ publishState: 'idle', controlState: 'paused' }).value, '未开始')
+  assert.equal(publishStageView({ publishState: 'pending', controlState: 'paused' }).value, '已暂停')
+  assert.equal(publishStageView({ publishState: 'pending', controlState: 'paused' }).tone, 'warn')
+  assert.equal(publishStageView({ publishState: 'pending', controlState: 'stopped' }).value, '已停止')
 })
 
 test('整体概况优先报失败，其次报进行中的阶段', () => {

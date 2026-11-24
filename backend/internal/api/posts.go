@@ -40,9 +40,11 @@ type createPostRequest struct {
 	CoverSortOrder int `json:"cover_sort_order"`
 	ImageCount     int `json:"image_count"`
 	// CompressedCount 是浏览器提交前已处理的项数，缺省表示本次没有上报。
-	CompressedCount *int     `json:"compressed_count"`
-	CoverThumbnail  string   `json:"cover_thumbnail"`
-	Tags            []string `json:"tags"`
+	CompressedCount *int `json:"compressed_count"`
+	// PublishIntent 是提交时选择的发布意图：auto 表示同步完成后自动发布。
+	PublishIntent  string   `json:"publish_intent"`
+	CoverThumbnail string   `json:"cover_thumbnail"`
+	Tags           []string `json:"tags"`
 }
 
 // rejectPendingDelete 在帖子进入删除流程后阻止恢复、编辑与重新发布。
@@ -165,6 +167,9 @@ func createPostHandler(deps Deps) gin.HandlerFunc {
 		case req.CompressedCount != nil && (*req.CompressedCount < 0 || *req.CompressedCount > req.ImageCount):
 			c.JSON(http.StatusBadRequest, gin.H{"error": "压缩进度不能超过图片数量"})
 			return
+		case req.PublishIntent != "" && req.PublishIntent != posts.PublishIntentAuto:
+			c.JSON(http.StatusBadRequest, gin.H{"error": "发布意图只能是自动发布或仅存图"})
+			return
 		}
 
 		tags, tagErr := normalizeTags(req.Tags)
@@ -202,6 +207,7 @@ func createPostHandler(deps Deps) gin.HandlerFunc {
 			UploadMode:      mode,
 			Status:          posts.StatusUploading,
 			CompressedCount: req.CompressedCount,
+			PublishIntent:   req.PublishIntent,
 			Tags:            tags,
 		})
 		if err != nil {
@@ -217,6 +223,28 @@ func createPostHandler(deps Deps) gin.HandlerFunc {
 				return
 			}
 		}
+		if req.PublishIntent == posts.PublishIntentAuto {
+			// 自动发布沿用首次入队时冻结的链接口径，建任务时就定下来，
+			// 之后设置页改动不会影响这条任务。
+			freezeMode := settings.PathModeTitle
+			if deps.Settings != nil {
+				if effective, err := deps.Settings.Effective(c.Request.Context()); err == nil {
+					freezeMode = effective.TelegraphPathMode.Value
+				}
+			}
+			freezeSlug := ""
+			if freezeMode == settings.PathModeSlug {
+				generated, err := posts.NewPublishSlug()
+				if err == nil {
+					freezeSlug = generated
+				}
+			}
+			if err := deps.Posts.FreezePublishPath(c.Request.Context(), id, freezeMode, freezeSlug); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "保存发布设置失败"})
+				return
+			}
+		}
+
 		if len(cover) > 0 || req.CoverSortOrder > 0 {
 			if err := deps.Posts.SetCoverSelection(c.Request.Context(), id, req.CoverSortOrder, coverPath); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "保存封面失败"})
@@ -231,6 +259,7 @@ func createPostHandler(deps Deps) gin.HandlerFunc {
 			"status":           posts.StatusUploading,
 			"image_count":      req.ImageCount,
 			"compressed_count": req.CompressedCount,
+			"publish_intent":   req.PublishIntent,
 			"upload_mode":      mode,
 			"cover_thumb_path": coverPath,
 		})

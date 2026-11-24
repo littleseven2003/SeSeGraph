@@ -73,12 +73,16 @@ function isExpanded(id: number): boolean {
 
 async function load(silent = false): Promise<void> {
   const seq = (requestSeq += 1)
+  // 记下发起时的条件：慢请求回来时若用户已经切筛选或翻页，这份结果整份丢弃。
+  const requestedPage = page.value
+  const requestedFilter = filter.value
   if (!silent) loading.value = true
   error.value = ''
   try {
-    const result = await fetchTasks(page.value, pageSize, filter.value)
+    const result = await fetchTasks(requestedPage, pageSize, requestedFilter)
     // 只有最后一次请求可以写入，避免旧筛选或旧页码的结果盖掉新状态。
     if (seq !== requestSeq) return
+    if (requestedFilter !== filter.value || requestedPage !== page.value) return
     // 命中数在翻页期间变少时，服务端已钳到最后一页；这里再兜一层，避免空白页。
     if (result.items.length === 0 && result.total > 0 && page.value > 1) {
       page.value = Math.max(1, Math.ceil(result.total / pageSize))

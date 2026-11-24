@@ -229,6 +229,10 @@ func (w *Worker) Process(ctx context.Context, postID int64) error {
 	if err := w.repo.MarkPostFinished(ctx, postID, posts.StatusCompleted, ""); err != nil {
 		return err
 	}
+	// 提交时选了「提交并发布」的任务在同步完成后自动入队；关页或重启都由服务端接着做。
+	if err := w.repo.EnqueueAutoPublish(ctx, postID); err != nil {
+		w.logger.Printf("自动入发布队列失败：编号 %d", postID)
+	}
 	w.logger.Printf("帖子上传完成：编号 %d，图片 %d 张", postID, stored)
 	return nil
 }

@@ -12,11 +12,15 @@ export interface CreatePostPayload {
   cover_sort_order?: number
   /** 浏览器提交前已处理的项数，用于四阶段的第一段 */
   compressed_count?: number
+  /** 发布意图：auto 表示同步完成后自动入发布队列，缺省或空表示仅存图 */
+  publish_intent?: 'auto' | ''
   tags: string[]
 }
 
 export interface CreatedPost {
   id: number
+  /** 本次保存的发布意图，空表示仅存图 */
+  publish_intent?: string
   title: string
   tags: string[]
   status: string
