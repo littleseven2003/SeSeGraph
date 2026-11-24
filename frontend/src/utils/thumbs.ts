@@ -40,6 +40,7 @@ export class ThumbQueue {
   private readonly createUrl: (blob: Blob) => string
   private readonly revokeUrl: (url: string) => void
   private readonly cache = new Map<number, string>()
+  private readonly pinned = new Set<number>()
   private readonly onStore: ((order: number) => void) | undefined
   private readonly waiting: number[] = []
   private current: AbortController | null = null
@@ -109,15 +110,30 @@ export class ThumbQueue {
     }
   }
 
+  // pin 把正在预览的项钉住，淘汰时跳过它，避免放大气泡里的地址被回收成裂图。
+  pin(order: number): void {
+    if (this.cache.has(order)) this.pinned.add(order)
+  }
+
+  unpin(order: number): void {
+    this.pinned.delete(order)
+  }
+
   private store(order: number, blob: Blob): void {
     this.cache.set(order, this.createUrl(blob))
     this.loaded += 1
     this.onStore?.(order)
     while (this.cache.size > this.limit) {
-      const oldest = this.cache.keys().next().value
-      if (oldest === undefined) break
-      const url = this.cache.get(oldest) ?? ''
-      this.cache.delete(oldest)
+      let victim: number | undefined
+      for (const key of this.cache.keys()) {
+        if (!this.pinned.has(key)) {
+          victim = key
+          break
+        }
+      }
+      if (victim === undefined) break
+      const url = this.cache.get(victim) ?? ''
+      this.cache.delete(victim)
       if (url !== '') this.revokeUrl(url)
     }
   }

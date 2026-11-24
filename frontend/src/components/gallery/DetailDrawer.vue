@@ -140,6 +140,13 @@ const previewValues = computed(() => ({
   published_at: formatPublishedDate(props.detail?.published_at) || '2026-11-22',
 }))
 
+// previewUrl 取当前预览项的小图；用 computed 而不是模板里直接读 Map，避免响应式差异。
+const previewUrl = computed(() => {
+  const order = previewOrder.value
+  if (order === 0 || thumbs?.has(order) !== true) return ''
+  return thumbUrls.value.get(order) ?? ''
+})
+
 // 气泡底部说明当前预览项与体积，取不到时留空。
 const previewSizeText = computed(() => {
   const detail = props.detail
@@ -349,13 +356,13 @@ function ensureThumbs(): ThumbQueue | null {
       return await withTimeout(renderThumb(media), 8000)
     },
     {
-      onStore: () => {
+      onStore: (order) => {
         if (props.detail?.id !== postId || thumbs === null) return
-        const next = new Map<number, string>()
-        for (const image of props.detail.images) {
-          const url = thumbs.get(image.sort_order)
-          if (url !== '') next.set(image.sort_order, url)
-        }
+        const url = thumbs.get(order)
+        if (url === '') return
+        // 增量写入：详情刷新或列表重建都不影响已取到的小图。
+        const next = new Map(thumbUrls.value)
+        next.set(order, url)
         thumbUrls.value = next
       },
     },
@@ -381,6 +388,8 @@ function thumbUrl(image: GalleryImage): string {
     const cover = props.detail.cover_url
     if (cover !== '') return cover
   }
+  // 已被淘汰并回收的地址不能再渲染，否则会短暂出现裂图。
+  if (thumbs?.has(image.sort_order) !== true) return ''
   return thumbUrls.value.get(image.sort_order) ?? ''
 }
 
@@ -421,8 +430,10 @@ async function syncEagerThumbs(): Promise<void> {
 function openPreview(order: number, event: Event): void {
   const target = event.currentTarget as HTMLElement | null
   if (target === null) return
+  thumbs?.unpin(previewOrder.value)
   previewAnchor = target
   previewOrder.value = order
+  thumbs?.pin(order)
   previewLoading.value = !thumbUrls.value.has(order)
   requestThumb(order, true)
   positionPreview()
@@ -444,7 +455,12 @@ function positionPreview(): void {
   if (previewPos.value === null) previewOrder.value = 0
 }
 
+watch(previewUrl, (url) => {
+  if (url !== '') previewLoading.value = false
+})
+
 function closePreview(): void {
+  thumbs?.unpin(previewOrder.value)
   previewOrder.value = 0
   previewPos.value = null
   previewLoading.value = false
@@ -503,6 +519,15 @@ onBeforeUnmount(() => {
   // 关闭后把焦点还给打开抽屉的元素，键盘用户不会丢失位置。
   if (previousFocus !== null && previousFocus.isConnected) previousFocus.focus()
 })
+
+// 详情刷新（例如换封面后重载）会重建列表节点，需要重新观察并补齐缺项。
+watch(
+  () => props.detail,
+  (next) => {
+    if (next === null) return
+    void syncEagerThumbs()
+  },
+)
 
 watch(
   () => props.detail?.id,
@@ -1036,12 +1061,7 @@ watch(
         >
           <div class="rounded-2xl border border-line bg-surface p-2 shadow-lg">
             <div class="flex h-[224px] w-[224px] items-center justify-center overflow-hidden rounded-xl bg-canvas">
-              <img
-                v-if="thumbUrls.get(previewOrder)"
-                :src="thumbUrls.get(previewOrder)"
-                alt=""
-                class="h-full w-full object-contain"
-              />
+              <img v-if="previewUrl !== ''" :src="previewUrl" alt="" class="h-full w-full object-contain" />
               <span v-else class="text-xs text-muted">{{ previewLoading ? '正在读取…' : '暂无缩略图' }}</span>
             </div>
             <p class="mt-1.5 px-1 text-[11px] text-muted tnum">第 {{ previewOrder }} 项 · {{ previewSizeText }}</p>

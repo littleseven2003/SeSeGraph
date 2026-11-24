@@ -131,3 +131,33 @@ test('dispose 取消在途请求并清空缓存', async () => {
   await new Promise((resolve) => setTimeout(resolve, 20))
   assert.equal(queue.size, 0)
 })
+
+test('预览中的项被钉住，不被淘汰也不回收地址', async () => {
+  const revoked: string[] = []
+  let counter = 0
+  const queue = new ThumbQueue(
+    async () => new Blob(['x']),
+    {
+      limit: 2,
+      createUrl: () => {
+        counter += 1
+        return `blob:pin-${counter}`
+      },
+      revokeUrl: (url) => revoked.push(url),
+    },
+  )
+  queue.request(1)
+  queue.request(2)
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  queue.pin(1)
+  queue.request(3)
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  assert.equal(queue.has(1), true, '钉住的项不能被淘汰')
+  assert.equal(queue.has(2), false, '未钉住的最早项照常淘汰')
+  assert.deepEqual(revoked, ['blob:pin-2'])
+  queue.unpin(1)
+  queue.request(4)
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  assert.equal(queue.has(1), false, '取消钉住后可以正常淘汰')
+  queue.dispose()
+})
