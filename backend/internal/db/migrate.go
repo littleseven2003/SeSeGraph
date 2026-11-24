@@ -8,7 +8,7 @@ import (
 )
 
 // SchemaVersion 是当前代码期望的数据库结构版本，写入 SQLite 的 user_version。
-const SchemaVersion = 12
+const SchemaVersion = 13
 
 // schemaStatements 是首次建库所需的语句，顺序即执行顺序。
 var schemaStatements = []string{
@@ -201,6 +201,11 @@ func Migrate(ctx context.Context, handle *sql.DB) error {
 	}
 	if err := ensureColumn(ctx, tx, "posts", "publish_slug", "ALTER TABLE posts ADD COLUMN publish_slug TEXT DEFAULT ''"); err != nil {
 		return errors.New("升级链接短码失败")
+	}
+	// 旧库升级：压缩在浏览器里完成，记录提交时已处理的项数；
+	// 旧任务留空表示没有这项记录，界面按未记录展示而不是补一个猜测值。
+	if err := ensureColumn(ctx, tx, "posts", "compressed_count", "ALTER TABLE posts ADD COLUMN compressed_count INTEGER"); err != nil {
+		return errors.New("升级压缩进度字段失败")
 	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", SchemaVersion)); err != nil {
 		return errors.New("写入数据库结构版本失败")

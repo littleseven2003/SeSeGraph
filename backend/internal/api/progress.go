@@ -80,6 +80,7 @@ func progressHandler(deps Deps) gin.HandlerFunc {
 			"status":           post.Status,
 			"tags":             tags,
 			"image_count":      post.ImageCount,
+			"compressed_count": post.CompressedCount,
 			"control_state":    post.ControlState,
 			"upload_round":     post.UploadRound,
 			"cover_sort_order": coverSort,

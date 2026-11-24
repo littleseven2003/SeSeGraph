@@ -72,7 +72,9 @@ type Post struct {
 	Status         string
 	ControlState   string
 	UploadRound    int
-	Tags           []string
+	// CompressedCount 是提交时浏览器已处理的项数；nil 表示旧任务没有这项记录。
+	CompressedCount *int
+	Tags            []string
 }
 
 // PublishInfo 是发布一帖所需的元数据与已存图列表。
@@ -146,9 +148,10 @@ func (r *Repository) Create(ctx context.Context, post Post) (int64, error) {
 	defer func() { _ = tx.Rollback() }()
 
 	result, err := tx.ExecContext(ctx,
-		`INSERT INTO posts (title, description, author_name, cover_thumb_path, image_count, upload_mode, status)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO posts (title, description, author_name, cover_thumb_path, image_count, upload_mode, status, compressed_count)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		post.Title, post.Description, post.AuthorName, post.CoverThumbPath, post.ImageCount, post.UploadMode, post.Status,
+		post.CompressedCount,
 	)
 	if err != nil {
 		return 0, errors.New("保存帖子失败")
@@ -414,12 +417,17 @@ func (r *Repository) SampleStoredFileIDs(ctx context.Context, limit int) ([]stri
 // Get 读取帖子元数据。
 func (r *Repository) Get(ctx context.Context, id int64) (*Post, error) {
 	post := &Post{ID: id}
+	var compressed sql.NullInt64
 	err := r.handle.QueryRowContext(ctx,
 		`SELECT title, description, author_name, cover_thumb_path, image_count, upload_mode, status,
-		        COALESCE(control_state, 'running'), COALESCE(upload_round, 0)
+		        COALESCE(control_state, 'running'), COALESCE(upload_round, 0), compressed_count
 		 FROM posts WHERE id = ?`, id,
 	).Scan(&post.Title, &post.Description, &post.AuthorName, &post.CoverThumbPath,
-		&post.ImageCount, &post.UploadMode, &post.Status, &post.ControlState, &post.UploadRound)
+		&post.ImageCount, &post.UploadMode, &post.Status, &post.ControlState, &post.UploadRound, &compressed)
+	if compressed.Valid {
+		count := int(compressed.Int64)
+		post.CompressedCount = &count
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

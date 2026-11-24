@@ -2,6 +2,7 @@ package posts
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 )
 
@@ -31,7 +32,9 @@ type TaskItem struct {
 	UploadedCount int
 	// ChannelCount 只统计已存入 Telegram 频道的图片。
 	ChannelCount int
-	UpdatedAt    string
+	// CompressedCount 是提交时浏览器已处理的项数；nil 表示旧任务没有这项记录。
+	CompressedCount *int
+	UpdatedAt       string
 }
 
 // TaskPage 是任务列表的一页。
@@ -103,7 +106,8 @@ func (r *Repository) ListTasks(ctx context.Context, page, pageSize int, filter s
 		          WHERE pi.post_id = p.id AND pi.status = ?),
 		        (SELECT COUNT(*) FROM post_images pi
 		          WHERE pi.post_id = p.id AND pi.status = ?),
-		        strftime('%Y-%m-%dT%H:%M:%SZ', p.updated_at)
+		        strftime('%Y-%m-%dT%H:%M:%SZ', p.updated_at),
+		        p.compressed_count
 		 FROM posts p WHERE `+where+`
 		 ORDER BY p.updated_at DESC, p.id DESC LIMIT ? OFFSET ?`,
 		ImageStatusUploaded, ImageStatusStored, ImageStatusFailed,
@@ -118,11 +122,16 @@ func (r *Repository) ListTasks(ctx context.Context, page, pageSize int, filter s
 	items := make([]TaskItem, 0, pageSize)
 	for rows.Next() {
 		var item TaskItem
+		var compressed sql.NullInt64
 		if err := rows.Scan(&item.ID, &item.Title, &item.Status, &item.PublishState,
 			&item.ControlState, &item.UploadRound, &item.ImageCount,
 			&item.ReceivedCount, &item.StoredCount, &item.UploadedCount, &item.ChannelCount,
-			&item.UpdatedAt); err != nil {
+			&item.UpdatedAt, &compressed); err != nil {
 			return nil, errors.New("读取任务失败")
+		}
+		if compressed.Valid {
+			count := int(compressed.Int64)
+			item.CompressedCount = &count
 		}
 		items = append(items, item)
 	}

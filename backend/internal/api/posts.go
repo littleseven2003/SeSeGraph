@@ -37,10 +37,12 @@ type createPostRequest struct {
 	AuthorName  string `json:"author_name"`
 	UploadMode  string `json:"upload_mode"`
 	// CoverSortOrder 是封面来源序号，与缩略图一起提交。
-	CoverSortOrder int      `json:"cover_sort_order"`
-	ImageCount     int      `json:"image_count"`
-	CoverThumbnail string   `json:"cover_thumbnail"`
-	Tags           []string `json:"tags"`
+	CoverSortOrder int `json:"cover_sort_order"`
+	ImageCount     int `json:"image_count"`
+	// CompressedCount 是浏览器提交前已处理的项数，缺省表示本次没有上报。
+	CompressedCount *int     `json:"compressed_count"`
+	CoverThumbnail  string   `json:"cover_thumbnail"`
+	Tags            []string `json:"tags"`
 }
 
 // rejectPendingDelete 在帖子进入删除流程后阻止恢复、编辑与重新发布。
@@ -160,6 +162,9 @@ func createPostHandler(deps Deps) gin.HandlerFunc {
 		case req.ImageCount < 1 || req.ImageCount > maxImageCount:
 			c.JSON(http.StatusBadRequest, gin.H{"error": "图片数量需在 1 到 500 之间"})
 			return
+		case req.CompressedCount != nil && (*req.CompressedCount < 0 || *req.CompressedCount > req.ImageCount):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "压缩进度不能超过图片数量"})
+			return
 		}
 
 		tags, tagErr := normalizeTags(req.Tags)
@@ -190,13 +195,14 @@ func createPostHandler(deps Deps) gin.HandlerFunc {
 			}
 		}
 		id, err := deps.Posts.Create(c.Request.Context(), posts.Post{
-			Title:       title,
-			Description: req.Description,
-			AuthorName:  strings.TrimSpace(req.AuthorName),
-			ImageCount:  req.ImageCount,
-			UploadMode:  mode,
-			Status:      posts.StatusUploading,
-			Tags:        tags,
+			Title:           title,
+			Description:     req.Description,
+			AuthorName:      strings.TrimSpace(req.AuthorName),
+			ImageCount:      req.ImageCount,
+			UploadMode:      mode,
+			Status:          posts.StatusUploading,
+			CompressedCount: req.CompressedCount,
+			Tags:            tags,
 		})
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "创建帖子失败"})
@@ -224,6 +230,7 @@ func createPostHandler(deps Deps) gin.HandlerFunc {
 			"tags":             tags,
 			"status":           posts.StatusUploading,
 			"image_count":      req.ImageCount,
+			"compressed_count": req.CompressedCount,
 			"upload_mode":      mode,
 			"cover_thumb_path": coverPath,
 		})
