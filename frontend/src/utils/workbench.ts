@@ -84,7 +84,12 @@ export function totalBytes(items: readonly { size: number }[]): number {
 
 // 界面展示用的图片项，附带浏览器内生成的预览地址。
 export interface WorkbenchTile extends WorkbenchImage {
+  // previewUrl 只用于视频预览弹层，按需创建；网格一律渲染 thumbUrl。
   previewUrl: string
+  // thumbUrl 是 512px WebP 小图的地址，网格唯一使用的图源。
+  thumbUrl: string
+  // thumbBlob 保留同一份小图，供上传后就地回存，避免二次解码。
+  thumbBlob?: Blob
 }
 
 // 发布前的必填校验：续传沿用旧任务已保存的元数据，不再要求重新填写。

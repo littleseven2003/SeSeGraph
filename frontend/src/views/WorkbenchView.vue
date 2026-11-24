@@ -22,8 +22,9 @@ import {
 import { ApiError } from '../api/client.ts'
 import { makeCover } from '../utils/cover.ts'
 import { changeCover } from '../api/posts.ts'
-import { renderThumb } from '../utils/thumbs.ts'
+import { THUMB_MAX_PIXELS, renderThumb } from '../utils/thumbs.ts'
 import { createSerialQueue } from '../utils/serial.ts'
+import { blurEnabled } from '../utils/blur.ts'
 import {
   MAX_IMAGE_COUNT,
   extensionOf,
@@ -227,11 +228,14 @@ async function storeThumbQuietly(
   version: string,
 ): Promise<void> {
   if (version === '') return
-  if (tile.kind === 'video' && tile.posterBlob === undefined) return
   try {
-    const source = tile.kind === 'video' ? tile.posterBlob : tile.blob
-    if (source === undefined) return
-    const thumb = await renderThumb(source, 512)
+    // 复用导入时生成的小图；没有时才补一次解码。
+    let thumb = tile.thumbBlob
+    if (thumb === undefined) {
+      const source = tile.kind === 'video' ? tile.posterBlob : tile.blob
+      if (source === undefined) return
+      thumb = await renderThumb(source, THUMB_MAX_PIXELS)
+    }
     await uploadThumb(postId, sortOrder, version, thumb)
   } catch {
     // 留待打开抽屉时按需补齐
@@ -339,7 +343,8 @@ function addTile(name: string, blob: Blob, size: number, extra: TileExtra = {}):
     mime: extra.mime ?? mimeForName(name),
     blob,
     sortOrder: 0,
-    previewUrl: URL.createObjectURL(extra.posterBlob ?? blob),
+    previewUrl: '',
+    thumbUrl: '',
     kind: extra.kind,
     duration: extra.duration,
     sourceSize: extra.sourceSize,
@@ -521,7 +526,9 @@ function snapshotFiles(): SnapshotFile[] {
 
 function releaseTiles(items: WorkbenchTile[]): void {
   for (const item of items) {
-    URL.revokeObjectURL(item.previewUrl)
+    if (item.previewUrl !== '') URL.revokeObjectURL(item.previewUrl)
+    if (item.thumbUrl !== '') URL.revokeObjectURL(item.thumbUrl)
+    item.thumbBlob = undefined
   }
 }
 
@@ -550,6 +557,24 @@ async function refreshCover(): Promise<void> {
 function applyTiles(next: WorkbenchTile[]): void {
   tiles.value = assignSortOrders(next)
   coverId.value = selectCover(tiles.value, coverId.value)
+  // 导入后立刻排队生成网格小图：整个工作台同一时刻只解码一项。
+  for (const tile of tiles.value) queueLocalThumb(tile)
+}
+
+// queueLocalThumb 生成网格用的 512px 小图；网格只挂这份小图，绝不挂原图 Blob。
+// 失败保留静默占位，等抽屉按需补齐或重试。
+function queueLocalThumb(tile: WorkbenchTile): void {
+  if (tile.thumbUrl !== '' || tile.thumbBlob !== undefined) return
+  void thumbQueue.push(async () => {
+    try {
+      const source = tile.kind === 'video' ? (tile.posterBlob ?? tile.blob) : tile.blob
+      const thumb = await renderThumb(source, THUMB_MAX_PIXELS)
+      tile.thumbBlob = thumb
+      tile.thumbUrl = URL.createObjectURL(thumb)
+    } catch {
+      // 生成失败不影响其余项，占位继续显示
+    }
+  })
 }
 
 // restoreOrder 用名称与体积把本地文件放回上次任务的顺序；失败时给出提示。
@@ -752,7 +777,10 @@ function onRemove(id: string): void {
   const removed = tiles.value.find((tile) => tile.id === id)
   statuses.value = {}
   applyTiles(removeItem(tiles.value, id))
-  if (removed) URL.revokeObjectURL(removed.previewUrl)
+  if (removed) {
+    if (removed.previewUrl !== '') URL.revokeObjectURL(removed.previewUrl)
+    if (removed.thumbUrl !== '') URL.revokeObjectURL(removed.thumbUrl)
+  }
   if (tiles.value.length === 0) {
     coverPreview.value = ''
     coverDataUrl.value = ''
@@ -1249,6 +1277,7 @@ onBeforeUnmount(() => {
             </div>
 
             <ImageGrid
+        :blurred="blurEnabled"
               :items="tiles"
               :mode="mode"
               :auto-compress="autoCompress"

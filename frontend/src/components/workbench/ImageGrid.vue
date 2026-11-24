@@ -17,7 +17,22 @@ const props = defineProps<{
   coverDisabled?: boolean
   mode: UploadMode
   autoCompress: boolean
+  /** 全局防社死：开启时小图默认模糊，点按某一项临时揭开 */
+  blurred?: boolean
 }>()
+
+// 网格里临时揭开的项：切页、重新导入或关闭开关后清零。
+const revealed = ref<Set<string>>(new Set())
+
+function toggleReveal(item: WorkbenchTile): void {
+  if (props.blurred !== true) return
+  if (revealed.value.has(item.id)) revealed.value.delete(item.id)
+  else revealed.value.add(item.id)
+}
+
+function blurredOf(item: WorkbenchTile): boolean {
+  return props.blurred === true && !revealed.value.has(item.id)
+}
 
 const STATUS_TEXT: Record<UploadStatus, string> = {
   pending: '待上传',
@@ -123,14 +138,23 @@ function moveBy(index: number, delta: number): void {
       @dragend="onDragEnd"
     >
       <div class="relative aspect-[4/3] overflow-hidden bg-canvas">
-        <img
-          :src="item.previewUrl"
-          :alt="item.name"
-          class="h-full w-full object-cover"
-          :class="item.kind === 'video' ? 'cursor-pointer' : ''"
-          loading="lazy"
-          @click="item.kind === 'video' ? emit('preview', item.id) : undefined"
-        />
+        <template v-if="item.thumbUrl !== ''">
+          <img
+            :src="item.thumbUrl"
+            :alt="item.name"
+            class="h-full w-full object-cover transition"
+            :class="[item.kind === 'video' ? 'cursor-pointer' : 'cursor-zoom-in', blurredOf(item) ? 'scale-125 blur-[6px]' : '']"
+            decoding="async"
+            loading="lazy"
+            @click="item.kind === 'video' ? emit('preview', item.id) : toggleReveal(item)"
+          />
+        </template>
+        <div v-else class="flex h-full w-full items-center justify-center text-muted" aria-label="缩略图生成中">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-6 w-6 animate-pulse" aria-hidden="true">
+            <rect x="3.5" y="5" width="17" height="14" rx="2.5" />
+            <path d="M3.5 15l4.5-4 4 3.5 3-2.5 5.5 4" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </div>
         <span class="tnum absolute left-2 top-2 rounded bg-ink/70 px-1.5 py-0.5 text-xs font-medium text-white">{{
           index + 1
         }}</span>
