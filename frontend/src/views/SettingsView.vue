@@ -133,6 +133,7 @@ const form = reactive({
   backupEnabled: false,
   backupTime: '03:00',
   backupKeep: '7',
+  thumbGB: '2',
   token: '',
   channelId: '',
   authorName: '',
@@ -157,6 +158,7 @@ function applyView(next: SettingsView): void {
   form.backupEnabled = next.backup.enabled
   form.backupTime = next.backup.time
   form.backupKeep = String(next.backup.keep)
+  form.thumbGB = String(Math.round((next.media_thumbs.limit_bytes / (1 << 30)) * 10) / 10)
   form.token = ''
   form.proxyMode = next.proxy.mode
   form.proxyUrl = ''

@@ -55,6 +55,8 @@ export interface UploadedImage {
   file_size: number
   mime_type: string
   status: string
+  /** 这次上传的内容版本，生成缩略图后带上它回存。 */
+  media_version: string
 }
 
 export interface CommitResult {
@@ -191,6 +193,50 @@ export async function fetchTasks(
   const query = `page=${page}&page_size=${pageSize}${status === '' ? '' : `&status=${status}`}`
   const response = await adminRequest(`/api/tasks?${query}`)
   return (await response.json()) as { items: TaskRow[]; total: number; page: number; page_size: number }
+}
+
+// thumbPath 返回某一项缩略图的地址；version 参与查询串，便于区分版本。
+export function thumbPath(postId: number, sortOrder: number, version: string): string {
+  return `/api/posts/${postId}/media/${sortOrder}/thumb?v=${encodeURIComponent(version)}`
+}
+
+// fetchThumbBlob 读取已落盘的缩略图；还没有时返回 null，由调用方回源生成。
+export async function fetchThumbBlob(
+  postId: number,
+  sortOrder: number,
+  version: string,
+  signal?: AbortSignal,
+): Promise<Blob | null> {
+  const response = await fetch(thumbPath(postId, sortOrder, version), { credentials: 'same-origin', signal })
+  if (response.status === 404) return null
+  if (!response.ok) throw new ApiError(response.status, '读取缩略图失败')
+  return await response.blob()
+}
+
+// uploadThumb 把生成好的缩略图回存服务端，成功后再次打开只取小图。
+export async function uploadThumb(
+  postId: number,
+  sortOrder: number,
+  version: string,
+  blob: Blob,
+  signal?: AbortSignal,
+): Promise<void> {
+  const response = await fetch(thumbPath(postId, sortOrder, version), {
+    method: 'PUT',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'image/webp' },
+    body: blob,
+    signal,
+  })
+  if (response.ok) return
+  let message = '保存缩略图失败'
+  try {
+    const body = (await response.json()) as { error?: unknown }
+    if (typeof body.error === 'string' && body.error.trim() !== '') message = body.error
+  } catch {
+    // 非 JSON 响应保留统一说明
+  }
+  throw new ApiError(response.status, message)
 }
 
 // mediaPath 返回管理员会话下读取原图或视频的地址，供换封面生成缩略图。

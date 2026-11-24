@@ -27,6 +27,7 @@ export const FIELD_TRAFFIC_LIMIT = 'traffic.limit_bytes'
 export const FIELD_BACKUP_ENABLED = 'backup.enabled'
 export const FIELD_BACKUP_TIME = 'backup.time'
 export const FIELD_BACKUP_KEEP = 'backup.keep'
+export const FIELD_MEDIA_THUMBS_LIMIT = 'media_thumbs.limit_bytes'
 
 /** 代理模式选项，顺序即界面顺序。 */
 export const PROXY_MODES = [
@@ -176,6 +177,7 @@ export function connectionSummary(result: ConnectionResult): string {
 
 /** SettingsForm 是设置页表单的取值。 */
 export interface SettingsForm {
+  thumbGB: string
   alertGB: string
   limitGB: string
   backupEnabled: boolean
@@ -260,6 +262,16 @@ export function changedPatch(view: SettingsView, form: SettingsForm): SettingsPa
     !view.env_managed.includes(FIELD_BACKUP_KEEP)
   ) {
     patch.backup = { ...(patch.backup ?? {}), keep }
+  }
+  const thumbGB = Number(form.thumbGB)
+  if (
+    Number.isFinite(thumbGB) &&
+    thumbGB >= 0.0625 &&
+    thumbGB <= 50 &&
+    Math.round(thumbGB * 1024) !== Math.round(view.media_thumbs.limit_bytes / (1 << 20)) &&
+    !view.env_managed.includes(FIELD_MEDIA_THUMBS_LIMIT)
+  ) {
+    patch.media_thumbs = { limit_bytes: Math.round(thumbGB * 1024) * (1 << 20) }
   }
   if (form.backupEnabled !== view.backup.enabled && !view.env_managed.includes(FIELD_BACKUP_ENABLED)) {
     patch.backup = { ...(patch.backup ?? {}), enabled: form.backupEnabled }

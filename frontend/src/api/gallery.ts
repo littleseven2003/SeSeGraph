@@ -46,6 +46,10 @@ export interface GalleryImage {
   mime_type: string
   file_size: number
   status: string
+  /** 内容版本，生成缩略图后带上它回存。 */
+  media_version: string
+  /** 服务端已落盘的小图地址；为空表示还没生成。 */
+  thumb_url: string
 }
 
 export interface PostDetail extends GalleryItem {

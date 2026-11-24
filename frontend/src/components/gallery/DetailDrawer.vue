@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { setPostDisabled, updatePost, type GalleryImage, type PostDetail } from '../../api/gallery.ts'
-import { changeCover, fetchMediaBlob } from '../../api/posts.ts'
+import { changeCover, fetchMediaBlob, fetchThumbBlob, uploadThumb } from '../../api/posts.ts'
 import { ApiError } from '../../api/client.ts'
 import { copyText } from '../../utils/clipboard.ts'
 import { detailUploadModeLabel } from '../../utils/media.ts'
@@ -402,13 +402,29 @@ function ensureThumbs(): ThumbQueue | null {
   const postId = detail.id
   thumbPostId = postId
   thumbs = new ThumbQueue(
-    async (order, signal) =>
-      await readWithinBudget(
+    async (order, signal) => {
+      const image = props.detail?.images.find((item) => item.sort_order === order)
+      const version = image?.media_version ?? ''
+      // 先取服务端已落盘的小图；命中时完全不碰原媒体。
+      if (version !== '') {
+        const cached = await fetchThumbBlob(postId, order, version, signal)
+        if (cached !== null) return cached
+      }
+      // 冷缓存：回源一次原图，生成小图后回存，下次打开只走小图。
+      return await readWithinBudget(
         mediaBudget,
         (inner) => fetchMediaBlob(postId, order, inner),
-        (media, inner) => renderThumb(media, THUMB_MAX_PIXELS, inner),
+        async (media, inner) => {
+          const thumb = await renderThumb(media, THUMB_MAX_PIXELS, inner)
+          if (version !== '') {
+            // 回存失败不影响本次显示，下次再补。
+            await uploadThumb(postId, order, version, thumb).catch(() => undefined)
+          }
+          return thumb
+        },
         { signal },
-      ),
+      )
+    },
     {
       onStore: (order) => {
         if (props.detail?.id !== postId || thumbs === null) return

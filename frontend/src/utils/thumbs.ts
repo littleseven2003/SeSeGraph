@@ -6,8 +6,8 @@ import { captureVideoFrame, isVideoBlob } from './video-frame.ts'
 export const THUMB_CACHE_LIMIT = 16
 // 超过该体积的原图不随列表自动加载，等悬停、键盘聚焦或触控预览时再取。
 export const THUMB_EAGER_MAX_BYTES = 4_000_000
-// 缩略图最长边，行内 44px、放大气泡 224px 都用这一份。
-export const THUMB_MAX_PIXELS = 224
+// 落盘缩略图的最长边：行内 44px 与 224px 气泡共用这一份，留足高分屏余量。
+export const THUMB_MAX_PIXELS = 512
 
 // canLoadThumb 判断该项是否有可读的管理员媒体：只有已存入频道的图片能按序号取。
 export function canLoadThumb(image: Pick<GalleryImage, 'status'>): boolean {

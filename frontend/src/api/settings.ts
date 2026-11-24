@@ -38,6 +38,14 @@ export interface TrafficSettings {
   limit_source: string
 }
 
+/** MediaThumbsSettings 是逐图缩略图缓存的上限与当前占用。 */
+export interface MediaThumbsSettings {
+  limit_bytes: number
+  limit_source: string
+  used_bytes: number
+  count: number
+}
+
 /** BackupSettings 是自动备份开关、每日时刻与保留份数。 */
 export interface BackupSettings {
   enabled: boolean
@@ -68,6 +76,7 @@ export interface SettingsView {
   proxy: ProxySettings
   traffic: TrafficSettings
   backup: BackupSettings
+  media_thumbs: MediaThumbsSettings
   upload: UploadSettings
   meta: MetaSettings
   env_managed: string[]
@@ -85,6 +94,7 @@ export interface SettingsPatch {
   upload?: { mode?: string }
   traffic?: { alert_bytes?: number; limit_bytes?: number }
   backup?: { enabled?: boolean; time?: string; keep?: number }
+  media_thumbs?: { limit_bytes?: number }
   meta?: {
     filenames?: string[]
     parse_mode?: string
@@ -201,6 +211,13 @@ export async function fetchTraffic(): Promise<TrafficStats> {
 // fetchBackupStatus 读取定时备份说明与最近一份备份。
 export async function fetchBackupStatus(): Promise<BackupStatus> {
   return (await settingsRequest('/api/backup/status')).json() as Promise<BackupStatus>
+}
+
+// clearMediaThumbs 清空逐图缩略图缓存，返回删除数与释放字节数。
+export async function clearMediaThumbs(): Promise<{ removed: number; freed_bytes: number }> {
+  const response = await apiRequest('/api/settings/media-thumbs/clear', { method: 'POST' })
+  if (!response.ok) throw new Error('清理缩略图失败')
+  return (await response.json()) as { removed: number; freed_bytes: number }
 }
 
 // triggerBackup 立即生成一份备份。

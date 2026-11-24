@@ -15,11 +15,13 @@ import {
   retryPost,
   stopTask,
   uploadImage,
+  uploadThumb,
   type ServerProgress,
 } from '../api/posts.ts'
 import { ApiError } from '../api/client.ts'
 import { makeCover } from '../utils/cover.ts'
 import { changeCover } from '../api/posts.ts'
+import { renderThumb } from '../utils/thumbs.ts'
 import {
   MAX_IMAGE_COUNT,
   extensionOf,
@@ -203,6 +205,26 @@ const phaseText = computed(() => {
 
 function onPreviewKeydown(event: KeyboardEvent): void {
   if (event.key === 'Escape') closePreview()
+}
+
+// storeThumbQuietly 在上传成功后顺手生成 512px 小图并回存；
+// 任何失败都只当作缓存缺失，不影响存图与发布。
+async function storeThumbQuietly(
+  postId: number,
+  sortOrder: number,
+  tile: WorkbenchTile,
+  version: string,
+): Promise<void> {
+  if (version === '') return
+  if (tile.kind === 'video' && tile.posterBlob === undefined) return
+  try {
+    const source = tile.kind === 'video' ? tile.posterBlob : tile.blob
+    if (source === undefined) return
+    const thumb = await renderThumb(source, 512)
+    await uploadThumb(postId, sortOrder, version, thumb)
+  } catch {
+    // 留待打开抽屉时按需补齐
+  }
 }
 
 onMounted(() => {
@@ -1074,8 +1096,10 @@ async function runUpload(): Promise<void> {
     const failure = await runUploadPool(queue, UPLOAD_CONCURRENCY, async (item) => {
       statuses.value = { ...statuses.value, [item.sortOrder]: 'uploading' }
       try {
-        await uploadImage(id, item.sortOrder, item.tile.blob, item.tile.mime, round, uploadAbort?.signal)
+        const uploaded = await uploadImage(id, item.sortOrder, item.tile.blob, item.tile.mime, round, uploadAbort?.signal)
         statuses.value = { ...statuses.value, [item.sortOrder]: 'uploaded' }
+        // 小图失败不影响存图与发布：服务端缺这份时抽屉会按需补。
+        void storeThumbQuietly(id, item.sortOrder, item.tile, uploaded.media_version)
       } catch (error) {
         statuses.value = { ...statuses.value, [item.sortOrder]: 'failed' }
         throw error
