@@ -168,13 +168,26 @@ export interface TaskRow {
   control_state: string
   upload_round: number
   image_count: number
+  /** 已接收张数：已上传加已存入频道，字段名沿用 stored_count */
   stored_count: number
+  /** 只在服务器、尚未存入频道的张数 */
+  uploaded_count: number
+  /** 已存入频道张数 */
+  channel_count: number
   updated_at: string
 }
 
-/** fetchTasks 分页读取任务列表。 */
-export async function fetchTasks(page: number, pageSize = 20): Promise<{ items: TaskRow[]; total: number; page: number; page_size: number }> {
-  const response = await adminRequest(`/api/tasks?page=${page}&page_size=${pageSize}`)
+/** 任务列表筛选值：空串表示全部，与后端 status 参数一致。 */
+export type TaskFilter = '' | 'active' | 'paused' | 'stopped' | 'finished'
+
+/** fetchTasks 按筛选条件分页读取任务列表。 */
+export async function fetchTasks(
+  page: number,
+  pageSize = 20,
+  status: TaskFilter = '',
+): Promise<{ items: TaskRow[]; total: number; page: number; page_size: number }> {
+  const query = `page=${page}&page_size=${pageSize}${status === '' ? '' : `&status=${status}`}`
+  const response = await adminRequest(`/api/tasks?${query}`)
   return (await response.json()) as { items: TaskRow[]; total: number; page: number; page_size: number }
 }
 

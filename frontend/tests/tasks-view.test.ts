@@ -1,0 +1,52 @@
+import { readFileSync } from 'node:fs'
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+
+const source = readFileSync(new URL('../src/views/TasksView.vue', import.meta.url), 'utf8')
+
+test('任务页沿用全站吸顶顶栏与返回结构', () => {
+  assert.ok(source.includes('sticky top-0 z-20 border-b border-line bg-surface'), '顶栏要吸顶并带底色')
+  assert.ok(source.includes('max-w-[1240px]'), '顶栏内宽与全站一致')
+  assert.ok(source.includes('max-w-[960px]'), '主内容收束，避免大屏单列过宽')
+  assert.ok(source.includes('aria-label="返回图集"'), '返回入口要有可读名称')
+  assert.ok(source.includes('上传 · 存频道 · 发布'), '副标题说明三段流程')
+  assert.ok(source.includes('bg-brand px-4'), '新建图集用日落珊瑚主色')
+})
+
+test('筛选在窄屏局部横滑且不影响整页', () => {
+  assert.ok(source.includes('max-w-full overflow-x-auto'), '筛选条只局部横滑')
+  assert.ok(source.includes('min-w-max'), '筛选按钮不换行挤压')
+  assert.ok(source.includes(':aria-pressed="filter === item.value"'), '选中态对读屏与键盘可见')
+  assert.ok(source.includes('setFilter('), '切换筛选走统一入口')
+  // 换筛选必须先回到第一页，再发请求。
+  const setter = source.slice(source.indexOf('function setFilter'), source.indexOf('async function control'))
+  assert.ok(setter.indexOf('filter.value = next') < setter.indexOf('page.value = 1'))
+  assert.ok(setter.indexOf('page.value = 1') < setter.indexOf('void load()'), '回第一页后按新条件加载')
+})
+
+test('旧轮询不会覆盖新筛选结果', () => {
+  assert.ok(source.includes('const seq = (requestSeq += 1)'), '每次加载取序号')
+  assert.ok(source.includes('if (seq !== requestSeq) return'), '过期响应直接丢弃')
+  assert.ok(source.includes('fetchTasks(page.value, pageSize, filter.value)'), '请求必须带当前筛选')
+})
+
+test('卡片结构、空态与控件热区', () => {
+  assert.ok(source.includes('rounded-2xl bg-surface p-4'), '任务卡片用轻卡片')
+  assert.ok(source.includes('whitespace-nowrap rounded-full px-2.5 py-1'), '状态胶囊单行')
+  assert.ok(source.includes('grid-cols-1 gap-2 text-xs sm:grid-cols-3'), '390px 三阶段纵向堆叠')
+  assert.ok(source.includes('sm:flex-nowrap') === false, '窄屏动作区允许换行')
+  // 所有操作按钮与分页控件使用 h-11（44px）热区。
+  const controls = source.match(/inline-flex h-11/g) ?? []
+  assert.ok(controls.length >= 6, `44px 控件数量不足：${controls.length}`)
+  assert.ok(source.includes("filtered ? '当前筛选没有任务' : '暂无任务'"), '全空与筛选空分开说明')
+  assert.ok(source.includes('查看全部'), '筛选空提供回到全部')
+  assert.ok(source.includes('新建图集'), '空态提供新建入口')
+})
+
+test('任务页复用同一套阶段与控制判定', () => {
+  assert.ok(source.includes('from \'../utils/tasks.ts\''), '阶段规则集中在 utils/tasks.ts')
+  for (const name of ['uploadStage', 'channelStage', 'publishStage', 'badgeOf', 'canPause', 'canResume', 'canStop']) {
+    assert.ok(source.includes(name), `缺少 ${name}`)
+  }
+  assert.equal(source.includes('statusLabel('), false, '不再用画廊聚合状态冒充单段状态')
+})
