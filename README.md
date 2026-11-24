@@ -43,7 +43,9 @@ SeSeGraph 是一个自托管的私人图册发布与管理程序。你把本地�
 
    ```bash
    read -rsp "Bot Token: " TG_TOKEN; echo
-   curl -fsS "https://api.telegram.org/bot${TG_TOKEN}/getUpdates" \
+   # 请求地址经标准输入交给 curl，Token 不会出现在命令行参数或进程列表里
+   printf 'url = "https://api.telegram.org/bot%s/getUpdates"\n' "$TG_TOKEN" \
+     | curl -fsS --config - \
      | python3 -c 'import json,sys; d=json.load(sys.stdin); [print(u["channel_post"]["chat"]["id"]) for u in d.get("result", []) if "channel_post" in u]'
    unset TG_TOKEN
    ```
