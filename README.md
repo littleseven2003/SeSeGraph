@@ -39,7 +39,16 @@ SeSeGraph 是一个自托管的私人图册发布与管理程序。你把本地�
 
 1. 一台可访问 Telegram 与 Telegraph 接口（或可配置 HTTP/SOCKS5 代理）的 Linux 服务器。
 2. 一个已解析到该服务器的 HTTPS 域名（用于拼接外链、分享文案与 RSS）。
-3. 通过 [@BotFather](https://t.me/BotFather) 创建的 Telegram Bot Token，以及一个**私有频道**（需将该 Bot 设为频道管理员并授予发消息权限）。频道数字编号形如 `-1001234567890`，拿法是用你自己的 Bot 读一次更新：把 Bot 设为频道管理员后在频道里发一条测试消息，再访问 `https://api.telegram.org/bot你的BotToken/getUpdates`，在返回 JSON 的 `channel_post.chat.id` 里就是该编号（读完后可在频道里撤回这条消息）。
+3. 通过 [@BotFather](https://t.me/BotFather) 创建的 Telegram Bot Token，以及一个**私有频道**（需将该 Bot 设为频道管理员并授予发消息权限）。频道数字编号形如 `-1001234567890`。把 Bot 设为频道管理员后在频道里发一条测试消息，再在本机终端读取（Token 用隐藏输入，不要填进浏览器地址栏，否则会留在历史记录里）：
+
+   ```bash
+   read -rsp "Bot Token: " TG_TOKEN; echo
+   curl -fsS "https://api.telegram.org/bot${TG_TOKEN}/getUpdates" \
+     | python3 -c 'import json,sys; d=json.load(sys.stdin); [print(u["channel_post"]["chat"]["id"]) for u in d.get("result", []) if "channel_post" in u]'
+   unset TG_TOKEN
+   ```
+
+   输出的数字就是频道编号；读完后可在频道里撤回那条测试消息。
 
 ## 核心特点
 
