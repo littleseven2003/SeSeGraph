@@ -69,10 +69,6 @@ func mediaThumbUploadHandler(deps Deps) gin.HandlerFunc {
 		if !ok {
 			return
 		}
-		// 与清理、重建互斥：提交阶段的文件与记录不会被另一端半途删除。
-		unlock := media.LockCommit()
-		defer unlock()
-
 		// 读写共用同一查询参数名，避免前端带 v、后端读 version 时被静默拒收。
 		version := strings.TrimSpace(c.Query("v"))
 		if version == "" {
@@ -83,6 +79,21 @@ func mediaThumbUploadHandler(deps Deps) gin.HandlerFunc {
 			return
 		}
 
+		// 限长读取放在锁外：慢连接只占自己的请求，不会拖住其他回存、清理与重建。
+		body, readErr := io.ReadAll(io.LimitReader(c.Request.Body, maxThumbBodyBytes+1))
+		if readErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "读取缩略图失败"})
+			return
+		}
+		if int64(len(body)) > maxThumbBodyBytes {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "缩略图超过上限"})
+			return
+		}
+
+		// 提交阶段与清理、重建互斥：这里的版本复核、落盘与记录写入不会被半途打断。
+		unlock := media.LockCommit()
+		defer unlock()
+
 		image, err := deps.Posts.ImageByOrder(c.Request.Context(), postID, sortOrder)
 		switch {
 		case errors.Is(err, posts.ErrNotFound):
@@ -92,18 +103,9 @@ func mediaThumbUploadHandler(deps Deps) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取图片失败"})
 			return
 		}
+		// 请求体读取期间可能发生替换上传或清理，锁内按最新版本重新核对。
 		if image.MediaVersion != version {
 			c.JSON(http.StatusConflict, gin.H{"error": "媒体内容已更新，请重新生成缩略图"})
-			return
-		}
-
-		body, readErr := io.ReadAll(io.LimitReader(c.Request.Body, maxThumbBodyBytes+1))
-		if readErr != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "读取缩略图失败"})
-			return
-		}
-		if int64(len(body)) > maxThumbBodyBytes {
-			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "缩略图超过上限"})
 			return
 		}
 

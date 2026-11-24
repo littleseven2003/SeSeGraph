@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -386,5 +387,61 @@ func TestMediaThumbUploadWaitsForClear(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("锁释放后回存仍未完成")
+	}
+}
+
+// TestMediaThumbSlowBodyDoesNotHoldLock 验证慢连接读取请求体时不占用提交锁：
+// 另一端回存能在慢请求读体期间正常完成。
+func TestMediaThumbSlowBodyDoesNotHoldLock(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	cookie := env.setup(t)
+	postID := mediaPost(t, env, []string{"image/jpeg", "image/jpeg"}, false)
+	images := detailImages(t, env, cookie, postID)
+	payload := string(thumbBytes(512))
+
+	put := func(sortOrder int, version string, body io.Reader) int {
+		path := "/api/posts/" + itoa(postID) + "/media/" + itoa(int64(sortOrder)) + "/thumb?v=" + version
+		req := httptest.NewRequest(http.MethodPut, path, body)
+		req.RemoteAddr = "127.0.0.1:54321"
+		req.Header.Set("Content-Type", "image/webp")
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		env.router.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	// 慢请求：body 先不结束，模拟慢连接。
+	reader, writer := io.Pipe()
+	slowDone := make(chan int, 1)
+	go func() { slowDone <- put(1, images[0].MediaVersion, reader) }()
+	t.Cleanup(func() { _ = writer.Close() })
+	// 让慢请求先进入读取请求体，再看另一端是否需要等它。
+	time.Sleep(150 * time.Millisecond)
+
+	// 另一端应立刻完成，不必等慢请求读完。
+	fastDone := make(chan int, 1)
+	go func() { fastDone <- put(2, images[1].MediaVersion, strings.NewReader(payload)) }()
+	select {
+	case code := <-fastDone:
+		if code != http.StatusOK {
+			t.Fatalf("另一路回存应成功，实际 %d", code)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("慢连接读取请求体时占用了提交锁")
+	}
+
+	if _, err := writer.Write([]byte(payload)); err != nil {
+		t.Fatalf("写入慢请求体失败: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("关闭慢请求体失败: %v", err)
+	}
+	select {
+	case code := <-slowDone:
+		if code != http.StatusOK {
+			t.Fatalf("慢请求读完后应成功，实际 %d", code)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("慢请求读取完成后仍未返回")
 	}
 }
