@@ -132,6 +132,30 @@ export function saveTask(storage: StorageLike | null, snapshot: TaskSnapshot): v
   }
 }
 
+// updateSnapshotStrategy 只更新指定任务自己的画质与压缩偏好，返回更新后的该任务快照。
+// 最近任务可能是别的编号，这里按编号读写，绝不把本轮策略写进别的任务。
+export function updateSnapshotStrategy(
+  storage: StorageLike | null,
+  postId: number,
+  mode: TaskSnapshot['mode'],
+  autoCompress: boolean,
+): TaskSnapshot | null {
+  const own = loadTaskFor(storage, postId)
+  if (own === null) return null
+  const next: TaskSnapshot = { ...own }
+  if (mode !== undefined) next.mode = mode
+  next.autoCompress = autoCompress
+  if (!storage) return next
+  try {
+    storage.setItem(taskKey(postId), JSON.stringify(next))
+    const recent = readSnapshot(storage, STORAGE_KEY)
+    if (recent !== null && recent.postId === postId) storage.setItem(STORAGE_KEY, JSON.stringify(next))
+  } catch {
+    // 写入被拒绝时仅保留内存里的结果
+  }
+  return next
+}
+
 // clearTask 清除快照，只动指定任务自己的槽位。
 // 给出编号时，只有最近任务正好是这一条才一并清掉全局索引，别的任务提示不受影响。
 export function clearTask(storage: StorageLike | null, postId?: number): void {

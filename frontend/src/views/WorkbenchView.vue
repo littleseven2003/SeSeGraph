@@ -71,6 +71,7 @@ import {
   clearTask,
   loadTask,
   loadTaskFor,
+  updateSnapshotStrategy,
   matchSnapshotFiles,
   saveTask,
   type SnapshotFile,
@@ -1465,12 +1466,9 @@ async function runUpload(intent: 'auto' | 'manual', routeRound = initSeq): Promi
       phase.value = 'idle'
       return
     }
-    snapshot.value = loadTask(storage)
-    if (snapshot.value) {
-      snapshot.value.mode = mode.value
-      snapshot.value.autoCompress = autoCompress.value
-      saveTask(storage, snapshot.value)
-    }
+    // 只更新当前任务自己的快照：最近任务可能是别的编号，不能把本轮策略写进去。
+    const own = updateSnapshotStrategy(storage, id, mode.value, autoCompress.value)
+    if (own !== null && snapshot.value?.postId === id) snapshot.value = own
     startPolling(id)
   } catch (error) {
     phase.value = 'idle'

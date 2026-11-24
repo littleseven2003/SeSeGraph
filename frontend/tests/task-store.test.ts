@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { clearTask, loadTask, loadTaskFor, matchSnapshotFiles, saveTask, type StorageLike } from '../src/utils/task-store.ts'
+import { clearTask, loadTask, loadTaskFor, matchSnapshotFiles, saveTask, updateSnapshotStrategy, type StorageLike } from '../src/utils/task-store.ts'
 
 function memoryStorage(initial: Record<string, string> = {}): StorageLike & { data: Record<string, string> } {
   const data = { ...initial }
@@ -178,4 +178,20 @@ test('没有编号的清理只动最近任务索引，不碰其它任务的槽�
 test('同数量但不同文件被拒绝', () => {
   const result = matchSnapshotFiles(snapshotB.files, snapshotA.files)
   assert.ok('error' in result)
+})
+
+test('续传收尾只写本任务的画质与压缩偏好，最近的 B 保持不变', () => {
+  const storage = memoryStorage()
+  const withModeA = { ...snapshotA, mode: 'document' as const, autoCompress: false }
+  const withModeB = { ...snapshotB, mode: 'photo' as const, autoCompress: true }
+  saveTask(storage, withModeA)
+  saveTask(storage, withModeB)
+  // 最近任务是 B(2)，续传 A(1) 结束时更新策略只能落在 A 自己身上。
+  const updated = updateSnapshotStrategy(storage, 1, 'photo', true)
+  assert.deepEqual(updated, { ...withModeA, mode: 'photo', autoCompress: true })
+  assert.deepEqual(loadTask(storage), withModeB)
+  assert.deepEqual(loadTaskFor(storage, 1), { ...withModeA, mode: 'photo', autoCompress: true })
+  // 编号不存在时不产生任何写入。
+  assert.equal(updateSnapshotStrategy(storage, 9, 'photo', true), null)
+  assert.deepEqual(loadTask(storage), withModeB)
 })
