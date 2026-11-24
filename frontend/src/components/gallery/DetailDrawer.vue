@@ -142,9 +142,10 @@ const previewValues = computed(() => ({
 
 // previewUrl 取当前预览项的小图；用 computed 而不是模板里直接读 Map，避免响应式差异。
 const previewUrl = computed(() => {
+  const urls = thumbUrls.value
   const order = previewOrder.value
   if (order === 0 || thumbs?.has(order) !== true) return ''
-  return thumbUrls.value.get(order) ?? ''
+  return urls.get(order) ?? ''
 })
 
 // 气泡底部说明当前预览项与体积，取不到时留空。
@@ -384,13 +385,15 @@ function requestThumb(order: number, explicit: boolean): void {
 
 // thumbUrl 返回行内缩略图地址：当前封面直接复用详情里的小图，其余走按需缓存。
 function thumbUrl(image: GalleryImage): string {
+  // 先读一次缓存，保证首帧就把渲染绑定到缩略图更新上。
+  const urls = thumbUrls.value
   if (props.detail !== null && image.sort_order === props.detail.cover_sort_order) {
     const cover = props.detail.cover_url
     if (cover !== '') return cover
   }
   // 已被淘汰并回收的地址不能再渲染，否则会短暂出现裂图。
   if (thumbs?.has(image.sort_order) !== true) return ''
-  return thumbUrls.value.get(image.sort_order) ?? ''
+  return urls.get(image.sort_order) ?? ''
 }
 
 // observeRows 只观察可视区附近的缩略图位，离开视口不触发任何请求。
