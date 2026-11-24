@@ -4,9 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/littleseven2003/SeSeGraph/backend/internal/media"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
@@ -283,5 +287,104 @@ func TestMediaThumbClearRotatesVersions(t *testing.T) {
 	late := env.do(t, http.MethodPut, "/api/posts/"+itoa(postID)+"/media/1/thumb?v="+version, string(thumbBytes(512)), cookie)
 	if late.Code != http.StatusConflict {
 		t.Fatalf("旧版本迟到写入应 409，实际 %d", late.Code)
+	}
+}
+
+// TestMediaThumbClearInterleavesWithUpload 让清理与回存真正并发执行。
+// 结束后不允许出现指向已删文件的记录，也不允许留下无引用的旧版本文件。
+func TestMediaThumbClearInterleavesWithUpload(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	cookie := env.setup(t)
+	postID := mediaPost(t, env, []string{"image/jpeg", "image/jpeg"}, false)
+
+	do := func(method, path, body, contentType string) int {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.RemoteAddr = "127.0.0.1:54321"
+		if contentType != "" {
+			req.Header.Set("Content-Type", contentType)
+		}
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		env.router.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	for round := 0; round < 30; round++ {
+		images := detailImages(t, env, cookie, postID)
+		version := images[0].MediaVersion
+		path := "/api/posts/" + itoa(postID) + "/media/1/thumb?v=" + version
+		payload := string(thumbBytes(512))
+		var wait sync.WaitGroup
+		wait.Add(2)
+		go func() {
+			defer wait.Done()
+			do(http.MethodPut, path, payload, "image/webp")
+		}()
+		go func() {
+			defer wait.Done()
+			do(http.MethodPost, "/api/settings/media-thumbs/clear", "", "")
+		}()
+		wait.Wait()
+
+		images = detailImages(t, env, cookie, postID)
+		referenced := map[string]bool{}
+		for _, image := range images {
+			file := "1-s1-" + image.MediaVersion + ".webp"
+			if image.ThumbURL == "" {
+				continue
+			}
+			referenced[file] = true
+			if _, err := os.Stat(filepath.Join(env.dataDir, media.Dir, itoa(postID), file)); err != nil {
+				t.Fatalf("第 %d 轮：记录指向的文件不存在: %v", round, err)
+			}
+		}
+		entries, err := os.ReadDir(filepath.Join(env.dataDir, media.Dir, itoa(postID)))
+		if err != nil && !os.IsNotExist(err) {
+			t.Fatalf("第 %d 轮：读取目录失败: %v", round, err)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !referenced[entry.Name()] {
+				t.Fatalf("第 %d 轮：留下无引用文件 %s", round, entry.Name())
+			}
+		}
+	}
+}
+
+// TestMediaThumbUploadWaitsForClear 验证清理持有提交锁时回存必须排队，
+// 清理与回存的提交阶段不会交错。
+func TestMediaThumbUploadWaitsForClear(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	cookie := env.setup(t)
+	postID := mediaPost(t, env, []string{"image/jpeg"}, false)
+	images := detailImages(t, env, cookie, postID)
+	path := "/api/posts/" + itoa(postID) + "/media/1/thumb?v=" + images[0].MediaVersion
+	payload := string(thumbBytes(512))
+
+	// 模拟「清理进行中」：先持锁，回存必须等待。
+	unlock := media.LockCommit()
+	done := make(chan int, 1)
+	go func() {
+		req := httptest.NewRequest(http.MethodPut, path, strings.NewReader(payload))
+		req.RemoteAddr = "127.0.0.1:54321"
+		req.Header.Set("Content-Type", "image/webp")
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		env.router.ServeHTTP(rec, req)
+		done <- rec.Code
+	}()
+	select {
+	case code := <-done:
+		unlock()
+		t.Fatalf("回存没有等待清理锁，提前返回 %d", code)
+	case <-time.After(150 * time.Millisecond):
+	}
+	unlock()
+	select {
+	case code := <-done:
+		if code != http.StatusOK {
+			t.Fatalf("锁释放后回存应成功，实际 %d", code)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("锁释放后回存仍未完成")
 	}
 }

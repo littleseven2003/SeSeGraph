@@ -458,16 +458,21 @@ func updateSettingsHandler(deps Deps) gin.HandlerFunc {
 // mediaThumbClearHandler 清空逐图缩略图缓存，返回删除数与释放字节数。
 func mediaThumbClearHandler(deps Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		count, freed, err := media.Clear(deps.DataDir)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "清理缩略图失败"})
-			return
-		}
+		// 与回存的提交阶段互斥：清理完成后不会再有旧请求把文件写回来。
+		unlock := media.LockCommit()
+		defer unlock()
+
+		// 先换版本并清记录，再删文件：换版本之后到达的旧请求会被版本校验拒绝。
 		if deps.Posts != nil {
 			if err := deps.Posts.ClearAllThumbRecords(c.Request.Context()); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "清理缩略图记录失败"})
 				return
 			}
+		}
+		count, freed, err := media.Clear(deps.DataDir)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "清理缩略图失败"})
+			return
 		}
 		c.JSON(http.StatusOK, gin.H{"removed": count, "freed_bytes": freed})
 	}

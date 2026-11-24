@@ -56,6 +56,16 @@ type usageState struct {
 	at    time.Time
 }
 
+// commitMu 让清理与回存的提交阶段互斥：清理期间不会有文件写盘或记录提交，
+// 回存期间也不会有目录被整段删除，避免清理结束后留下无引用的文件。
+var commitMu sync.Mutex
+
+// LockCommit 锁住清理与回存的提交阶段，返回解锁函数。
+func LockCommit() func() {
+	commitMu.Lock()
+	return commitMu.Unlock
+}
+
 var (
 	usageMu    sync.Mutex
 	usageByDir = map[string]usageState{}

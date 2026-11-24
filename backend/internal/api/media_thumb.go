@@ -69,6 +69,10 @@ func mediaThumbUploadHandler(deps Deps) gin.HandlerFunc {
 		if !ok {
 			return
 		}
+		// 与清理、重建互斥：提交阶段的文件与记录不会被另一端半途删除。
+		unlock := media.LockCommit()
+		defer unlock()
+
 		// 读写共用同一查询参数名，避免前端带 v、后端读 version 时被静默拒收。
 		version := strings.TrimSpace(c.Query("v"))
 		if version == "" {
@@ -150,6 +154,9 @@ func mediaThumbUploadHandler(deps Deps) gin.HandlerFunc {
 // 换版本会让在途的迟到写入收到 409，避免旧任务把文件重新写回来。
 func mediaThumbResetHandler(deps Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		unlock := media.LockCommit()
+		defer unlock()
+
 		postID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 		if err != nil || postID <= 0 {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "帖子编号不合法"})
