@@ -46,6 +46,7 @@ test('小图调度按稳定 ID 去重并在生成前后确认有效性', () => {
   assert.ok(source.includes('isAlive: (id) => tiles.value.some((tile) => tile.id === id)'), '按稳定 ID 判断有效性')
   assert.ok(source.includes('localThumbs.reset()'), '清空后作废在途结果')
   assert.ok(source.includes('localThumbs.dispose()'), '离页后丢弃迟到结果')
+  assert.ok(source.includes('disposeArchiveWorker()'), '离页后关闭解压线程')
 })
 
 test('新建图集默认干净新建态，只在显式续传时加载任务', () => {

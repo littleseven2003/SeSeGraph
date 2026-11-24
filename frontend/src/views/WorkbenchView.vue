@@ -75,7 +75,7 @@ import {
 import { acceptedCount, initialStatuses, planUploads, type UploadStatus, runUploadPool } from '../utils/upload.ts'
 import { effectiveUploadConcurrency, readUploadConcurrency } from '../utils/upload-pref.ts'
 import { DEFAULT_META_FILENAMES } from '../utils/zip.ts'
-import { imageBlob, unpackArchive } from '../utils/zip-client.ts'
+import { disposeArchiveWorker, imageBlob, unpackArchive } from '../utils/zip-client.ts'
 import { fetchSettings } from '../api/settings.ts'
 import {
   canLeaveResume,
@@ -1256,6 +1256,7 @@ onBeforeUnmount(() => {
   stopPolling()
   closePreview()
   localThumbs.dispose()
+  disposeArchiveWorker()
   releaseTiles(tiles.value)
 })
 </script>

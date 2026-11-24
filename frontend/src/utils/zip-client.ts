@@ -114,3 +114,14 @@ export async function unpackArchive(file: File, options: ZipOptions = {}): Promi
     )
   })
 }
+
+/** disposeArchiveWorker 离开工作台时关闭解压线程，避免空闲线程常驻占用内存。 */
+export function disposeArchiveWorker(): void {
+  if (worker !== null) {
+    worker.terminate()
+    worker = null
+  }
+  const tasks = Array.from(pending.values())
+  pending.clear()
+  for (const task of tasks) task.fail('压缩包读取已取消')
+}
