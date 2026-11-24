@@ -139,17 +139,18 @@ export function taskStages(input: StageInput): StageView[] {
   return [compressStage(input), uploadStageView(input), syncStageView(input), publishStageView(input)]
 }
 
-// stageSummary 给出一行概况：正在进行的阶段与百分比，便于任务行收起时显示。
+// stageSummary 给出一行概况：正在进行的阶段与可读状态。
+// 排队、发布中这类没有确定进度的状态直接给文字，不编一个百分比。
 export function stageSummary(stages: readonly StageView[]): string {
   for (const item of stages) {
     if (item.tone === 'danger') return `${item.label}失败`
   }
   for (const item of stages) {
     if (item.ratio >= 1) continue
-    if (item.tone === 'run' || item.tone === 'warn') {
-      return `${item.value === '等待' ? '待' : ''}${item.label} ${Math.round(item.ratio * 100)}%`
-    }
-    return `${item.label}待开始`
+    if (item.tone === 'warn') return `${item.label}${item.value}`
+    if (item.value === '等待') return `${item.label}待开始`
+    if (/^\d+\/\d+$/.test(item.value)) return `${item.label} ${Math.round(item.ratio * 100)}%`
+    return `${item.label}${item.value === '未开始' ? '待开始' : item.value}`
   }
   return '四阶段已完成'
 }

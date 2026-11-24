@@ -83,6 +83,11 @@ test('整体概况优先报失败，其次报进行中的阶段', () => {
 
   const running = taskStages({ ...base, receivedCount: 2 })
   assert.equal(stageSummary(running), '上传 50%')
+  // 排队与发布中没有确定进度，给文字而不是百分比。
+  const queued = taskStages({ ...base, receivedCount: 4, channelCount: 4, publishState: 'pending' })
+  assert.equal(stageSummary(queued), '发布排队中')
+  const idlePublish = taskStages({ ...base, receivedCount: 4, channelCount: 4 })
+  assert.equal(stageSummary(idlePublish), '发布待开始')
 
   const failed = taskStages({ ...base, receivedCount: 2, status: 'failed' })
   assert.equal(stageSummary(failed), '上传失败')
