@@ -132,6 +132,7 @@ func NewRouter(deps Deps) *gin.Engine {
 	admin.GET("/posts/:id/media/:sort", adminMediaHandler(deps))
 	admin.GET("/posts/:id/media/:sort/thumb", mediaThumbHandler(deps))
 	admin.PUT("/posts/:id/media/:sort/thumb", limitBody(maxThumbBodyBytes), mediaThumbUploadHandler(deps))
+	admin.POST("/posts/:id/media-thumbs/reset", mediaThumbResetHandler(deps))
 	admin.PUT("/posts/:id", limitBody(maxCreatePostBodyBytes), updatePostHandler(deps))
 	admin.PUT("/posts/:id/cover", limitBody(maxCreatePostBodyBytes), changeCoverHandler(deps))
 	admin.DELETE("/posts/:id", deletePostHandler(deps))

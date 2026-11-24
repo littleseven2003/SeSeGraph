@@ -253,7 +253,30 @@ func Remove(dataDir, rel string) error {
 	return nil
 }
 
-// RemovePost 删除某帖的全部缩略图，永久删帖时调用。
+// PostUsage 统计某帖缩略图的占用字节数与条目数，重建前用于汇报。
+func PostUsage(dataDir string, postID int64) (int64, int) {
+	dir := filepath.Join(dataDir, Dir, strconv.FormatInt(postID, 10))
+	var total int64
+	count := 0
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, 0
+	}
+	for _, item := range entries {
+		if item.IsDir() || filepath.Ext(item.Name()) != ".webp" {
+			continue
+		}
+		info, infoErr := item.Info()
+		if infoErr != nil {
+			continue
+		}
+		total += info.Size()
+		count++
+	}
+	return total, count
+}
+
+// RemovePost 删除某帖的全部缩略图，永久删帖或按图集重建时调用。
 func RemovePost(dataDir string, postID int64) error {
 	if postID <= 0 {
 		return nil
@@ -261,6 +284,7 @@ func RemovePost(dataDir string, postID int64) error {
 	if err := os.RemoveAll(filepath.Join(dataDir, Dir, strconv.FormatInt(postID, 10))); err != nil {
 		return err
 	}
+	resetUsage(dataDir)
 	return nil
 }
 

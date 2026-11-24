@@ -146,6 +146,32 @@ func mediaThumbUploadHandler(deps Deps) gin.HandlerFunc {
 	}
 }
 
+// mediaThumbResetHandler 清掉某帖的小图并换新内容版本，供设置页按图集重建。
+// 换版本会让在途的迟到写入收到 409，避免旧任务把文件重新写回来。
+func mediaThumbResetHandler(deps Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		postID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+		if err != nil || postID <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "帖子编号不合法"})
+			return
+		}
+		if deps.Posts == nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "重置缩略图失败"})
+			return
+		}
+		if err := deps.Posts.ResetPostThumbs(c.Request.Context(), postID); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "重置缩略图记录失败"})
+			return
+		}
+		bytesBefore, count := media.PostUsage(deps.DataDir, postID)
+		if err := media.RemovePost(deps.DataDir, postID); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "清理缩略图文件失败"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"removed": count, "freed_bytes": bytesBefore})
+	}
+}
+
 // thumbCacheLimit 读取当前生效的逐图缓存上限，配置不可用时按不限处理。
 func thumbCacheLimit(deps Deps, c *gin.Context) int64 {
 	if deps.Settings == nil {

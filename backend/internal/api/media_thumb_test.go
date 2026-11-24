@@ -204,3 +204,50 @@ func TestMediaThumbInvalidatedOnReplaceAndDelete(t *testing.T) {
 		t.Fatalf("删帖后小图目录应删除: %v", err)
 	}
 }
+
+// TestMediaThumbResetRotatesVersion 验证按图集重建会清掉文件与记录并换新内容版本，
+// 让在途的迟到写入拿旧版本重试时被拒。
+func TestMediaThumbResetRotatesVersion(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	cookie := env.setup(t)
+	postID := mediaPost(t, env, []string{"image/jpeg"}, false)
+
+	images := detailImages(t, env, cookie, postID)
+	version := images[0].MediaVersion
+	if up := env.do(t, http.MethodPut, "/api/posts/"+itoa(postID)+"/media/1/thumb?v="+version, string(thumbBytes(512)), cookie); up.Code != http.StatusOK {
+		t.Fatalf("写入小图失败: %d %s", up.Code, up.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(env.dataDir, media.Dir, itoa(postID), "1-s1-"+version+".webp")); err != nil {
+		t.Fatalf("文件应存在: %v", err)
+	}
+
+	reset := env.do(t, http.MethodPost, "/api/posts/"+itoa(postID)+"/media-thumbs/reset", "", cookie)
+	if reset.Code != http.StatusOK {
+		t.Fatalf("重置失败: %d %s", reset.Code, reset.Body.String())
+	}
+	var body struct {
+		Removed    int   `json:"removed"`
+		FreedBytes int64 `json:"freed_bytes"`
+	}
+	if err := json.Unmarshal(reset.Body.Bytes(), &body); err != nil {
+		t.Fatalf("解析结果失败: %v", err)
+	}
+	if body.Removed != 1 || body.FreedBytes != 512 {
+		t.Fatalf("重置结果不符: %+v", body)
+	}
+	if _, err := os.Stat(filepath.Join(env.dataDir, media.Dir, itoa(postID))); !os.IsNotExist(err) {
+		t.Fatalf("重置后目录应清空: %v", err)
+	}
+
+	fresh := detailImages(t, env, cookie, postID)
+	if fresh[0].ThumbURL != "" {
+		t.Fatalf("重置后 thumb_url 应为空，实际 %q", fresh[0].ThumbURL)
+	}
+	if fresh[0].MediaVersion == version {
+		t.Fatal("重置后应换新内容版本")
+	}
+	stale := env.do(t, http.MethodPut, "/api/posts/"+itoa(postID)+"/media/1/thumb?v="+version, string(thumbBytes(512)), cookie)
+	if stale.Code != http.StatusConflict {
+		t.Fatalf("旧版本迟到写入应 409，实际 %d", stale.Code)
+	}
+}

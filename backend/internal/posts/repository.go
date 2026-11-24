@@ -1001,6 +1001,19 @@ func (r *Repository) ClearAllThumbRecords(ctx context.Context) error {
 	return nil
 }
 
+// ResetPostThumbs 清掉某帖全部缩略图记录并换新内容版本，
+// 用于按图集重建：在途的迟到写入会因版本不符被拒，不会把旧任务的文件写回来。
+func (r *Repository) ResetPostThumbs(ctx context.Context, postID int64) error {
+	if _, err := r.handle.ExecContext(ctx,
+		`UPDATE post_images
+		    SET thumb_path = '', thumb_bytes = 0, thumb_at = NULL,
+		        media_version = lower(substr(hex(randomblob(6)), 1, 12))
+		  WHERE post_id = ?`, postID); err != nil {
+		return errors.New("重置缩略图记录失败")
+	}
+	return nil
+}
+
 // ListMissingThumbs 返回某帖中还没有缩略图的静态媒体序号，供有界回填使用。
 func (r *Repository) ListMissingThumbs(ctx context.Context, postID int64) ([]Image, error) {
 	rows, err := r.handle.QueryContext(ctx,
