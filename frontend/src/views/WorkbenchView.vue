@@ -243,6 +243,11 @@ const stages = computed(() =>
   }),
 )
 
+// showStages 只在压缩/提交开始后或已存在任务时显示进度卡，未开始时整块不占高度。
+const showStages = computed(
+  () => serverProgress.value !== null || phase.value !== 'idle' || submitting.value || compressDone.value !== null,
+)
+
 // progressText 是右栏与移动底栏的一行概况，明细只在阶段条里呈现。
 const progressText = computed(() => {
   if (phase.value === 'idle' && serverProgress.value === null) return ''
@@ -1349,6 +1354,7 @@ onBeforeUnmount(() => {
         <div class="lg:grid lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start lg:gap-5">
           <div class="min-w-0 space-y-4">
             <TaskProgressCard
+              v-if="showStages"
               :stages="stages"
               :progress="serverProgress"
               :retrying="retrying"

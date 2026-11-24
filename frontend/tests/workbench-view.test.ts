@@ -9,6 +9,11 @@ test('四阶段进度卡不依赖已选图片，刷新后可继续发布或重�
   // 有图时是左栏第一块，没图时在空态上方单独渲染：两种状态下都能继续发布或重试。
   assert.ok(source.includes('v-if="tiles.length === 0 && serverProgress"'), '无图任务也要能看进度与控制')
   assert.ok(source.includes('已选媒体'), '图片区标题与左栏顺序一致')
+  assert.ok(source.includes('v-if="showStages"'), '未开始时进度卡不占高度')
+  assert.ok(
+    source.includes("serverProgress.value !== null || phase.value !== 'idle' || submitting.value || compressDone.value !== null"),
+    '压缩或提交开始后才展示进度卡',
+  )
   const leftColumn = source.indexOf('<div class="min-w-0 space-y-4">')
   const card = source.indexOf('<TaskProgressCard', leftColumn)
   const meta = source.indexOf('<MetaPanel', leftColumn)
