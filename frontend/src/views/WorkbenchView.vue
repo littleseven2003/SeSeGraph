@@ -70,7 +70,8 @@ import {
   type StorageLike,
   type TaskSnapshot,
 } from '../utils/task-store.ts'
-import { acceptedCount, initialStatuses, planUploads, type UploadStatus, runUploadPool, UPLOAD_CONCURRENCY } from '../utils/upload.ts'
+import { acceptedCount, initialStatuses, planUploads, type UploadStatus, runUploadPool } from '../utils/upload.ts'
+import { readUploadConcurrency } from '../utils/upload-pref.ts'
 import { DEFAULT_META_FILENAMES, unpackZip } from '../utils/zip.ts'
 import { fetchSettings } from '../api/settings.ts'
 import {
@@ -135,6 +136,8 @@ const postId = ref(0)
 const phase = ref<Phase>('idle')
 const statuses = ref<Record<number, UploadStatus>>({})
 const snapshot = ref<TaskSnapshot | null>(null)
+// resumableHint 是本机存在可续传任务时的轻提示，只在空态展示，不阻断拖入。
+const resumableHint = ref<TaskSnapshot | null>(null)
 const serverProgress = ref<ServerProgress | null>(null)
 const retrying = ref(false)
 const publishing = ref(false)
@@ -252,9 +255,11 @@ onMounted(() => {
 async function bootstrap(): Promise<void> {
   const requested = Number(new URLSearchParams(window.location.search).get('resume') ?? '')
   const targetID = Number.isInteger(requested) && requested > 0 ? requested : 0
-  // 路由指定了任务编号时只信任同编号的快照，避免把别的任务当成续传目标。
-  const saved = targetID > 0 ? loadTaskFor(storage, targetID) : loadTask(storage)
+  // 只有显式带 ?resume=<id> 才进入续传；默认保持干净新建态，不被上次任务阻断。
+  const saved = targetID > 0 ? loadTaskFor(storage, targetID) : null
   if (saved) snapshot.value = saved
+  // 本机有可续传任务时只给一条非阻断提示，不改变新建入口。
+  resumableHint.value = targetID > 0 ? null : loadTask(storage)
   const init = await loadWorkbenchInitialization({
     loadSettings: fetchSettings,
     loadProgress: fetchProgress,
@@ -1132,7 +1137,9 @@ async function runUpload(): Promise<void> {
     // 受控并发：首错停止派发，已在途的请求收尾，全部成功才提交入队。
     const round = progress.upload_round
     uploadAbort = new AbortController()
-    const failure = await runUploadPool(queue, UPLOAD_CONCURRENCY, async (item) => {
+    // 每轮开始时读取一次「同时上传数」，设置页调整后下一轮生效。
+    const concurrency = readUploadConcurrency(window.localStorage)
+    const failure = await runUploadPool(queue, concurrency, async (item) => {
       statuses.value = { ...statuses.value, [item.sortOrder]: 'uploading' }
       try {
         const uploaded = await uploadImage(id, item.sortOrder, item.tile.blob, item.tile.mime, round, uploadAbort?.signal)
@@ -1209,6 +1216,21 @@ onBeforeUnmount(() => {
         >
           清空
         </button>
+      </div>
+
+      <div
+        v-if="resumableHint && tiles.length === 0 && snapshot === null && postId === 0"
+        class="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-surface px-3.5 py-2.5 text-sm"
+      >
+        <span class="min-w-0 truncate text-muted">
+          有未完成任务 <span class="tnum font-medium text-ink">#{{ resumableHint.postId }}</span>（{{ resumableHint.files.length }} 个文件），不影响直接拖入新素材。
+        </span>
+        <router-link
+          :to="{ name: 'workbench', query: { resume: resumableHint.postId } }"
+          class="shrink-0 rounded-full px-3 py-1.5 text-sm font-medium text-brand-strong transition hover:bg-canvas"
+        >
+          前往续传 →
+        </router-link>
       </div>
 
       <p v-if="message" class="mb-4 rounded-2xl bg-surface px-3.5 py-2.5 text-sm text-muted shadow-[0_1px_0_0_rgba(27,26,23,0.05)]" role="status">

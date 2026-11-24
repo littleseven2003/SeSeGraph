@@ -32,3 +32,12 @@ test('提交前压缩按模式上限判定，无收益或失败时保留原图',
   assert.ok(frozen > 0, '压缩必须使用冻结后的模式与开关')
   assert.ok(source.includes('压缩无收益'), '汇总文案需要说明保留原图的数量')
 })
+
+
+test('新建图集默认干净新建态，只在显式续传时加载任务', () => {
+  assert.ok(source.includes("targetID > 0 ? loadTaskFor(storage, targetID) : null"), '默认不自动续传')
+  assert.ok(source.includes('resumableHint.value = targetID > 0 ? null : loadTask(storage)'), '非续传时只给轻提示')
+  assert.ok(source.includes('前往续传'), '提示里提供续传入口')
+  assert.ok(source.includes('不影响直接拖入新素材'), '提示不阻断新建')
+  assert.ok(source.includes('readUploadConcurrency(window.localStorage)'), '每轮读取同时上传数')
+})

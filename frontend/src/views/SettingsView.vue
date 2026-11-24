@@ -20,6 +20,13 @@ import {
   type TrafficStats,
 } from '../api/settings.ts'
 import AppHeader from '../components/AppHeader.vue'
+import {
+  UPLOAD_CONCURRENCY_MAX,
+  UPLOAD_CONCURRENCY_MIN,
+  clampUploadConcurrency,
+  readUploadConcurrency,
+  saveUploadConcurrency,
+} from '../utils/upload-pref.ts'
 import { fetchGallery, fetchPostDetail, type GalleryItem } from '../api/gallery.ts'
 import { fetchMediaBlob, uploadThumb } from '../api/posts.ts'
 import { renderThumb, THUMB_MAX_PIXELS } from '../utils/thumbs.ts'
@@ -159,6 +166,7 @@ const form = reactive({
   authorName: '',
   pathMode: 'title',
   defaultMode: 'photo',
+  uploadConcurrency: String(readUploadConcurrency(typeof window === 'undefined' ? undefined : window.localStorage)),
   proxyMode: 'direct',
   proxyUrl: '',
   proxyTelegram: false,
@@ -186,6 +194,13 @@ function applyView(next: SettingsView): void {
   form.proxyTelegraph = next.proxy.telegraph_enabled
   form.metaFilenames = next.meta.filenames.join(', ')
   form.metaParseMode = next.meta.parse_mode
+}
+
+// applyUploadConcurrency 保存本地偏好，属于本机性能选项，不进服务端配置。
+function applyUploadConcurrency(): void {
+  form.uploadConcurrency = String(
+    saveUploadConcurrency(typeof window === 'undefined' ? undefined : window.localStorage, clampUploadConcurrency(form.uploadConcurrency)),
+  )
 }
 
 function managed(field: string): boolean {
@@ -987,6 +1002,19 @@ onBeforeUnmount(() => {
                     <p v-if="managed(FIELD_UPLOAD_MODE)" class="mt-1 text-xs text-muted">{{ ENV_MANAGED_HINT }}</p>
                     <p class="mt-1 text-xs text-muted">新任务默认使用该画质，单帖仍可在工作台覆盖；续传沿用原任务的画质。</p>
                   </fieldset>
+                  <label class="block">
+                    <span class="text-xs font-medium text-muted">同时上传数</span>
+                    <select
+                      v-model="form.uploadConcurrency"
+                      class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface sm:w-56"
+                      @change="applyUploadConcurrency"
+                    >
+                      <option v-for="count in 4" :key="count" :value="String(count)">{{ count }} 路</option>
+                    </select>
+                    <p class="mt-1 text-xs text-muted">
+                      每轮同时上传的图片数，范围 {{ UPLOAD_CONCURRENCY_MIN }}–{{ UPLOAD_CONCURRENCY_MAX }} 路，默认 2 路；实际值还受服务端上传入口限额约束，调整后下一轮上传生效。
+                    </p>
+                  </label>
                 </div>
               </div>
             </section>
