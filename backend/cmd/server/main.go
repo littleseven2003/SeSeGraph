@@ -25,6 +25,7 @@ import (
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/provider"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/publisher"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/publishgate"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/settings"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/storage"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/telegraph"
@@ -269,7 +270,7 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		Views: viewsService,
 	})
 
-	stopWorker := startUploadQueue(ctx, repository, cfg.DataDir, switcher, gate, lookupEnv)
+	stopWorker := startUploadQueue(ctx, repository, cfg.DataDir, switcher, gate, lookupEnv, publishReady(telegraphManager, cfg.PublicURL))
 	defer stopWorker()
 
 	stopPublisher := startPublisher(ctx, repository, telegraphManager, cfg.PublicURL)
@@ -735,15 +736,16 @@ func readImageQueueWait(lookupEnv func(string) (string, bool)) time.Duration {
 
 // startUploadQueue 启动上传队列，返回停止函数。
 // 队列始终运行：图床未配置时按提供方的就绪状态等待，配置保存后自动接手。
-func startUploadQueue(ctx context.Context, repository *posts.Repository, dataDir string, provider storage.Provider, gate *storage.UploadGate, lookupEnv func(string) (string, bool)) func() {
+func startUploadQueue(ctx context.Context, repository *posts.Repository, dataDir string, provider storage.Provider, gate *storage.UploadGate, lookupEnv func(string) (string, bool), ready func(ctx context.Context) error) func() {
 	interval := readUploadInterval(lookupEnv)
 
 	queue, err := worker.New(worker.Options{
-		Repository: repository,
-		Provider:   provider,
-		DataDir:    dataDir,
-		Interval:   interval,
-		Gate:       gate,
+		Repository:   repository,
+		Provider:     provider,
+		DataDir:      dataDir,
+		Interval:     interval,
+		Gate:         gate,
+		PublishReady: ready,
 	})
 	if err != nil {
 		log.Print("上传队列初始化失败")
@@ -822,6 +824,13 @@ func envValue(lookupEnv func(string) (string, bool), key string) string {
 func readSetupToken(lookupEnv func(string) (string, bool)) string {
 	value, _ := lookupEnv("ADMIN_SETUP_TOKEN")
 	return strings.TrimSpace(value)
+}
+
+// publishReady 把发布前置检查装配成闭包，手动发布与同步收尾共用同一口径。
+func publishReady(manager *telegraph.Manager, publicURL string) func(ctx context.Context) error {
+	return func(ctx context.Context) error {
+		return publishgate.Check(ctx, manager, publicURL)
+	}
 }
 
 // isHTTPS 判断对外地址是否使用 HTTPS，用于决定会话 Cookie 是否带 Secure。

@@ -113,6 +113,8 @@ type env struct {
 	sleeps   *testClock
 	gate     *storage.UploadGate
 	worker   *Worker
+	// publishReadyErr 模拟发布前置条件：nil 表示已配置，非 nil 表示不可发布。
+	publishReadyErr error
 }
 
 func newEnv(t *testing.T) *env {
@@ -142,6 +144,9 @@ func newEnv(t *testing.T) *env {
 		Sleep:      e.sleeps.sleep,
 		Now:        e.sleeps.Now,
 		Gate:       e.gate,
+		PublishReady: func(context.Context) error {
+			return e.publishReadyErr
+		},
 	})
 	if err != nil {
 		t.Fatalf("创建队列失败: %v", err)
@@ -730,5 +735,133 @@ func TestProcessDoesNotAutoPublishStopped(t *testing.T) {
 	}
 	if state == posts.PublishPending || state == posts.PublishPublishing {
 		t.Errorf("停止的任务不应入发布队列，状态 = %q", state)
+	}
+}
+
+// TestProcessKeepsAutoPublishHiddenWhenNotReady 验证发布条件不齐时收尾不会公开，
+// 任务停在已存图未公开，等管理员补齐 Telegraph 与 HTTPS 后手动发布。
+func TestProcessKeepsAutoPublishHiddenWhenNotReady(t *testing.T) {
+	e := newEnv(t)
+	e.publishReadyErr = errors.New("发布条件未就绪")
+	ctx := context.Background()
+	id := e.queuedPostWithIntent(t, 1, "photo", posts.PublishIntentAuto)
+	if _, ok, err := e.repo.ClaimNext(ctx); err != nil || !ok {
+		t.Fatalf("领取失败: ok=%v err=%v", ok, err)
+	}
+	if err := e.worker.Process(ctx, id); err != nil {
+		t.Fatalf("处理失败: %v", err)
+	}
+
+	state, _, public, err := e.repo.PublishStatus(ctx, id)
+	if err != nil {
+		t.Fatalf("读取发布状态失败: %v", err)
+	}
+	if state != posts.PublishIdle || public {
+		t.Fatalf("状态 = %q / public=%v，期望 idle / false", state, public)
+	}
+	stored, err := e.repo.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("读取帖子失败: %v", err)
+	}
+	if stored.Status != posts.StatusCompleted {
+		t.Errorf("状态 = %q，期望 completed（图片应已存好）", stored.Status)
+	}
+}
+
+// TestProcessAutoPublishesAfterPauseAndResume 验证同步途中暂停会回队列，
+// 恢复后重新收尾才入发布队列，暂停期间不会抢先公开。
+func TestProcessAutoPublishesAfterPauseAndResume(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	id := e.queuedPostWithIntent(t, 1, "photo", posts.PublishIntentAuto)
+	if _, ok, err := e.repo.ClaimNext(ctx); err != nil || !ok {
+		t.Fatalf("领取失败: ok=%v err=%v", ok, err)
+	}
+	if err := e.repo.Pause(ctx, id); err != nil {
+		t.Fatalf("暂停失败: %v", err)
+	}
+	if err := e.worker.Process(ctx, id); err != nil {
+		t.Fatalf("暂停中处理应正常返回: %v", err)
+	}
+	state, _, public, err := e.repo.PublishStatus(ctx, id)
+	if err != nil {
+		t.Fatalf("读取发布状态失败: %v", err)
+	}
+	if state != posts.PublishIdle || public {
+		t.Fatalf("暂停中状态 = %q / public=%v，期望 idle / false", state, public)
+	}
+
+	if err := e.repo.Resume(ctx, id); err != nil {
+		t.Fatalf("恢复失败: %v", err)
+	}
+	if _, ok, err := e.repo.ClaimNext(ctx); err != nil || !ok {
+		t.Fatalf("恢复后领取失败: ok=%v err=%v", ok, err)
+	}
+	if err := e.worker.Process(ctx, id); err != nil {
+		t.Fatalf("恢复后处理失败: %v", err)
+	}
+	state, _, public, err = e.repo.PublishStatus(ctx, id)
+	if err != nil {
+		t.Fatalf("读取发布状态失败: %v", err)
+	}
+	if state != posts.PublishPending || !public {
+		t.Fatalf("恢复后状态 = %q / public=%v，期望 pending / true", state, public)
+	}
+	if e.provider.callCount() != 1 {
+		t.Errorf("上传次数 = %d，已存图不应重复上传", e.provider.callCount())
+	}
+}
+
+// TestRecoverEnqueuesInterruptedAutoPublish 验证同步收尾后立刻重启，
+// 下次启动会把「已同步、未发布」的任务补进发布队列。
+func TestRecoverEnqueuesInterruptedAutoPublish(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	id := e.queuedPostWithIntent(t, 1, "photo", posts.PublishIntentAuto)
+	if _, ok, err := e.repo.ClaimNext(ctx); err != nil || !ok {
+		t.Fatalf("领取失败: ok=%v err=%v", ok, err)
+	}
+	// 模拟旧版本：完成落库后、发布状态写入前进程退出。
+	if _, err := e.repo.FinishSync(ctx, id, false, "发布条件未就绪"); err != nil {
+		t.Fatalf("收尾失败: %v", err)
+	}
+	e.publishReadyErr = nil
+	recovery, err := e.worker.Recover(ctx)
+	if err != nil {
+		t.Fatalf("启动恢复失败: %v", err)
+	}
+	if recovery.AutoEnqueued != 1 {
+		t.Errorf("补入发布队列 %d 条，期望 1", recovery.AutoEnqueued)
+	}
+	state, _, public, err := e.repo.PublishStatus(ctx, id)
+	if err != nil {
+		t.Fatalf("读取发布状态失败: %v", err)
+	}
+	if state != posts.PublishPending || !public {
+		t.Fatalf("启动恢复后状态 = %q / public=%v，期望 pending / true", state, public)
+	}
+}
+
+// TestRecoverKeepsHiddenWithoutPublishConfig 验证启动恢复同样受发布条件约束。
+func TestRecoverKeepsHiddenWithoutPublishConfig(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	id := e.queuedPostWithIntent(t, 1, "photo", posts.PublishIntentAuto)
+	if _, ok, err := e.repo.ClaimNext(ctx); err != nil || !ok {
+		t.Fatalf("领取失败: ok=%v err=%v", ok, err)
+	}
+	if _, err := e.repo.FinishSync(ctx, id, false, "发布条件未就绪"); err != nil {
+		t.Fatalf("收尾失败: %v", err)
+	}
+	e.publishReadyErr = errors.New("Telegraph 未配置")
+	if _, err := e.worker.Recover(ctx); err != nil {
+		t.Fatalf("启动恢复失败: %v", err)
+	}
+	state, _, public, err := e.repo.PublishStatus(ctx, id)
+	if err != nil {
+		t.Fatalf("读取发布状态失败: %v", err)
+	}
+	if state != posts.PublishIdle || public {
+		t.Fatalf("状态 = %q / public=%v，期望 idle / false", state, public)
 	}
 }

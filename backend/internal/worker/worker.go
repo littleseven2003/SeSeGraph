@@ -36,19 +36,22 @@ type Options struct {
 	Now         func() time.Time
 	// Gate 与图床切换共用：领取任务后持有名额，跨 Bot 切换需要独占同一个协调点。
 	Gate *storage.UploadGate
+	// PublishReady 判断发布条件是否齐备，与手动发布共用口径；未装配时按未就绪处理。
+	PublishReady func(ctx context.Context) error
 }
 
 // Worker 串行处理待上传的帖子。
 type Worker struct {
-	repo        *posts.Repository
-	provider    storage.Provider
-	dataDir     string
-	interval    time.Duration
-	maxAttempts int
-	logger      *log.Logger
-	sleep       func(ctx context.Context, d time.Duration) error
-	now         func() time.Time
-	gate        *storage.UploadGate
+	repo         *posts.Repository
+	provider     storage.Provider
+	dataDir      string
+	interval     time.Duration
+	maxAttempts  int
+	logger       *log.Logger
+	sleep        func(ctx context.Context, d time.Duration) error
+	now          func() time.Time
+	gate         *storage.UploadGate
+	publishReady func(ctx context.Context) error
 
 	mu          sync.Mutex
 	nextAllowed time.Time
@@ -85,15 +88,16 @@ func New(opts Options) (*Worker, error) {
 	}
 
 	return &Worker{
-		repo:        opts.Repository,
-		provider:    opts.Provider,
-		dataDir:     opts.DataDir,
-		interval:    interval,
-		maxAttempts: maxAttempts,
-		logger:      logger,
-		sleep:       sleep,
-		now:         now,
-		gate:        opts.Gate,
+		repo:         opts.Repository,
+		provider:     opts.Provider,
+		dataDir:      opts.DataDir,
+		interval:     interval,
+		maxAttempts:  maxAttempts,
+		logger:       logger,
+		sleep:        sleep,
+		now:          now,
+		gate:         opts.Gate,
+		publishReady: opts.PublishReady,
 	}, nil
 }
 
@@ -101,6 +105,8 @@ func New(opts Options) (*Worker, error) {
 type Recovery struct {
 	Requeued     int64
 	RemovedFiles int
+	// AutoEnqueued 是启动时补入发布队列的任务数。
+	AutoEnqueued int64
 }
 
 // Recover 恢复中断的任务并清理过期的孤儿临时文件。
@@ -113,10 +119,15 @@ func (w *Worker) Recover(ctx context.Context) (Recovery, error) {
 	if err != nil {
 		return Recovery{Requeued: requeued}, err
 	}
-	if requeued > 0 || removed > 0 {
-		w.logger.Printf("上传队列恢复：重新排队 %d 个任务，清理 %d 个临时文件", requeued, removed)
+	// 收尾与入队现在同事务，这里兜底旧版本留下的「已同步、未发布」记录。
+	auto, err := w.repo.RecoverAutoPublish(ctx, w.checkPublishReady(ctx) == nil, publishNotReadyNote)
+	if err != nil {
+		return Recovery{Requeued: requeued, RemovedFiles: removed}, err
 	}
-	return Recovery{Requeued: requeued, RemovedFiles: removed}, nil
+	if requeued > 0 || removed > 0 || auto > 0 {
+		w.logger.Printf("上传队列恢复：重新排队 %d 个任务，清理 %d 个临时文件，补入发布队列 %d 个", requeued, removed, auto)
+	}
+	return Recovery{Requeued: requeued, RemovedFiles: removed, AutoEnqueued: auto}, nil
 }
 
 // Run 持续处理队列，直到上下文结束。
@@ -226,15 +237,30 @@ func (w *Worker) Process(ctx context.Context, postID int64) error {
 		return errors.New("图片数量不足")
 	}
 
-	if err := w.repo.MarkPostFinished(ctx, postID, posts.StatusCompleted, ""); err != nil {
+	// 发布条件与手动发布共用口径：不齐时只标记完成，公开标记与短码保持关闭。
+	readyErr := w.checkPublishReady(ctx)
+	enqueued, err := w.repo.FinishSync(ctx, postID, readyErr == nil, publishNotReadyNote)
+	if err != nil {
 		return err
 	}
-	// 提交时选了「提交并发布」的任务在同步完成后自动入队；关页或重启都由服务端接着做。
-	if err := w.repo.EnqueueAutoPublish(ctx, postID); err != nil {
-		w.logger.Printf("自动入发布队列失败：编号 %d", postID)
+	if enqueued {
+		w.logger.Printf("自动入发布队列：编号 %d", postID)
+	} else if readyErr != nil {
+		w.logger.Printf("发布条件未就绪，已存图未公开：编号 %d", postID)
 	}
 	w.logger.Printf("帖子上传完成：编号 %d，图片 %d 张", postID, stored)
 	return nil
+}
+
+// publishNotReadyNote 是发布条件不齐时写入的提示，明确任务仍处于未公开状态。
+const publishNotReadyNote = "发布条件未就绪，已存图未公开，请先配置 Telegraph 与 HTTPS 地址"
+
+// checkPublishReady 调用装配好的发布检查，未装配时按未就绪处理，避免误公开。
+func (w *Worker) checkPublishReady(ctx context.Context) error {
+	if w.publishReady == nil {
+		return errors.New("发布检查未装配")
+	}
+	return w.publishReady(ctx)
 }
 
 // fixedProvider 在提供方支持快照时取一份固定视图，保证整帖使用同一配置。

@@ -6,8 +6,8 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
-	"github.com/littleseven2003/SeSeGraph/backend/internal/config"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/publishgate"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/settings"
 )
 
@@ -25,16 +25,12 @@ func publishPostHandler(deps Deps) gin.HandlerFunc {
 			return
 		}
 
-		if deps.Telegraph == nil {
+		// 与同步收尾的自动入队共用同一套发布前置检查。
+		switch err := publishgate.Check(c.Request.Context(), deps.Telegraph, deps.PublicURL); {
+		case errors.Is(err, publishgate.ErrTelegraph):
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Telegraph 未配置"})
 			return
-		}
-		if _, err := deps.Telegraph.Client(c.Request.Context()); err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Telegraph 未配置"})
-			return
-		}
-		// 公开地址会被直接拼上图片路径，必须是结构完整的 HTTPS 地址。
-		if !config.PublicURLIsHTTPS(deps.PublicURL) {
+		case errors.Is(err, publishgate.ErrPublicURL):
 			c.JSON(http.StatusConflict, gin.H{"error": "需要先配置公开 HTTPS 地址"})
 			return
 		}

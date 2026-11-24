@@ -199,6 +199,26 @@ func createPostHandler(deps Deps) gin.HandlerFunc {
 				}
 			}
 		}
+		// 自动发布沿用提交时冻结的链接口径：设置页之后的改动不影响这条任务。
+		freezeMode := ""
+		freezeSlug := ""
+		if req.PublishIntent == posts.PublishIntentAuto {
+			freezeMode = settings.PathModeTitle
+			if deps.Settings != nil {
+				if effective, err := deps.Settings.Effective(c.Request.Context()); err == nil {
+					freezeMode = effective.TelegraphPathMode.Value
+				}
+			}
+			if freezeMode == settings.PathModeSlug {
+				generated, err := posts.NewPublishSlug()
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "生成链接短码失败"})
+					return
+				}
+				freezeSlug = generated
+			}
+		}
+
 		id, err := deps.Posts.Create(c.Request.Context(), posts.Post{
 			Title:           title,
 			Description:     req.Description,
@@ -208,6 +228,8 @@ func createPostHandler(deps Deps) gin.HandlerFunc {
 			Status:          posts.StatusUploading,
 			CompressedCount: req.CompressedCount,
 			PublishIntent:   req.PublishIntent,
+			PublishPathMode: freezeMode,
+			PublishSlug:     freezeSlug,
 			Tags:            tags,
 		})
 		if err != nil {
@@ -223,28 +245,6 @@ func createPostHandler(deps Deps) gin.HandlerFunc {
 				return
 			}
 		}
-		if req.PublishIntent == posts.PublishIntentAuto {
-			// 自动发布沿用首次入队时冻结的链接口径，建任务时就定下来，
-			// 之后设置页改动不会影响这条任务。
-			freezeMode := settings.PathModeTitle
-			if deps.Settings != nil {
-				if effective, err := deps.Settings.Effective(c.Request.Context()); err == nil {
-					freezeMode = effective.TelegraphPathMode.Value
-				}
-			}
-			freezeSlug := ""
-			if freezeMode == settings.PathModeSlug {
-				generated, err := posts.NewPublishSlug()
-				if err == nil {
-					freezeSlug = generated
-				}
-			}
-			if err := deps.Posts.FreezePublishPath(c.Request.Context(), id, freezeMode, freezeSlug); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "保存发布设置失败"})
-				return
-			}
-		}
-
 		if len(cover) > 0 || req.CoverSortOrder > 0 {
 			if err := deps.Posts.SetCoverSelection(c.Request.Context(), id, req.CoverSortOrder, coverPath); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "保存封面失败"})

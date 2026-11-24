@@ -79,7 +79,10 @@ type Post struct {
 	CompressedCount *int
 	// PublishIntent 是提交时选择的发布意图：auto 表示同步完成后自动入发布队列。
 	PublishIntent string
-	Tags          []string
+	// PublishPathMode 与 PublishSlug 是提交时冻结的链接口径，与意图同事务写入。
+	PublishPathMode string
+	PublishSlug     string
+	Tags            []string
 }
 
 // PublishInfo 是发布一帖所需的元数据与已存图列表。
@@ -152,11 +155,13 @@ func (r *Repository) Create(ctx context.Context, post Post) (int64, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// 发布意图与链接口径一次写入：建任务成功后不会再出现「有意图、无冻结口径」的中间态。
 	result, err := tx.ExecContext(ctx,
-		`INSERT INTO posts (title, description, author_name, cover_thumb_path, image_count, upload_mode, status, compressed_count, publish_intent)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO posts (title, description, author_name, cover_thumb_path, image_count, upload_mode, status,
+		                    compressed_count, publish_intent, publish_path_mode, publish_slug)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		post.Title, post.Description, post.AuthorName, post.CoverThumbPath, post.ImageCount, post.UploadMode, post.Status,
-		post.CompressedCount, post.PublishIntent,
+		post.CompressedCount, post.PublishIntent, post.PublishPathMode, post.PublishSlug,
 	)
 	if err != nil {
 		return 0, errors.New("保存帖子失败")
@@ -497,18 +502,99 @@ func (r *Repository) RequestPublishWithPath(ctx context.Context, postID int64, m
 	return nil
 }
 
-// EnqueueAutoPublish 在同步完成后把自动发布意图的任务送入发布队列。
-// 只处理提交时明确选了自动发布、仍处于运行态且尚未发布的任务；旧任务不受影响。
-func (r *Repository) EnqueueAutoPublish(ctx context.Context, postID int64) error {
-	_, err := r.handle.ExecContext(ctx,
-		`UPDATE posts SET is_public = 1, publish_state = ?, publish_error = '', updated_at = CURRENT_TIMESTAMP
-		 WHERE id = ? AND COALESCE(publish_intent, '') = ? AND status = ?
-		   AND publish_state = ? AND COALESCE(control_state, 'running') = ? AND pending_delete = 0`,
-		PublishPending, postID, PublishIntentAuto, StatusCompleted, PublishIdle, ControlRunning)
+// FinishSync 收尾同步任务：标记完成与按提交时的发布意图入队放在同一条事务里，
+// 中途重启不会停在「已同步、未发布」的中间态。
+// publishReady 由调用方按与手动发布相同的条件判定：不满足时只保留已存图结果，
+// 公开标记与短码链接保持关闭，并把原因写进发布错误供设置页修正后手动发布。
+func (r *Repository) FinishSync(ctx context.Context, postID int64, publishReady bool, notReadyNote string) (bool, error) {
+	tx, err := r.handle.BeginTx(ctx, nil)
 	if err != nil {
-		return errors.New("自动入发布队列失败")
+		return false, errors.New("更新帖子状态失败")
 	}
-	return nil
+	defer func() { _ = tx.Rollback() }()
+
+	result, err := tx.ExecContext(ctx,
+		`UPDATE posts SET status = ?, error_message = '', updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND COALESCE(control_state, 'running') = ?`,
+		StatusCompleted, postID, ControlRunning)
+	if err != nil {
+		return false, errors.New("更新帖子状态失败")
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return false, ErrControlInvalid
+	}
+
+	intent, err := r.publishIntentTx(ctx, tx, postID)
+	if err != nil {
+		return false, err
+	}
+	enqueued := false
+	if intent == PublishIntentAuto {
+		if publishReady {
+			result, err := tx.ExecContext(ctx,
+				`UPDATE posts SET is_public = 1, publish_state = ?, publish_error = '', updated_at = CURRENT_TIMESTAMP
+				 WHERE id = ? AND status = ? AND publish_state = ?
+				   AND COALESCE(control_state, 'running') = ? AND pending_delete = 0`,
+				PublishPending, postID, StatusCompleted, PublishIdle, ControlRunning)
+			if err != nil {
+				return false, errors.New("自动入发布队列失败")
+			}
+			affected, _ := result.RowsAffected()
+			enqueued = affected > 0
+		} else if notReadyNote != "" {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE posts SET publish_error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+				notReadyNote, postID); err != nil {
+				return false, errors.New("记录发布条件失败")
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return false, errors.New("更新帖子状态失败")
+	}
+	return enqueued, nil
+}
+
+// publishIntentTx 读取提交时冻结的发布意图，缺失时按仅存图处理。
+func (r *Repository) publishIntentTx(ctx context.Context, tx *sql.Tx, postID int64) (string, error) {
+	var intent string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(publish_intent, '') FROM posts WHERE id = ?`, postID).Scan(&intent); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", errors.New("读取发布意图失败")
+	}
+	return intent, nil
+}
+
+// RecoverAutoPublish 在启动时补做自动发布入队：只处理提交时选了自动发布、
+// 已同步完成、仍待发布且未被暂停或停止的任务。条件不满足时保持未公开，
+// 等配置补齐后由管理员手动发布，不会自行对外。
+func (r *Repository) RecoverAutoPublish(ctx context.Context, publishReady bool, notReadyNote string) (int64, error) {
+	if !publishReady {
+		_, err := r.handle.ExecContext(ctx,
+			`UPDATE posts SET publish_error = ?, updated_at = CURRENT_TIMESTAMP
+			 WHERE COALESCE(publish_intent, '') = ? AND status = ? AND publish_state = ?
+			   AND COALESCE(control_state, 'running') = ? AND is_public = 0 AND pending_delete = 0
+			   AND ? <> '' AND COALESCE(publish_error, '') <> ?`,
+			notReadyNote, PublishIntentAuto, StatusCompleted, PublishIdle, ControlRunning, notReadyNote, notReadyNote)
+		if err != nil {
+			return 0, errors.New("记录发布条件失败")
+		}
+		return 0, nil
+	}
+	result, err := r.handle.ExecContext(ctx,
+		`UPDATE posts SET is_public = 1, publish_state = ?, publish_error = '', updated_at = CURRENT_TIMESTAMP
+		 WHERE COALESCE(publish_intent, '') = ? AND status = ? AND publish_state = ?
+		   AND COALESCE(control_state, 'running') = ? AND pending_delete = 0`,
+		PublishPending, PublishIntentAuto, StatusCompleted, PublishIdle, ControlRunning)
+	if err != nil {
+		return 0, errors.New("自动入发布队列失败")
+	}
+	affected, _ := result.RowsAffected()
+	return affected, nil
 }
 
 // ReleasePublish 原子交还发布领取：暂停与"暂停后立刻恢复"都回到待发布，
