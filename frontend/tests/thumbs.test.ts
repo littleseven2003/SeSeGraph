@@ -7,8 +7,11 @@ import {
   THUMB_EAGER_MAX_BYTES,
   ThumbQueue,
   canLoadThumb,
+  assertDecodable,
   hasStoredThumb,
   needsExplicitPreview,
+  pixelBudgetExceeded,
+  readImageSize,
   pickEagerOrders,
   shouldWaitExplicit,
   readWithinBudget,
@@ -371,4 +374,58 @@ test('视频先取帧再缩放，isVideoBlob 只认视频类型', () => {
   assert.equal(isVideoBlob(new Blob([], { type: 'video/mp4' })), true)
   assert.equal(isVideoBlob(new Blob([], { type: 'image/jpeg' })), false)
   assert.equal(isVideoBlob(new Blob([], { type: 'image/webp' })), false)
+})
+
+// pngBlob 构造只带 IHDR 的 PNG 头，用于尺寸预检测试。
+function pngBlob(width: number, height: number): Blob {
+  const bytes = new Uint8Array(33)
+  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0)
+  bytes.set([0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52], 8)
+  const view = new DataView(bytes.buffer)
+  view.setUint32(16, width, false)
+  view.setUint32(20, height, false)
+  return new Blob([bytes])
+}
+
+// jpegBlob 构造只带 SOF0 段的 JPEG 头。
+function jpegBlob(width: number, height: number): Blob {
+  const bytes = new Uint8Array(30)
+  bytes.set([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08], 0)
+  const view = new DataView(bytes.buffer)
+  view.setUint16(7, height, false)
+  view.setUint16(9, width, false)
+  return new Blob([bytes])
+}
+
+test('解码前只读文件头取宽高', async () => {
+  assert.deepEqual(await readImageSize(pngBlob(8000, 6000)), { width: 8000, height: 6000 })
+  assert.deepEqual(await readImageSize(jpegBlob(4032, 3024)), { width: 4032, height: 3024 })
+  assert.equal(await readImageSize(new Blob([new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])])), null)
+})
+
+test('超出像素预算的源图在解码前被拦下', async () => {
+  assert.equal(pixelBudgetExceeded({ width: 8000, height: 6000 }), true)
+  assert.equal(pixelBudgetExceeded({ width: 4032, height: 3024 }), false)
+  assert.equal(pixelBudgetExceeded(null), false)
+  await assert.rejects(async () => assertDecodable(pngBlob(9000, 7000)))
+  await assert.doesNotReject(async () => assertDecodable(pngBlob(1200, 900)))
+})
+
+test('单张被拒绝后队列继续处理下一项', async () => {
+  const failed: number[] = []
+  const queue = new ThumbQueue(
+    async (order) => {
+      if (order === 1) throw new Error('原图像素超出预算')
+      return new Blob([String(order)])
+    },
+    { createUrl: () => 'blob:' + String(Math.random()), revokeUrl: () => {}, onFail: (order) => failed.push(order) },
+  )
+  queue.request(1)
+  queue.request(2)
+  for (let tick = 0; tick < 40 && !queue.has(2); tick += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  assert.deepEqual(failed, [1])
+  assert.equal(queue.has(2), true)
+  assert.equal(queue.has(1), false)
 })

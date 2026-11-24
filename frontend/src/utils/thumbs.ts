@@ -9,6 +9,89 @@ export const THUMB_EAGER_MAX_BYTES = 4_000_000
 // 落盘缩略图的最长边：行内 44px 与 224px 气泡共用这一份，留足高分屏余量。
 export const THUMB_MAX_PIXELS = 512
 
+// MAX_DECODE_PIXELS 是解码前允许的源像素上限：超过就只留占位，
+// 不把上亿像素的原图先展开进内存，低配机器与手机都不会被一张图拖垮。
+export const MAX_DECODE_PIXELS = 24_000_000
+
+// pixelBudgetExceeded 判断源像素是否超出解码预算；读不出尺寸时按可解码处理。
+export function pixelBudgetExceeded(size: { width: number; height: number } | null): boolean {
+  if (size === null || size.width <= 0 || size.height <= 0) return false
+  return size.width * size.height > MAX_DECODE_PIXELS
+}
+
+// readImageSize 只读文件头解析宽高，不解码像素。
+// 支持 JPEG、PNG、WebP 与 GIF；其他格式返回 null，由调用方按可解码处理。
+export async function readImageSize(blob: Blob): Promise<{ width: number; height: number } | null> {
+  const head = new DataView(await blob.slice(0, 512 * 1024).arrayBuffer())
+  if (head.byteLength < 16) return null
+  const tag = (offset: number, length: number): string => {
+    let text = ''
+    for (let index = 0; index < length; index += 1) {
+      text += String.fromCharCode(head.getUint8(offset + index))
+    }
+    return text
+  }
+  const u32be = (offset: number): number => head.getUint32(offset, false)
+  const u32le = (offset: number): number => head.getUint32(offset, true)
+
+  if (tag(0, 8) === '\x89PNG\r\n\x1a\n' && tag(12, 4) === 'IHDR') {
+    return { width: u32be(16), height: u32be(20) }
+  }
+  if (tag(0, 4) === 'GIF8') {
+    return { width: head.getUint16(6, true), height: head.getUint16(8, true) }
+  }
+  if (tag(0, 4) === 'RIFF' && tag(8, 4) === 'WEBP') {
+    const chunk = tag(12, 4)
+    if (chunk === 'VP8 ') {
+      const offset = 12 + 8 + 6
+      if (head.byteLength < offset + 4) return null
+      return {
+        width: head.getUint16(offset, true) & 0x3fff,
+        height: head.getUint16(offset + 2, true) & 0x3fff,
+      }
+    }
+    if (chunk === 'VP8L') {
+      const bits = u32le(12 + 8 + 1)
+      return { width: (bits & 0x3fff) + 1, height: ((bits >> 14) & 0x3fff) + 1 }
+    }
+    if (chunk === 'VP8X') {
+      const offset = 12 + 8 + 4
+      if (head.byteLength < offset + 6) return null
+      const read24 = (at: number): number => head.getUint8(at) | (head.getUint8(at + 1) << 8) | (head.getUint8(at + 2) << 16)
+      return { width: read24(offset) + 1, height: read24(offset + 3) + 1 }
+    }
+    return null
+  }
+  if (head.getUint16(0, false) === 0xffd8) {
+    let offset = 2
+    while (offset + 9 < head.byteLength) {
+      if (head.getUint8(offset) !== 0xff) {
+        offset += 1
+        continue
+      }
+      const marker = head.getUint8(offset + 1)
+      const length = head.getUint16(offset + 2, false)
+      // SOF0–SOF15，跳过 DHT(C4)、JPG(C8) 与 DAC(CC)。
+      const isSof = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc
+      if (isSof) {
+        return { height: head.getUint16(offset + 5, false), width: head.getUint16(offset + 7, false) }
+      }
+      if (length < 2) return null
+      offset += 2 + length
+    }
+    return null
+  }
+  return null
+}
+
+// assertDecodable 在解码前拦下超预算的原图，避免先展开整张图再缩放。
+export async function assertDecodable(blob: Blob): Promise<void> {
+  const size = await readImageSize(blob)
+  if (pixelBudgetExceeded(size)) {
+    throw new Error('原图像素超出预算，已跳过小图生成')
+  }
+}
+
 // canLoadThumb 判断该项是否有可读的管理员媒体：只有已存入频道的图片能按序号取。
 export function canLoadThumb(image: Pick<GalleryImage, 'status'>): boolean {
   return image.status === 'stored'
@@ -336,7 +419,10 @@ export async function renderThumb(blob: Blob, max = THUMB_MAX_PIXELS, signal?: A
   if (typeof createImageBitmap !== 'function' || typeof document === 'undefined') {
     throw new Error('当前浏览器不支持缩略图')
   }
-  const still = isVideoBlob(blob) ? await captureVideoFrame(blob, { maxPixels: max, signal }) : blob
+  const video = isVideoBlob(blob)
+  const still = video ? await captureVideoFrame(blob, { maxPixels: max, signal }) : blob
+  // 静态图先看文件头：超预算直接放弃，不把整张图展开进内存。
+  if (!video) await assertDecodable(still)
   const bitmap = await decodeStill(still, max)
   try {
     const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height))
