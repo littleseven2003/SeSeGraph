@@ -7,6 +7,7 @@ import {
   THUMB_EAGER_MAX_BYTES,
   ThumbQueue,
   canLoadThumb,
+  hasStoredThumb,
   needsExplicitPreview,
   pickEagerOrders,
   readWithinBudget,
@@ -14,12 +15,17 @@ import {
 } from '../src/utils/thumbs.ts'
 import { isVideoBlob } from '../src/utils/video-frame.ts'
 
-const image = (order: number, extra: Partial<{ status: string; mime_type: string; file_size: number }> = {}) => ({
+const image = (
+  order: number,
+  extra: Partial<{ status: string; mime_type: string; file_size: number; thumb_url: string }> = {},
+) => ({
   sort_order: order,
   short_code: `code-${order}`,
   mime_type: 'image/jpeg',
   file_size: 800_000,
   status: 'stored',
+  thumb_url: '',
+  media_version: '0123456789ab',
   ...extra,
 })
 
@@ -42,6 +48,18 @@ test('可视区只挑选可自动加载的项', () => {
     image(5),
   ]
   assert.deepEqual(pickEagerOrders([1, 2, 3, 4, 5, 9], images), [1, 5])
+})
+
+test('已有落盘小图的视频与大图也会自动加载', () => {
+  const images = [
+    image(1, { mime_type: 'video/mp4', thumb_url: '/api/posts/1/media/1/thumb?v=0123456789ab' }),
+    image(2, { file_size: THUMB_EAGER_MAX_BYTES * 10, thumb_url: '/api/posts/1/media/2/thumb?v=0123456789ab' }),
+    image(3, { file_size: THUMB_EAGER_MAX_BYTES + 1 }),
+    image(4, { mime_type: 'video/mp4' }),
+  ]
+  assert.equal(hasStoredThumb(images[0]), true)
+  assert.equal(hasStoredThumb(images[2]), false)
+  assert.deepEqual(pickEagerOrders([1, 2, 3, 4], images), [1, 2])
 })
 
 test('同一时间最多一个回源请求，重复请求被合并', async () => {

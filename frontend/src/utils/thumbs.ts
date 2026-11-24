@@ -302,15 +302,21 @@ export class ThumbQueue {
   }
 }
 
-// pickEagerOrders 只挑可视区里可以自动加载的项；视频与大图留给明确预览。
+// hasStoredThumb 判断服务端是否已有这一项的小图；有就不必回源原媒体。
+export function hasStoredThumb(image: Pick<GalleryImage, 'thumb_url'>): boolean {
+  return (image.thumb_url ?? '') !== ''
+}
+
+// pickEagerOrders 只挑可视区里可以自动加载的项：
+// 已有落盘小图的项（含视频与大图）直接取小图，其余按原媒体类型与体积决定是否等明确预览。
 export function pickEagerOrders(visible: number[], images: GalleryImage[]): number[] {
   const byOrder = new Map(images.map((image) => [image.sort_order, image]))
   const picked: number[] = []
   for (const order of visible) {
     const image = byOrder.get(order)
     if (image === undefined) continue
-    if (!canLoadThumb(image) || needsExplicitPreview(image)) continue
-    picked.push(order)
+    if (!canLoadThumb(image)) continue
+    if (hasStoredThumb(image) || !needsExplicitPreview(image)) picked.push(order)
   }
   return picked
 }

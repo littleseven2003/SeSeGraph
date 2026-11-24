@@ -15,6 +15,7 @@ import {
   ThumbQueue,
   THUMB_MAX_PIXELS,
   canLoadThumb,
+  hasStoredThumb,
   needsExplicitPreview,
   pickEagerOrders,
   readWithinBudget,
@@ -453,7 +454,8 @@ function requestThumb(order: number, explicit: boolean): void {
   if (detail === null || order <= 0) return
   const image = detail.images.find((item) => item.sort_order === order)
   if (image === undefined || !canLoadThumb(image)) return
-  if (!explicit && needsExplicitPreview(image)) return
+  // 已有落盘小图时直接取小图，不因视频或大图而拖到明确预览。
+  if (!explicit && needsExplicitPreview(image) && !hasStoredThumb(image)) return
   const queue = ensureThumbs()
   if (queue === null || queue.has(order)) return
   queue.request(order)
