@@ -35,7 +35,7 @@ test('提交前压缩按模式上限判定，无收益或失败时保留原图',
   const fallback = source.indexOf('compressFallback(current.sourceSize ?? current.size, limit)')
   assert.ok(fallback > 0, '失败回落按当前策略的上限判定')
   const compressTile = source.slice(source.indexOf('async function compressTile'), source.indexOf('function queueLocalCompress'))
-  assert.ok(compressTile.includes('const limit = mode.value ===') , '上限取自当前策略，换模式后重新排队')
+  assert.ok(compressTile.includes('const limit = strategyMode ===') , '上限取自发起时的策略，换模式后重新排队')
   // 提交时先冻结模式与开关，再决定阈值，切到别的模式不会改变本轮判定。
   const frozen = source.indexOf('const compression = await compressForSubmit(frozen.mode, frozen.autoCompress)')
   assert.ok(frozen > 0, '压缩必须使用冻结后的模式与开关')
@@ -80,7 +80,7 @@ test('空态不显示数量与清空，续传提示放在拖放区下方', () =>
 })
 
 test('提交时明确选择发布意图，续传沿用原任务', () => {
-  assert.ok(source.includes("publish_intent: pendingIntent === 'auto' ? 'auto' : undefined"), '新任务随请求上报发布意图')
+  assert.ok(source.includes("publish_intent: intent === 'auto' ? 'auto' : undefined"), '新任务随请求上报发布意图')
   assert.ok(source.includes("async function publish(intent: 'auto' | 'manual' = 'manual')"), '提交入口带意图参数')
   assert.ok(source.includes("return newDraft.value ? '提交并发布' : '提交存图'"), '新草稿默认提交并发布')
   assert.ok(source.includes('仅存图（稍后手动发布）'), '桌面端保留仅存图入口')
@@ -137,4 +137,16 @@ test('路由重置只清页面状态，最近任务提示不丢', () => {
   // 只有服务端明确 404 才清快照，网络失败仍保留。
   assert.ok(source.includes('init.progressMissing'), '按明确的 404 分支处理')
   assert.ok(source.includes('已不存在，本机续传记录已清除'), '清掉后给出说明')
+})
+
+test('发布意图按提交轮次下传，被拦下的提交不会改写上一轮', () => {
+  assert.equal(source.includes('let pendingIntent'), false, '不再用模块级变量传递意图')
+  assert.ok(source.includes("async function publish(intent: 'auto' | 'manual' = 'manual')"), '意图从入口参数进入')
+  const publish = source.slice(source.indexOf('async function publish('), source.indexOf('// runUpload 建任务'))
+  const lock = publish.indexOf('submitBlocked(')
+  const pass = publish.indexOf('await runUpload(intent)')
+  assert.ok(lock > 0 && pass > lock, '先过提交锁，再把本轮意图交给上传')
+  assert.ok(source.includes("async function runUpload(intent: 'auto' | 'manual')"), '上传沿用本轮意图')
+  assert.ok(source.includes("async function ensureTask(intent: 'auto' | 'manual')"), '建任务沿用本轮意图')
+  assert.ok(source.includes("publish_intent: intent === 'auto' ? 'auto' : undefined"), '请求体用局部参数')
 })

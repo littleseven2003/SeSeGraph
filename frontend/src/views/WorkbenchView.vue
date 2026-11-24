@@ -147,8 +147,7 @@ const statuses = ref<Record<number, UploadStatus>>({})
 const snapshot = ref<TaskSnapshot | null>(null)
 // resumableHint 是本机存在可续传任务时的轻提示，只在空态展示，不阻断拖入。
 const resumableHint = ref<TaskSnapshot | null>(null)
-// pendingIntent 是本次提交选择的发布意图，只在新建任务时随请求上报。
-let pendingIntent: 'auto' | 'manual' = 'manual'
+// 发布意图只按本次提交的局部参数下传，被拦下的提交不会改写上一轮的选择。
 // compressDone 是本轮压缩已处理的项数，建任务时随请求上报，四阶段的第一段据此展示。
 const compressDone = ref<number | null>(null)
 const serverProgress = ref<ServerProgress | null>(null)
@@ -1245,7 +1244,7 @@ async function ensureTask(): Promise<number | null> {
     // 压缩在浏览器侧一次性完成，建任务时把已处理项数一并上报。
     compressed_count: compressDone.value ?? undefined,
     // 只有新任务能选发布意图；续传沿用任务建好时的授权。
-    publish_intent: pendingIntent === 'auto' ? 'auto' : undefined,
+    publish_intent: intent === 'auto' ? 'auto' : undefined,
     tags: draft.value.tags,
   })
   postId.value = created.id
@@ -1267,7 +1266,6 @@ async function ensureTask(): Promise<number | null> {
 // 发布：建任务 → 按服务端进度补传 → 提交入队，快照保留以便刷新后查看与重试。
 // intent=auto 表示管理员在提交时明确选了「提交并发布」，服务端会持久化并在同步完成后自动入队。
 async function publish(intent: 'auto' | 'manual' = 'manual'): Promise<void> {
-  pendingIntent = intent
   // 提交锁覆盖压缩与上传整段：双击、换模式、排序都不能插进来。
   // 压缩/上传进行中、正在追加文件或解包 ZIP 时都不接受新的提交。
   if (submitBlocked({ busy: busy.value, submitting: submitting.value }) || working.value) return
@@ -1314,16 +1312,16 @@ async function publish(intent: 'auto' | 'manual' = 'manual'): Promise<void> {
     compressDone.value = tiles.value.length
 
     phase.value = 'creating'
-    await runUpload()
+    await runUpload(intent)
   } finally {
     submitting.value = false
   }
 }
 
 // runUpload 建任务并按服务端进度补传；由 publish 在提交锁内调用。
-async function runUpload(): Promise<void> {
+async function runUpload(intent: 'auto' | 'manual'): Promise<void> {
   try {
-    const id = await ensureTask()
+    const id = await ensureTask(intent)
     if (id === null) {
       // 文件与任务不匹配：恢复按钮状态，保留重新选择与放弃入口。
       phase.value = 'idle'
