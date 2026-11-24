@@ -78,7 +78,7 @@ import {
 import { acceptedCount, initialStatuses, planUploads, type UploadStatus, runUploadPool } from '../utils/upload.ts'
 import { effectiveUploadConcurrency, readUploadConcurrency } from '../utils/upload-pref.ts'
 import { DEFAULT_META_FILENAMES } from '../utils/zip.ts'
-import { disposeArchiveWorker, imageBlob, unpackArchive } from '../utils/zip-client.ts'
+import { cancelArchive, disposeArchiveWorker, imageBlob, unpackArchive } from '../utils/zip-client.ts'
 import { fetchSettings } from '../api/settings.ts'
 import {
   canLeaveResume,
@@ -333,6 +333,8 @@ function resumeIdFromRoute(): number {
 // 避免旧任务的文件、进度与轮询带到新路由上。
 function resetForRoute(): void {
   stopPolling()
+  // 切页或重新初始化时取消进行中的解压，线程持有的整包字节随之释放。
+  cancelArchive()
   closePreview()
   localThumbs.reset()
   localCompress.reset()
@@ -866,6 +868,11 @@ async function onZip(file: File): Promise<void> {
     )
     message.value = ''
     if (!result.ok) {
+      // 解压被取消（清空或离开）时不当作错误提示，避免把用户的主动操作报成失败。
+      if (result.cancelled === true) {
+        message.value = '已取消本次解压'
+        return
+      }
       pushError(result.error)
       return
     }
@@ -1183,6 +1190,7 @@ function discardSnapshot(): void {
 function clearAll(): void {
   if (!ready.value) return
   // 换一批文件：作废在途生成与压缩，迟到的结果不再挂回空网格。
+  if (working.value) cancelArchive()
   localThumbs.reset()
   localCompress.reset()
   releaseTiles(tiles.value)

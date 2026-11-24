@@ -18,7 +18,9 @@ export function imageBlob(image: ArchiveImage, type: string): Blob {
 }
 
 /** ZipOutcome 是解压结果：图片按自然排序给出，说明文件与跳过计数一并返回。 */
-export type ZipOutcome = ({ ok: true; images: ArchiveImage[] } & ProgressiveMeta) | { ok: false; error: string }
+export type ZipOutcome =
+  | ({ ok: true; images: ArchiveImage[] } & ProgressiveMeta)
+  | { ok: false; error: string; cancelled?: boolean }
 
 interface WorkerReply {
   id: number
@@ -101,9 +103,10 @@ export async function unpackArchive(
   options: ZipOptions = {},
   onImage?: (image: ArchiveImage) => void,
 ): Promise<ZipOutcome> {
-  const buffer = await file.arrayBuffer()
   const target = ensureWorker()
   if (target === null) {
+    // 没有 Worker 时才在主线程整包读入，流程与线程内一致。
+    const buffer = await file.arrayBuffer()
     const images: ArchiveImage[] = []
     const result = unpackZipProgressive(new Uint8Array(buffer), options, (image) => {
       if (onImage !== undefined) onImage(image)
@@ -121,11 +124,28 @@ export async function unpackArchive(
       onImage,
       fail: (error) => resolve({ ok: false, error }),
     })
-    target.postMessage(
-      { id, buffer, metaNames: options.metaNames === undefined ? undefined : [...options.metaNames], limits: options.limits },
-      [buffer],
-    )
+    // 只把文件句柄交给线程：整包字节由 Worker 自己读，主线程不额外占一整份。
+    target.postMessage({
+      id,
+      file,
+      metaNames: options.metaNames === undefined ? undefined : [...options.metaNames],
+      limits: options.limits,
+    })
   })
+}
+
+/**
+ * cancelArchive 取消进行中的解压并立即释放线程持有的整包字节。
+ * 用于生成中清空列表或离开工作台：不必等一批大包解完才回收内存。
+ */
+export function cancelArchive(reason = '压缩包读取已取消'): void {
+  const tasks = Array.from(pending.values())
+  pending.clear()
+  if (worker !== null) {
+    worker.terminate()
+    worker = null
+  }
+  for (const task of tasks) task.resolve({ ok: false, error: reason, cancelled: true })
 }
 
 /** disposeArchiveWorker 离开工作台时关闭解压线程，避免空闲线程常驻占用内存。 */
