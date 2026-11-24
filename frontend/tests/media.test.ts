@@ -19,6 +19,7 @@ import {
   keepOriginalAfterCompress,
   needsCompression,
   PHOTO_LIMIT_BYTES,
+  readImageSize,
   selectionSummary,
   sizeCompare,
 } from '../src/utils/media.ts'
@@ -258,4 +259,40 @@ test('详情抽屉按帖子保存值显示具体画质模式', () => {
   assert.equal(detailUploadModeLabel('photo'), '省流量模式')
   assert.equal(detailUploadModeLabel('document'), '原图模式')
   assert.equal(detailUploadModeLabel(''), '省流量模式')
+})
+
+test('readImageSize 从文件头读出尺寸，不解码像素', async () => {
+  // PNG：签名 + IHDR 长度/类型 + 宽 1920 高 1080。
+  const png = new Uint8Array(33)
+  png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0)
+  png.set([0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52], 8)
+  png.set([0x00, 0x00, 0x07, 0x80], 16)
+  png.set([0x00, 0x00, 0x04, 0x38], 20)
+  assert.deepEqual(await readImageSize(new Blob([png])), { width: 1920, height: 1080 })
+
+  // GIF：逻辑屏幕宽 640 高 480。
+  const gif = new Uint8Array(13)
+  gif.set([0x47, 0x49, 0x46, 0x38, 0x39, 0x61], 0)
+  gif.set([0x80, 0x02, 0xe0, 0x01], 6)
+  assert.deepEqual(await readImageSize(new Blob([gif])), { width: 640, height: 480 })
+
+  // WebP VP8X：画布宽高各 3 字节小端，存的是减一后的值。
+  const webp = new Uint8Array(30)
+  webp.set([0x52, 0x49, 0x46, 0x46], 0)
+  webp.set([0x57, 0x45, 0x42, 0x50], 8)
+  webp.set([0x56, 0x50, 0x38, 0x58, 0x0a, 0x00, 0x00, 0x00], 12)
+  webp.set([0x7f, 0x02, 0x00, 0xdf, 0x01, 0x00], 24)
+  assert.deepEqual(await readImageSize(new Blob([webp])), { width: 640, height: 480 })
+
+  // 认不出的格式返回 null，交给解码后的兜底检查。
+  assert.equal(await readImageSize(new Blob([new Uint8Array(16)])), null)
+})
+
+test('JPEG 段头里的尺寸可直接读取，用于解码前拦截', async () => {
+  // SOI + APP0 段 + SOF0（高 3000、宽 4000）。
+  const jpeg = new Uint8Array(2 + 4 + 19)
+  jpeg.set([0xff, 0xd8], 0)
+  jpeg.set([0xff, 0xe0, 0x00, 0x02], 2)
+  jpeg.set([0xff, 0xc0, 0x00, 0x11, 0x08, 0x0b, 0xb8, 0x0f, 0xa0], 6)
+  assert.deepEqual(await readImageSize(new Blob([jpeg])), { width: 4000, height: 3000 })
 })

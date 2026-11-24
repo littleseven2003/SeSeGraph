@@ -32,8 +32,10 @@ test('提交前压缩按模式上限判定，无收益或失败时保留原图',
   assert.ok(source.includes('keepOriginalAfterCompress('), '需要按原图合规性与产物体积决定是否保留原图')
   assert.ok(source.includes('compressFallback('), '压缩失败时按原图是否超限决定保留还是阻断')
   assert.ok(source.includes('restoreSource('), '保留原图要换回 sourceBlob 与原始体积')
-  const fallback = source.indexOf("compressFallback(tile.sourceSize ?? tile.size, limit)")
-  assert.ok(fallback > 0, '失败回落应使用冻结模式的上限而不是全局设置')
+  const fallback = source.indexOf('compressFallback(current.sourceSize ?? current.size, limit)')
+  assert.ok(fallback > 0, '失败回落按当前策略的上限判定')
+  const compressTile = source.slice(source.indexOf('async function compressTile'), source.indexOf('function queueLocalCompress'))
+  assert.ok(compressTile.includes('const limit = mode.value ===') , '上限取自当前策略，换模式后重新排队')
   // 提交时先冻结模式与开关，再决定阈值，切到别的模式不会改变本轮判定。
   const frozen = source.indexOf('const compression = await compressForSubmit(frozen.mode, frozen.autoCompress)')
   assert.ok(frozen > 0, '压缩必须使用冻结后的模式与开关')
@@ -87,16 +89,22 @@ test('提交时明确选择发布意图，续传沿用原任务', () => {
   assert.ok(source.includes('const newDraft = computed'), '只在没有任务时提供选择')
 })
 
-test('导入即压缩，提交复用结果并接管压缩', () => {
+test('导入即压缩，提交等同一队列并复用结果', () => {
   assert.ok(source.includes('new LocalCompressScheduler('), '压缩走独立调度')
   assert.ok(source.includes('queueLocalCompress(tile)'), '导入后排队压缩')
   assert.ok(source.includes('localCompress.reset()'), '清空或换模式后作废在途结果')
   assert.ok(source.includes('localCompress.dispose()'), '离页后不再压缩')
   assert.ok(source.includes('await compressTile(id)'), '压缩结果直接写回卡片')
-  // 提交时先接管压缩，已压好的项不会重复压。
+  // 提交只等导入时排队的同一条串行队列，不再另开循环，避免同一张原图被并行解码。
   const submit = source.slice(source.indexOf('async function compressForSubmit'), source.indexOf('// snapshotFiles'))
-  assert.ok(submit.indexOf('localCompress.reset()') < submit.indexOf('const pending'), '提交前先作废后台队列')
-  assert.ok(submit.includes("verdict.state === 'pending'"), '只压仍待处理的项')
+  assert.ok(submit.includes('await localCompress.idle()'), '提交前等共享队列清空')
+  assert.equal(submit.includes('localCompress.reset()'), false, '提交不再作废后台队列')
+  assert.equal(submit.includes('compressImage('), false, '提交不再自己解码原图')
+  assert.ok(submit.includes("compressed: tile.compressedFrom !== undefined"), '已压好的项按结果判定')
+  assert.ok(submit.includes('localCompress.request(tile.id)'), '仍待压的项只补排队')
+  // 换模式与开关会先回到原图，旧结果不会带到新策略。
+  const setMode = source.slice(source.indexOf('async function setMode'), source.indexOf('function onAutoCompress'))
+  assert.ok(setMode.indexOf('resetToSource()') < setMode.indexOf('localCompress.reset()'), '换模式先丢弃旧结果')
 })
 
 test('压缩包逐项交接成 Blob，不再累积展开字节', () => {

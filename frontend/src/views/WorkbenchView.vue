@@ -57,6 +57,7 @@ import {
   saveAutoCompress,
   selectionSummary,
   type CompressResult,
+  type MediaEvaluation,
   type SelectionTally,
 } from '../utils/media.ts'
 import { prefillFromMeta, type PostMeta } from '../utils/meta.ts'
@@ -546,22 +547,20 @@ function restoreSource(tile: WorkbenchTile): WorkbenchTile {
   }
 }
 
-// compressForSubmit 提交前逐图压缩：返回阻塞原因与本轮压缩摘要。
+// compressForSubmit 提交前把冻结策略下的压缩收口：返回阻塞原因与本轮压缩摘要。
+// 压缩只由导入时就排队的同一条串行队列执行：这里先等它落地，再按真实状态判定，
+// 不再另开一条循环，避免同一张原图被并行解码两次。
 async function compressForSubmit(
   frozenMode: UploadMode,
   frozenCompress: boolean,
 ): Promise<{ problem: string; summary: string }> {
-  // 提交时接管压缩：后台队列里未开始的项作废，避免同一张图被压两次。
-  localCompress.reset()
-  const limit = frozenMode === 'document' ? DOCUMENT_LIMIT_BYTES : PHOTO_LIMIT_BYTES
-  const pending: WorkbenchTile[] = []
-  const blocked: string[] = []
-  for (const tile of tiles.value) {
-    const verdict = evaluateMedia(
+  const verdictFor = (tile: WorkbenchTile): MediaEvaluation =>
+    evaluateMedia(
       {
         kind: tile.kind ?? 'image',
         size: tile.sourceSize ?? tile.size,
-        compressed: false,
+        // 已压过的项直接按结果判定，提交时不会再压一次。
+        compressed: tile.compressedFrom !== undefined,
         animated: tile.animated,
         animatedKind: tile.animatedKind,
         failed: tile.compressFailed,
@@ -570,80 +569,54 @@ async function compressForSubmit(
       frozenMode,
       frozenCompress,
     )
-    if (verdict.state === 'blocked') blocked.push(`${tile.name} ${verdict.label}`)
-    else if (verdict.state === 'pending') pending.push(tile)
-  }
-  if (blocked.length > 0) {
-    // 定位第一张被拦的卡片，光有汇总数字不够。
-    const first = tiles.value.find((tile) => {
-      const verdict = evaluateMedia(
-        { kind: tile.kind ?? 'image', size: tile.sourceSize ?? tile.size, compressed: false, animated: tile.animated, animatedKind: tile.animatedKind, failed: tile.compressFailed },
-        mode.value,
-        autoCompress.value,
-      )
-      return verdict.state === 'blocked'
-    })
-    if (first) {
-      document.getElementById(`tile-${first.id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+
+  // 后台压缩与网格小图共用这条队列：先等清空，避免提交与前一轮同时解码。
+  await localCompress.idle()
+  // 冻结策略下仍待压的项只补排队，由同一个调度器按稳定 ID 去重。
+  for (const tile of tiles.value) {
+    if (verdictFor(tile).state === 'pending' && !localCompress.has(tile.id)) {
+      localCompress.request(tile.id)
     }
+  }
+  await localCompress.idle()
+
+  const blocked: WorkbenchTile[] = []
+  const failed: WorkbenchTile[] = []
+  const compressed: WorkbenchTile[] = []
+  let kept = 0
+  for (const tile of tiles.value) {
+    const verdict = verdictFor(tile)
+    if (verdict.state === 'blocked') blocked.push(tile)
+    else if (tile.compressFailed) failed.push(tile)
+    else if (tile.compressedFrom !== undefined) compressed.push(tile)
+    else if (tile.keptOriginal) kept += 1
+  }
+
+  if (blocked.length > 0) {
+    const first = blocked[0]
+    document.getElementById(`tile-${first.id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
     return {
-      problem: `有 ${blocked.length} 项超出当前模式上限且无法自动压缩，请调整模式、开启压缩或移除后再提交（已定位：${blocked[0]}）`,
+      problem: `有 ${blocked.length} 项超出当前模式上限且无法自动压缩，请调整模式、开启压缩或移除后再提交（已定位：${first.name}）`,
       summary: '',
     }
   }
-  if (pending.length === 0) return { problem: '', summary: '' }
-  const updated = tiles.value.slice()
-  const results: CompressResult[] = []
-  const failures: string[] = []
-  let kept = 0
-  working.value = true
-  try {
-    for (const [index, tile] of pending.entries()) {
-      message.value = `正在压缩（${index + 1} / ${pending.length}）：${tile.name} (${formatBytes(tile.sourceSize ?? tile.size)})…`
-      const position = updated.findIndex((item) => item.id === tile.id)
-      try {
-        const target = frozenMode === 'document' ? COMPRESS_TARGET_DOCUMENT : COMPRESS_TARGET_BYTES
-        const result = await compressImage(tile.sourceBlob ?? tile.blob, target)
-        if (position >= 0) {
-          if (keepOriginalAfterCompress(tile.sourceSize ?? tile.size, result.toSize, limit)) {
-            // 压缩没有收益且原图合规：保留原图，角标不再停在待压缩。
-            kept += 1
-            updated[position] = restoreSource(tile)
-          } else {
-            updated[position] = {
-              ...tile,
-              compressFailed: undefined,
-              keptOriginal: undefined,
-              blob: result.blob,
-              size: result.toSize,
-              mime: result.blob.type || 'image/webp',
-              compressedFrom: result.fromSize,
-            }
-            results.push(result)
-          }
-        }
-      } catch (error) {
-        if (position >= 0) {
-          if (compressFallback(tile.sourceSize ?? tile.size, limit) === 'keep') {
-            // 编码失败但原图合规：允许按原图提交，避免整批卡住。
-            kept += 1
-            updated[position] = restoreSource(tile)
-          } else {
-            updated[position] = { ...updated[position], compressFailed: true }
-            const first = updated[position]
-            document.getElementById(`tile-${first.id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
-            failures.push(`${tile.name} 压缩失败：${error instanceof Error ? error.message : '请重试'}`)
-          }
-        }
-      }
+  if (failed.length > 0) {
+    const first = failed[0]
+    document.getElementById(`tile-${first.id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    return {
+      problem: `${failed.map((tile) => tile.name).join('、')} 压缩失败：需压到上限内才能提交（已定位）`,
+      summary: '',
     }
-    tiles.value = updated
-  } finally {
-    working.value = false
   }
-  if (failures.length > 0) {
-    return { problem: `${failures.join('；')}（需压到上限内才能提交，已定位）`, summary: '' }
-  }
+  if (compressed.length === 0 && kept === 0) return { problem: '', summary: '' }
+
+  const results: CompressResult[] = compressed.map((tile) => ({
+    blob: tile.blob,
+    width: 0,
+    height: 0,
+    fromSize: tile.compressedFrom ?? tile.size,
+    toSize: tile.size,
+  }))
   return { problem: '', summary: compressionSummary(results, kept) }
 }
 

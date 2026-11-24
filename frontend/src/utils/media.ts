@@ -220,10 +220,110 @@ export function fitScale(width: number, height: number): { width: number; height
   }
 }
 
+// ImageSize 是文件头里读到的像素尺寸，不触发解码。
+export interface ImageSize {
+  width: number
+  height: number
+}
+
+// readImageSize 只读文件头判定像素尺寸：能在解码前拦下超大的原图。
+// 认不出的格式返回 null，交给解码后的兜底检查。
+export async function readImageSize(blob: Blob): Promise<ImageSize | null> {
+  const head = await readBytes(blob, 0, 32)
+  if (head.length < 12) return null
+  // PNG：IHDR 紧跟签名，宽高各 4 字节大端。
+  if (head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47 && head.length >= 24) {
+    const width = uint32(head, 16)
+    const height = uint32(head, 20)
+    return width > 0 && height > 0 ? { width, height } : null
+  }
+  // GIF：逻辑屏幕宽高各 2 字节小端。
+  if (head[0] === 0x47 && head[1] === 0x49 && head[2] === 0x46) {
+    const width = head[6] + head[7] * 256
+    const height = head[8] + head[9] * 256
+    return width > 0 && height > 0 ? { width, height } : null
+  }
+  if (head[0] === 0xff && head[1] === 0xd8) return jpegSize(blob)
+  if (fourCC(head, 0) === 'RIFF' && fourCC(head, 8) === 'WEBP') return webpSize(blob)
+  return null
+}
+
+// jpegSize 顺序读取段头，遇到 SOFn 时取高度与宽度；只读段头，不碰像素数据。
+async function jpegSize(blob: Blob): Promise<ImageSize | null> {
+  let offset = 2
+  while (offset + 9 <= blob.size) {
+    const header = await readBytes(blob, offset, offset + 9)
+    if (header.length < 4 || header[0] !== 0xff) return null
+    const marker = header[1]
+    // 填充字节与无长度的独立标记直接跳过。
+    if (marker === 0xff) {
+      offset += 1
+      continue
+    }
+    if (marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd9)) {
+      offset += 2
+      continue
+    }
+    const length = header[2] * 256 + header[3]
+    if (length < 2) return null
+    const isSOF = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc
+    if (isSOF) {
+      if (header.length < 9) return null
+      const height = header[5] * 256 + header[6]
+      const width = header[7] * 256 + header[8]
+      return width > 0 && height > 0 ? { width, height } : null
+    }
+    offset += 2 + length
+  }
+  return null
+}
+
+// webpSize 解析 VP8X / VP8 / VP8L 三种块头里的画布尺寸。
+async function webpSize(blob: Blob): Promise<ImageSize | null> {
+  let offset = 12
+  while (offset + 8 <= blob.size) {
+    const header = await readBytes(blob, offset, offset + 8)
+    if (header.length < 8) return null
+    const type = fourCC(header, 0)
+    const length = header[4] + header[5] * 256 + header[6] * 65536 + header[7] * 16777216
+    if (type === 'VP8X') {
+      const body = await readBytes(blob, offset + 8, offset + 18)
+      if (body.length < 10) return null
+      const width = 1 + (body[4] | body[5] << 8 | body[6] << 16)
+      const height = 1 + (body[7] | body[8] << 8 | body[9] << 16)
+      return { width, height }
+    }
+    if (type === 'VP8 ') {
+      const body = await readBytes(blob, offset + 8, offset + 18)
+      if (body.length < 10) return null
+      const width = (body[6] | body[7] << 8) & 0x3fff
+      const height = (body[8] | body[9] << 8) & 0x3fff
+      return width > 0 && height > 0 ? { width, height } : null
+    }
+    if (type === 'VP8L') {
+      const body = await readBytes(blob, offset + 8, offset + 15)
+      if (body.length < 5 || body[0] !== 0x2f) return null
+      const bits = body[1] | body[2] << 8 | body[3] << 16 | body[4] << 24
+      const width = 1 + (bits & 0x3fff)
+      const height = 1 + ((bits >>> 14) & 0x3fff)
+      return { width, height }
+    }
+    const next = offset + 8 + length + (length % 2)
+    if (next <= offset || next > blob.size) return null
+    offset = next
+  }
+  return null
+}
+
 // compressImage 把静态图压到上限内：按体积逐档降质并缩放，产物满足宽高与长宽比约束。
 export async function compressImage(blob: Blob, target = COMPRESS_TARGET_BYTES): Promise<CompressResult> {
   if (blob.size > COMPRESS_MAX_INPUT_BYTES) {
     throw new Error('原图超过 64MB，请先用其他工具缩放')
+  }
+  // 能在解码前读到的尺寸先拦一次，避免超大图把内存顶爆。
+  const header = await readImageSize(blob)
+  if (header !== null && header.width * header.height > COMPRESS_MAX_INPUT_PIXELS) {
+    throw new Error('原图像素超过 1 亿，请先用其他工具缩放')
   }
   const { bitmap, close } = await loadBitmap(blob)
   const sourceWidth = 'width' in bitmap ? bitmap.width : 0
