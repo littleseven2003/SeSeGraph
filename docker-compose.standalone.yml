@@ -29,6 +29,7 @@ services:
       TELEGRAPH_ACCESS_TOKEN: ${TELEGRAPH_ACCESS_TOKEN:-}
       TELEGRAPH_AUTHOR_NAME: ${TELEGRAPH_AUTHOR_NAME:-}
       TELEGRAPH_API_BASE: ${TELEGRAPH_API_BASE:-}
+      # 代理、画质与备份项留空即交由设置页管理；填写后该字段以环境变量为准并在界面置灰。
       PROXY_MODE: ${PROXY_MODE:-}
       PROXY_URL: ${PROXY_URL:-}
       PROXY_FOR_TELEGRAM: ${PROXY_FOR_TELEGRAM:-}
@@ -39,8 +40,15 @@ services:
       ALL_PROXY: ${ALL_PROXY:-}
       NO_PROXY: ${NO_PROXY:-}
       UPLOAD_INTERVAL_MS: ${UPLOAD_INTERVAL_MS:-1500}
-      UPLOAD_MODE: ${UPLOAD_MODE:-photo}
+      # 以下三项留空时采用程序默认值，并允许在设置页或工作台修改。
+      UPLOAD_MODE: ${UPLOAD_MODE:-}
+      TELEGRAPH_PATH_MODE: ${TELEGRAPH_PATH_MODE:-}
+      # 服务端同时接收上传的上限；前端每轮固定两路，此项只影响服务端。
+      UPLOAD_CONCURRENCY: ${UPLOAD_CONCURRENCY:-3}
+      # 图片网关：并发上限，以及满额后的排队深度与单请求最长等待秒数。
       PROXY_CONCURRENCY: ${PROXY_CONCURRENCY:-25}
+      PROXY_QUEUE_DEPTH: ${PROXY_QUEUE_DEPTH:-100}
+      PROXY_QUEUE_WAIT: ${PROXY_QUEUE_WAIT:-15}
       # 浏览量同步：默认 30 分钟一轮，手动刷新冷却 60 秒
       VIEWS_SYNC_MINUTES: ${VIEWS_SYNC_MINUTES:-30}
       VIEWS_COOLDOWN_SECONDS: ${VIEWS_COOLDOWN_SECONDS:-60}
@@ -49,9 +57,10 @@ services:
       # 月度流量看护：留空或 0 表示不启用
       TRAFFIC_ALERT_GB: ${TRAFFIC_ALERT_GB:-}
       TRAFFIC_LIMIT_GB: ${TRAFFIC_LIMIT_GB:-}
-      # 自动备份：BACKUP_CRON 默认每天 03:00
+      # 自动备份：留空时采用程序默认值（每天 03:00、保留 7 份），并允许在设置页修改。
       BACKUP_ENABLED: ${BACKUP_ENABLED:-}
-      BACKUP_CRON: "${BACKUP_CRON:-0 3 * * *}"
+      BACKUP_CRON: "${BACKUP_CRON:-}"
+      BACKUP_KEEP: ${BACKUP_KEEP:-}
       BACKUP_CHANNEL_ID: ${BACKUP_CHANNEL_ID:-}
       BACKUP_INCLUDE_THUMBS: ${BACKUP_INCLUDE_THUMBS:-}
     ports:
