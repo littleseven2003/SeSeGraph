@@ -63,6 +63,8 @@ services:
       BACKUP_KEEP: ${BACKUP_KEEP:-}
       BACKUP_CHANNEL_ID: ${BACKUP_CHANNEL_ID:-}
       BACKUP_INCLUDE_THUMBS: ${BACKUP_INCLUDE_THUMBS:-}
+      # 逐图缩略图缓存上限（字节）；留空由设置页维护，默认 2 GiB
+      MEDIA_THUMB_LIMIT_BYTES: ${MEDIA_THUMB_LIMIT_BYTES:-}
     volumes:
       # 数据目录由 init 服务建好并授权给 uid 1000。
       - ./data:/app/data
