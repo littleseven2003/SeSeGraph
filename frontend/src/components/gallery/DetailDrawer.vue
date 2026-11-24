@@ -1,12 +1,21 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { setPostDisabled, updatePost, type PostDetail } from '../../api/gallery.ts'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { setPostDisabled, updatePost, type GalleryImage, type PostDetail } from '../../api/gallery.ts'
 import { changeCover, fetchMediaBlob } from '../../api/posts.ts'
 import { ApiError } from '../../api/client.ts'
 import { copyText } from '../../utils/clipboard.ts'
 import { detailUploadModeLabel } from '../../utils/media.ts'
 import { makeCoverFromMedia } from '../../utils/cover.ts'
 import { splitTags } from '../../utils/meta.ts'
+import { bubblePosition, type BubblePosition } from '../../utils/bubble.ts'
+import {
+  ThumbQueue,
+  canLoadThumb,
+  needsExplicitPreview,
+  pickEagerOrders,
+  renderThumb,
+  withTimeout,
+} from '../../utils/thumbs.ts'
 import {
   DEFAULT_SHARE_TEMPLATE,
   SHARE_PLACEHOLDERS,
@@ -46,6 +55,7 @@ const emit = defineEmits<{ close: []; retry: []; saved: []; toggled: []; refresh
 
 const closeButton = ref<HTMLButtonElement | null>(null)
 const panel = ref<HTMLElement | null>(null)
+const scroller = ref<HTMLElement | null>(null)
 const feedback = ref('')
 // copiedAction 记录刚刚复制成功的动作，按钮文字短暂反馈，避免只靠底部提示。
 const copiedAction = ref('')
@@ -66,6 +76,18 @@ const playingCode = ref('')
 // 更换封面时先生成新的缩略图；已发布帖由后端先改远端再回写本地。
 const coverBusy = ref(false)
 const coverError = ref('')
+// 缩略图按序号缓存 object URL；放大气泡复用同一份，不重复回源。
+const thumbUrls = ref<Map<number, string>>(new Map())
+const previewOrder = ref(0)
+const previewPos = ref<BubblePosition | null>(null)
+const previewLoading = ref(false)
+let thumbs: ThumbQueue | null = null
+let thumbPostId = 0
+let observer: IntersectionObserver | null = null
+let previewAnchor: HTMLElement | null = null
+// 气泡尺寸固定，方便定位时先按预估高度钳制，加载完成后再校正。
+const PREVIEW_WIDTH = 240
+const PREVIEW_HEIGHT = 264
 
 function togglePlay(code: string): void {
   playingCode.value = playingCode.value === code ? '' : code
@@ -117,6 +139,14 @@ const previewValues = computed(() => ({
   // 预览在缺少发布日期时用示例日期，确保模板里的时间段可见。
   published_at: formatPublishedDate(props.detail?.published_at) || '2026-11-22',
 }))
+
+// 气泡底部说明当前预览项与体积，取不到时留空。
+const previewSizeText = computed(() => {
+  const detail = props.detail
+  if (detail === null || previewOrder.value === 0) return ''
+  const image = detail.images.find((item) => item.sort_order === previewOrder.value)
+  return image === undefined ? '' : formatFileSize(image.file_size)
+})
 
 function imageLink(image: { short_code: string; status: string }): string {
   if (props.detail === null) return ''
@@ -286,35 +316,188 @@ onMounted(() => {
   shareTemplate.value = readShareTemplate(window.localStorage)
   templateDraft.value = shareTemplate.value
   window.addEventListener('keydown', onKeydown)
+  window.addEventListener('resize', onViewportResize)
+  scroller.value?.addEventListener('scroll', onScrollerScroll, { passive: true })
   document.body.style.overflow = 'hidden'
   closeButton.value?.focus()
+  void syncEagerThumbs()
 })
 
-// onCoverChange 按所选序号更换封面：能从本站网关取到原图时顺带生成新缩略图。
-async function onCoverChange(event: Event): Promise<void> {
-  const select = event.target as HTMLSelectElement
-  const order = Number(select.value)
-  if (!Number.isInteger(order) || order <= 0) return
-  if (props.detail === null || coverBusy.value || props.detail.cover_sort_order === order) return
+// teardownThumbs 释放上一帖的缩略图、观察器与气泡，避免切帖后仍持有旧对象。
+function teardownThumbs(): void {
+  observer?.disconnect()
+  observer = null
+  thumbs?.dispose()
+  thumbs = null
+  thumbPostId = 0
+  thumbUrls.value = new Map()
+  closePreview()
+}
 
+// ensureThumbs 为当前帖子建一条串行队列：同一时刻最多回源一张管理员媒体。
+function ensureThumbs(): ThumbQueue | null {
+  const detail = props.detail
+  if (detail === null) return null
+  if (thumbs !== null && thumbPostId === detail.id) return thumbs
+  teardownThumbs()
+  const postId = detail.id
+  thumbPostId = postId
+  thumbs = new ThumbQueue(
+    async (order, signal) => {
+      const media = await fetchMediaBlob(postId, order, signal)
+      if (signal.aborted) throw new Error('已取消')
+      return await withTimeout(renderThumb(media), 8000)
+    },
+    {
+      onStore: () => {
+        if (props.detail?.id !== postId || thumbs === null) return
+        const next = new Map<number, string>()
+        for (const image of props.detail.images) {
+          const url = thumbs.get(image.sort_order)
+          if (url !== '') next.set(image.sort_order, url)
+        }
+        thumbUrls.value = next
+      },
+    },
+  )
+  return thumbs
+}
+
+// requestThumb 按需取一张缩略图：视频与大图只在明确预览时回源。
+function requestThumb(order: number, explicit: boolean): void {
+  const detail = props.detail
+  if (detail === null || order <= 0) return
+  const image = detail.images.find((item) => item.sort_order === order)
+  if (image === undefined || !canLoadThumb(image)) return
+  if (!explicit && needsExplicitPreview(image)) return
+  const queue = ensureThumbs()
+  if (queue === null || queue.has(order)) return
+  queue.request(order)
+}
+
+// thumbUrl 返回行内缩略图地址：当前封面直接复用详情里的小图，其余走按需缓存。
+function thumbUrl(image: GalleryImage): string {
+  if (props.detail !== null && image.sort_order === props.detail.cover_sort_order) {
+    const cover = props.detail.cover_url
+    if (cover !== '') return cover
+  }
+  return thumbUrls.value.get(image.sort_order) ?? ''
+}
+
+// observeRows 只观察可视区附近的缩略图位，离开视口不触发任何请求。
+function observeRows(): void {
+  observer?.disconnect()
+  observer = null
+  if (typeof IntersectionObserver !== 'function') return
+  observer = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue
+        const order = Number((entry.target as HTMLElement).dataset.thumbOrder ?? '0')
+        requestThumb(order, false)
+      }
+    },
+    { root: null, rootMargin: '120px' },
+  )
+  scroller.value?.querySelectorAll<HTMLElement>('[data-thumb-order]').forEach((node) => {
+    observer?.observe(node)
+  })
+}
+
+// syncEagerThumbs 把可视区里可自动加载的项一次性排进队列。
+async function syncEagerThumbs(): Promise<void> {
+  await nextTick()
+  const detail = props.detail
+  if (detail === null) return
+  const nodes = Array.from(scroller.value?.querySelectorAll<HTMLElement>('[data-thumb-order]') ?? [])
+  const visible = nodes
+    .filter((node) => node.getBoundingClientRect().top < window.innerHeight + 120)
+    .map((node) => Number(node.dataset.thumbOrder ?? '0'))
+  for (const order of pickEagerOrders(visible, detail.images)) requestThumb(order, false)
+  observeRows()
+}
+
+// openPreview 在桌面上打开左侧放大气泡；窄屏不弹，避免挤压或超出窗口。
+function openPreview(order: number, event: Event): void {
+  const target = event.currentTarget as HTMLElement | null
+  if (target === null) return
+  previewAnchor = target
+  previewOrder.value = order
+  previewLoading.value = !thumbUrls.value.has(order)
+  requestThumb(order, true)
+  positionPreview()
+}
+
+// positionPreview 按缩略图位置把气泡放在左侧，纵向钳在视口安全区内。
+function positionPreview(): void {
+  if (previewAnchor === null || previewOrder.value === 0) return
+  const rect = previewAnchor.getBoundingClientRect()
+  previewPos.value = bubblePosition(
+    { left: rect.left, top: rect.top, height: rect.height },
+    {
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      bubbleWidth: PREVIEW_WIDTH,
+      bubbleHeight: PREVIEW_HEIGHT,
+    },
+  )
+  if (previewPos.value === null) previewOrder.value = 0
+}
+
+function closePreview(): void {
+  previewOrder.value = 0
+  previewPos.value = null
+  previewLoading.value = false
+  previewAnchor = null
+}
+
+// togglePreview 供触控与键盘使用：点一下打开，再点关闭。
+function togglePreview(order: number, event: Event): void {
+  if (previewOrder.value === order) {
+    closePreview()
+    return
+  }
+  openPreview(order, event)
+}
+
+// onScrollerScroll 滚动时直接收起气泡，比跟随重算更稳，也避免滚动中反复重排。
+function onScrollerScroll(): void {
+  if (previewOrder.value !== 0) closePreview()
+}
+
+function onViewportResize(): void {
+  if (previewOrder.value !== 0) positionPreview()
+}
+
+// setCover 把某一张设为封面：先取管理员媒体生成新缩略图，再交给现有换封面接口。
+async function setCover(image: GalleryImage): Promise<void> {
+  const detail = props.detail
+  if (detail === null || coverBusy.value) return
+  if (!canLoadThumb(image) || image.sort_order === detail.cover_sort_order) return
+  const postId = detail.id
   coverBusy.value = true
   coverError.value = ''
   try {
-    // 缩略图必须真的来自选中媒体：读不到就明确失败，不提交只改序号的半套操作。
-    const media = await fetchMediaBlob(props.detail.id, order)
+    const media = await fetchMediaBlob(postId, image.sort_order)
+    // 切帖后旧响应不许改新帖。
+    if (props.detail?.id !== postId) return
     const thumbnail = (await makeCoverFromMedia(media)).dataUrl
-    await changeCover(props.detail.id, order, thumbnail)
+    await changeCover(postId, image.sort_order, thumbnail)
+    if (props.detail?.id !== postId) return
     emit('saved')
   } catch (cause) {
+    if (props.detail?.id !== postId) return
     coverError.value = cause instanceof ApiError ? cause.message : '更换封面失败，请稍后重试'
-    select.value = String(props.detail.cover_sort_order)
   } finally {
-    coverBusy.value = false
+    if (props.detail?.id === postId) coverBusy.value = false
   }
 }
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('resize', onViewportResize)
+  scroller.value?.removeEventListener('scroll', onScrollerScroll)
+  teardownThumbs()
   if (copiedTimer !== undefined) window.clearTimeout(copiedTimer)
   document.body.style.overflow = ''
   // 关闭后把焦点还给打开抽屉的元素，键盘用户不会丢失位置。
@@ -332,6 +515,8 @@ watch(
     editing.value = false
     editError.value = ''
     toggleError.value = ''
+    teardownThumbs()
+    void syncEagerThumbs()
   },
 )
 </script>
@@ -386,7 +571,7 @@ watch(
         </div>
       </header>
 
-      <div class="flex-1 overflow-y-auto px-5 py-4">
+      <div ref="scroller" class="flex-1 overflow-y-auto px-5 py-4">
         <p v-if="loading" class="py-10 text-center text-sm text-muted">正在读取详情…</p>
 
         <div v-else-if="error !== ''" class="rounded-lg border border-line bg-canvas px-4 py-8 text-center">
@@ -494,23 +679,6 @@ watch(
             <span class="whitespace-nowrap rounded px-1.5 py-0.5 text-xs font-medium" :class="toneClass">{{ status.label }}</span>
             <span class="text-xs text-muted tnum">{{ detail.image_count }} 张图</span>
             <span class="text-xs text-muted">{{ detailUploadModeLabel(detail.upload_mode) }}</span>
-            <label class="inline-flex items-center gap-1 text-xs text-muted">
-              <span>封面</span>
-              <select
-                :value="String(detail.cover_sort_order)"
-                :disabled="coverBusy || detail.pending_delete"
-                class="h-7 rounded-lg border border-line bg-canvas px-1.5 text-xs outline-none transition focus:border-ink/40 disabled:opacity-60"
-                aria-label="更换封面"
-                @change="onCoverChange"
-              >
-                <option value="0">未设置</option>
-                <option v-for="image in detail.images" :key="image.sort_order" :value="String(image.sort_order)">
-                  第 {{ image.sort_order }} 张
-                </option>
-              </select>
-              <span v-if="coverBusy" class="text-muted">更新中…</span>
-              <span v-else-if="coverError !== ''" class="text-danger">{{ coverError }}</span>
-            </label>
             <span
               v-if="showViews"
               class="inline-flex items-center gap-1 text-xs text-muted tnum"
@@ -641,52 +809,118 @@ watch(
           </section>
 
           <section class="mt-5">
-            <h3 class="text-xs font-medium text-muted">媒体清单</h3>
+            <div class="flex min-h-6 flex-wrap items-center justify-between gap-2">
+              <h3 class="text-xs font-medium text-muted">媒体清单</h3>
+              <span v-if="coverBusy" class="text-xs text-muted">正在设置封面…</span>
+              <span v-else-if="coverError !== ''" class="text-xs text-danger">{{ coverError }}</span>
+            </div>
             <ul class="mt-2 divide-y divide-line/70 overflow-hidden rounded-xl bg-surface">
-              <li
-                v-for="image in detail.images"
-                :key="image.short_code"
-                class="px-3 py-2"
-              >
-                <div class="flex items-center justify-between gap-3">
-                <div class="min-w-0">
-                  <p class="flex items-center gap-1.5 text-xs font-medium tnum">
-                    第 {{ image.sort_order }} 项
-                    <span
-                      v-if="image.mime_type === 'video/mp4'"
-                      class="rounded bg-canvas px-1.5 py-0.5 text-[11px] font-medium text-ink"
-                      >MP4</span
+              <li v-for="image in detail.images" :key="image.short_code" class="px-3 py-2">
+                <div
+                  class="grid grid-cols-[2.75rem_minmax(0,1fr)] items-start gap-x-3 gap-y-2 sm:grid-cols-[2.75rem_minmax(0,1fr)_5.25rem_3.75rem_3.25rem] sm:items-center sm:gap-x-2.5"
+                >
+                  <button
+                    type="button"
+                    :data-thumb-order="image.sort_order"
+                    class="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-line bg-canvas transition hover:border-brand/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand"
+                    :aria-label="`放大预览第 ${image.sort_order} 项`"
+                    :aria-expanded="previewOrder === image.sort_order"
+                    @mouseenter="openPreview(image.sort_order, $event)"
+                    @mouseleave="closePreview"
+                    @focus="openPreview(image.sort_order, $event)"
+                    @blur="closePreview"
+                    @click="togglePreview(image.sort_order, $event)"
+                  >
+                    <img
+                      v-if="thumbUrl(image) !== ''"
+                      :src="thumbUrl(image)"
+                      alt=""
+                      class="h-full w-full object-cover"
+                      loading="lazy"
+                      decoding="async"
+                    />
+                    <svg
+                      v-else-if="image.mime_type === 'video/mp4'"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      class="h-4 w-4 text-muted"
+                      aria-hidden="true"
                     >
-                  </p>
-                  <p class="mt-0.5 truncate text-xs text-muted">
-                    {{ image.mime_type }} · {{ formatFileSize(image.file_size) }}
-                  </p>
-                </div>
-                <template v-if="imageLink(image) !== ''">
-                  <a
-                    :href="imageLink(image)"
-                    target="_blank"
-                    rel="noreferrer noopener"
-                    class="inline-flex min-h-6 shrink-0 items-center text-xs text-brand-strong hover:underline"
-                    >查看外链</a
-                  >
-                  <button
-                    v-if="image.mime_type === 'video/mp4'"
-                    type="button"
-                    class="h-9 shrink-0 rounded border border-line px-2.5 text-xs text-muted transition hover:bg-canvas"
-                    @click="togglePlay(image.short_code)"
-                  >
-                    {{ playingCode === image.short_code ? '收起' : '播放' }}
+                      <path d="M8 5.5v13l10-6.5-10-6.5Z" stroke-linejoin="round" />
+                    </svg>
+                    <svg
+                      v-else
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      class="h-4 w-4 text-muted"
+                      aria-hidden="true"
+                    >
+                      <rect x="3.5" y="5.5" width="17" height="13" rx="2" />
+                      <path d="m7 15 3.5-3.5L13 14l2-2 2 3" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
                   </button>
-                  <button
-                    type="button"
-                    class="h-9 shrink-0 rounded border border-line px-2.5 text-xs text-muted transition hover:bg-canvas"
-                    @click="copy(imageLink(image), '单图外链')"
-                  >
-                    复制
-                  </button>
-                </template>
-                <span v-else class="shrink-0 text-xs text-muted">暂不可用</span>
+
+                  <div class="min-w-0">
+                    <p class="flex items-center gap-1.5 text-xs font-medium tnum">
+                      第 {{ image.sort_order }} 项
+                      <span
+                        v-if="image.mime_type === 'video/mp4'"
+                        class="rounded bg-canvas px-1.5 py-0.5 text-[11px] font-medium text-ink"
+                        >MP4</span
+                      >
+                    </p>
+                    <p class="mt-0.5 truncate text-xs text-muted">
+                      {{ image.mime_type }} · {{ formatFileSize(image.file_size) }}
+                    </p>
+                    <p v-if="!canLoadThumb(image)" class="mt-0.5 truncate text-xs text-muted">未存入频道，暂无缩略图</p>
+                    <button
+                      v-if="image.mime_type === 'video/mp4'"
+                      type="button"
+                      class="mt-1 inline-flex h-7 items-center rounded-full border border-line px-2.5 text-[11px] text-muted transition hover:bg-canvas"
+                      @click="togglePlay(image.short_code)"
+                    >
+                      {{ playingCode === image.short_code ? '收起' : '播放' }}
+                    </button>
+                  </div>
+
+                  <div class="col-start-2 flex flex-wrap items-center gap-2 sm:contents">
+                    <span
+                      v-if="image.sort_order === detail.cover_sort_order"
+                      class="inline-flex h-8 min-w-[5.25rem] items-center justify-center whitespace-nowrap rounded-full bg-brand-soft px-2.5 text-xs font-medium text-brand-strong sm:col-start-3 sm:w-full"
+                      >当前封面</span
+                    >
+                    <button
+                      v-else
+                      type="button"
+                      class="inline-flex h-8 min-w-[5.25rem] items-center justify-center whitespace-nowrap rounded-full border border-line bg-surface px-2.5 text-xs font-medium text-muted transition hover:border-brand/40 hover:text-brand-strong disabled:opacity-60 sm:col-start-3 sm:w-full"
+                      :disabled="coverBusy || !canLoadThumb(image) || detail.pending_delete"
+                      :aria-label="`将第 ${image.sort_order} 项设为封面`"
+                      @click="setCover(image)"
+                    >
+                      {{ coverBusy ? '设置中…' : '设为封面' }}
+                    </button>
+                    <a
+                      v-if="imageLink(image) !== ''"
+                      :href="imageLink(image)"
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      class="inline-flex min-h-8 items-center whitespace-nowrap text-xs text-brand-strong hover:underline sm:col-start-4 sm:justify-self-end"
+                      >查看外链</a
+                    >
+                    <span v-else class="hidden sm:col-start-4 sm:block" aria-hidden="true"></span>
+                    <button
+                      type="button"
+                      class="inline-flex h-8 items-center rounded-full border border-line px-2.5 text-xs text-muted transition hover:bg-canvas disabled:opacity-50 sm:col-start-5 sm:justify-self-end"
+                      :disabled="imageLink(image) === ''"
+                      @click="copy(imageLink(image), '单图外链')"
+                    >
+                      复制
+                    </button>
+                  </div>
                 </div>
                 <video
                   v-if="playingCode === image.short_code && imageLink(image) !== ''"
@@ -793,6 +1027,27 @@ watch(
           </details>
         </template>
       </div>
+
+      <Teleport to="body">
+        <div
+          v-if="previewOrder !== 0 && previewPos !== null"
+          class="pointer-events-none fixed z-50"
+          :style="{ right: previewPos.right + 'px', top: previewPos.top + 'px' }"
+        >
+          <div class="rounded-2xl border border-line bg-surface p-2 shadow-lg">
+            <div class="flex h-[224px] w-[224px] items-center justify-center overflow-hidden rounded-xl bg-canvas">
+              <img
+                v-if="thumbUrls.get(previewOrder)"
+                :src="thumbUrls.get(previewOrder)"
+                alt=""
+                class="h-full w-full object-contain"
+              />
+              <span v-else class="text-xs text-muted">{{ previewLoading ? '正在读取…' : '暂无缩略图' }}</span>
+            </div>
+            <p class="mt-1.5 px-1 text-[11px] text-muted tnum">第 {{ previewOrder }} 项 · {{ previewSizeText }}</p>
+          </div>
+        </div>
+      </Teleport>
     </aside>
   </div>
 </template>

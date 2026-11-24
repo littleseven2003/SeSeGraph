@@ -523,9 +523,14 @@ test('详情抽屉把复制入口放到正文并给出按钮级反馈', () => {
   assert.ok(action >= 0 && action < pages, '复制入口应排在分页链接等次级信息之前')
 })
 
-test('打开详情抽屉不产生新的图片请求', () => {
+test('打开详情抽屉不批量回源原图', () => {
   const source = readFileSync(new URL('../src/components/gallery/DetailDrawer.vue', import.meta.url), 'utf8')
-  assert.equal(source.includes('<img'), false, '抽屉不渲染图片，避免打开即回源取图')
+  // 缩略图只走按需队列与管理员媒体，公开网关地址只用于外链与播放。
+  const originalSrc = source.match(/:src="imageLink\(image\)"/g) ?? []
+  assert.equal(originalSrc.length, 1, '原图地址只留给按需播放器，缩略图不能用')
+  assert.ok(source.includes('thumbUrl(image)'), '缩略图来自低分辨率缓存')
+  assert.ok(source.includes('fetchMediaBlob('), '回源只经管理员媒体接口')
+  assert.ok(source.includes('loading="lazy"'), '缩略图懒加载')
   assert.ok(source.includes('imageShareUrl'), '单图信息沿用列表已有的外链判断')
   assert.ok(source.includes('已撤回访问，恢复后可分享整帖'), '撤回态提示恢复后才能分享')
   assert.ok(source.includes('发布完成并生成链接后可分享整帖'), '未发布时提示先发布')

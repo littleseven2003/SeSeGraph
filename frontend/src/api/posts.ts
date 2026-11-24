@@ -199,8 +199,8 @@ export function mediaPath(postId: number, sortOrder: number): string {
 }
 
 // fetchMediaBlob 读取帖子内的一张原图或视频，失败时抛出明确错误。
-export async function fetchMediaBlob(postId: number, sortOrder: number): Promise<Blob> {
-  const response = await fetch(mediaPath(postId, sortOrder), { credentials: 'same-origin' })
+export async function fetchMediaBlob(postId: number, sortOrder: number, signal?: AbortSignal): Promise<Blob> {
+  const response = await fetch(mediaPath(postId, sortOrder), { credentials: 'same-origin', signal })
   if (!response.ok) throw new ApiError(response.status, '读取原图失败，无法生成封面')
   return await response.blob()
 }
