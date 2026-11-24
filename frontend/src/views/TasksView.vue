@@ -4,6 +4,7 @@ import { ApiError } from '../api/client.ts'
 import { fetchTasks, pauseTask, resumeTask, stopTask, type TaskFilter, type TaskRow } from '../api/posts.ts'
 import { formatPublishedAt } from '../utils/gallery.ts'
 import AppHeader from '../components/AppHeader.vue'
+import TaskStageBar from '../components/tasks/TaskStageBar.vue'
 import {
   TASK_FILTERS,
   badgeOf,
@@ -12,11 +13,9 @@ import {
   canResume,
   canRetryStore,
   canStop,
-  channelStage,
-  publishStage,
-  uploadStage,
   type TaskTone,
 } from '../utils/tasks.ts'
+import { stageInputOf, stageOverall, stageSummary, taskStages } from '../utils/stages.ts'
 
 const tasks = ref<TaskRow[]>([])
 const total = ref(0)
@@ -27,6 +26,8 @@ const loading = ref(false)
 const error = ref('')
 const notice = ref('')
 const busyId = ref(0)
+// expanded 记录已展开的任务编号：默认只显示一行，展开后才出现四阶段进度与操作。
+const expanded = ref<Set<number>>(new Set())
 let timer: ReturnType<typeof setInterval> | undefined
 // 请求序号用于丢弃迟到的响应：切筛选或翻页后，旧轮询不会覆盖新结果。
 let requestSeq = 0
@@ -48,12 +49,26 @@ const BADGE_CLASS: Record<TaskTone, string> = {
   muted: 'bg-canvas text-muted',
 }
 
-const STAGE_VALUE_CLASS: Record<TaskTone, string> = {
-  run: 'text-brand-strong',
-  warn: 'text-warn',
-  danger: 'text-danger',
-  ok: 'text-accent',
-  muted: 'text-muted',
+// stagesOf 用统一口径把任务行转成四阶段：#1 压缩 → #2 上传 → #3 同步 → #4 发布。
+function stagesOf(task: TaskRow) {
+  return taskStages(stageInputOf(task))
+}
+
+function summaryOf(task: TaskRow): string {
+  return stageSummary(stagesOf(task))
+}
+
+function overallOf(task: TaskRow): number {
+  return stageOverall(stagesOf(task))
+}
+
+function toggleExpanded(id: number): void {
+  if (expanded.value.has(id)) expanded.value.delete(id)
+  else expanded.value.add(id)
+}
+
+function isExpanded(id: number): boolean {
+  return expanded.value.has(id)
 }
 
 async function load(silent = false): Promise<void> {
@@ -255,91 +270,81 @@ onBeforeUnmount(() => {
         <li
           v-for="task in tasks"
           :key="task.id"
-          class="rounded-2xl bg-surface p-4 shadow-[0_1px_0_0_rgba(27,26,23,0.05)] sm:px-5"
+          class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]"
         >
-          <div class="flex flex-wrap items-start justify-between gap-2">
-            <div class="min-w-0 flex-1">
-              <p class="truncate text-sm font-semibold" :title="task.title">
-                <span class="tnum mr-1.5 text-muted">#{{ task.id }}</span>{{ task.title }}
-              </p>
-              <p class="mt-0.5 text-xs text-muted">更新于 {{ updatedText(task.updated_at) }}</p>
-            </div>
-            <div class="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            class="flex min-h-11 w-full items-center gap-2 px-4 py-1.5 text-left transition hover:bg-canvas/60 sm:px-5"
+            :aria-expanded="isExpanded(task.id)"
+            :aria-controls="`task-stages-${task.id}`"
+            @click="toggleExpanded(task.id)"
+          >
+            <span class="tnum shrink-0 text-xs text-muted">#{{ task.id }}</span>
+            <span class="min-w-0 flex-1 truncate text-sm font-semibold" :title="task.title">{{ task.title }}</span>
+            <span class="tnum hidden shrink-0 text-xs text-muted sm:inline">{{ updatedText(task.updated_at) }}</span>
+            <span class="tnum shrink-0 rounded-full bg-canvas px-2 py-0.5 text-[11px] font-medium text-muted">{{ overallOf(task) }}%</span>
+            <span
+              class="shrink-0 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium"
+              :class="BADGE_CLASS[badgeOf(task).tone]"
+            >
+              {{ badgeOf(task).label }}
+            </span>
+            <span class="shrink-0 text-muted transition-transform" :class="isExpanded(task.id) ? 'rotate-180' : ''" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="h-4 w-4">
+                <path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </span>
+          </button>
+          <p class="px-4 pb-2 text-xs text-muted sm:hidden">更新于 {{ updatedText(task.updated_at) }}</p>
+
+          <div v-if="isExpanded(task.id)" :id="`task-stages-${task.id}`" class="border-t border-line/70 px-4 py-3 sm:px-5">
+            <TaskStageBar :stages="stagesOf(task)" />
+            <p class="mt-2 text-xs text-muted">{{ summaryOf(task) }} · 更新于 {{ updatedText(task.updated_at) }}</p>
+            <div class="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                v-if="canResume(task)"
+                type="button"
+                class="inline-flex h-11 items-center rounded-full border border-brand/30 bg-brand-soft px-4 text-xs font-medium text-brand-strong transition hover:border-brand/50 disabled:opacity-60"
+                :disabled="busyId !== 0"
+                @click="control(task, 'resume')"
+              >
+                继续
+              </button>
               <router-link
-                v-if="canContinueUpload(task)"
+                v-else-if="canRetryStore(task)"
                 :to="{ name: 'workbench', query: { resume: task.id } }"
-                class="rounded-full border border-line px-2.5 py-1 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
+                class="inline-flex h-11 items-center rounded-full border border-brand/30 bg-brand-soft px-4 text-xs font-medium text-brand-strong transition hover:border-brand/50"
               >
-                续传
+                重试存图
               </router-link>
-              <span
-                class="whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium"
-                :class="BADGE_CLASS[badgeOf(task).tone]"
+              <router-link
+                v-else-if="canContinueUpload(task)"
+                :to="{ name: 'workbench', query: { resume: task.id } }"
+                class="inline-flex h-11 items-center rounded-full border border-line bg-surface px-4 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
               >
-                {{ badgeOf(task).label }}
-              </span>
+                继续上传
+              </router-link>
+              <button
+                v-if="canPause(task)"
+                type="button"
+                class="inline-flex h-11 items-center rounded-full border border-line bg-surface px-4 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
+                :disabled="busyId !== 0"
+                @click="control(task, 'pause')"
+              >
+                暂停
+              </button>
+              <button
+                v-if="canStop(task)"
+                type="button"
+                class="inline-flex h-11 items-center rounded-full border border-danger/35 bg-surface px-4 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-60"
+                :disabled="busyId !== 0"
+                @click="control(task, 'stop')"
+              >
+                停止
+              </button>
+              <p v-if="task.control_state === 'paused'" class="text-xs text-brand-strong">已暂停，继续只补缺项</p>
+              <p v-else-if="task.control_state === 'stopped'" class="text-xs text-danger">已停止，不再上传或发布</p>
             </div>
-          </div>
-
-          <dl class="mt-3 grid grid-cols-1 gap-2 text-xs sm:grid-cols-3">
-            <div class="rounded-xl bg-canvas px-3 py-2.5">
-              <dt class="text-muted"><span class="tnum mr-1 text-muted/80">01</span>传至服务器</dt>
-              <dd class="tnum mt-0.5 font-medium" :class="STAGE_VALUE_CLASS[uploadStage(task).tone]">{{ uploadStage(task).value }}</dd>
-            </div>
-            <div class="rounded-xl bg-canvas px-3 py-2.5">
-              <dt class="text-muted"><span class="tnum mr-1 text-muted/80">02</span>存入频道</dt>
-              <dd class="tnum mt-0.5 font-medium" :class="STAGE_VALUE_CLASS[channelStage(task).tone]">{{ channelStage(task).value }}</dd>
-            </div>
-            <div class="rounded-xl bg-canvas px-3 py-2.5">
-              <dt class="text-muted"><span class="tnum mr-1 text-muted/80">03</span>发布 Telegraph</dt>
-              <dd class="mt-0.5 font-medium" :class="STAGE_VALUE_CLASS[publishStage(task).tone]">{{ publishStage(task).value }}</dd>
-            </div>
-          </dl>
-
-          <div class="mt-3 flex flex-wrap items-center gap-2">
-            <button
-              v-if="canResume(task)"
-              type="button"
-              class="inline-flex h-11 items-center rounded-full border border-brand/30 bg-brand-soft px-4 text-xs font-medium text-brand-strong transition hover:border-brand/50 disabled:opacity-60"
-              :disabled="busyId !== 0"
-              @click="control(task, 'resume')"
-            >
-              继续
-            </button>
-            <router-link
-              v-else-if="canRetryStore(task)"
-              :to="{ name: 'workbench', query: { resume: task.id } }"
-              class="inline-flex h-11 items-center rounded-full border border-brand/30 bg-brand-soft px-4 text-xs font-medium text-brand-strong transition hover:border-brand/50"
-            >
-              重试存图
-            </router-link>
-            <router-link
-              v-else-if="canContinueUpload(task)"
-              :to="{ name: 'workbench', query: { resume: task.id } }"
-              class="inline-flex h-11 items-center rounded-full border border-line bg-surface px-4 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
-            >
-              继续上传
-            </router-link>
-            <button
-              v-if="canPause(task)"
-              type="button"
-              class="inline-flex h-11 items-center rounded-full border border-line bg-surface px-4 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
-              :disabled="busyId !== 0"
-              @click="control(task, 'pause')"
-            >
-              暂停
-            </button>
-            <button
-              v-if="canStop(task)"
-              type="button"
-              class="inline-flex h-11 items-center rounded-full border border-danger/35 bg-surface px-4 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-60"
-              :disabled="busyId !== 0"
-              @click="control(task, 'stop')"
-            >
-              停止
-            </button>
-            <p v-if="task.control_state === 'paused'" class="text-xs text-brand-strong">已暂停，继续只补缺项</p>
-            <p v-else-if="task.control_state === 'stopped'" class="text-xs text-danger">已停止，不再上传或发布</p>
           </div>
         </li>
       </ul>

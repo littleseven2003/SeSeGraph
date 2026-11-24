@@ -66,9 +66,8 @@ test('旧轮询不会覆盖新筛选结果', () => {
 })
 
 test('卡片结构、空态与控件热区', () => {
-  assert.ok(source.includes('rounded-2xl bg-surface p-4'), '任务卡片用轻卡片')
+  assert.ok(source.includes('rounded-2xl bg-surface shadow'), '任务卡片用轻卡片')
   assert.ok(source.includes('whitespace-nowrap rounded-full px-2.5 py-1'), '状态胶囊单行')
-  assert.ok(source.includes('grid-cols-1 gap-2 text-xs sm:grid-cols-3'), '390px 三阶段纵向堆叠')
   assert.ok(source.includes('sm:flex-nowrap') === false, '窄屏动作区允许换行')
   // 所有操作按钮与分页控件使用 h-11（44px）热区。
   const controls = source.match(/inline-flex h-11/g) ?? []
@@ -78,12 +77,28 @@ test('卡片结构、空态与控件热区', () => {
   assert.ok(source.includes('新建图集'), '空态提供新建入口')
 })
 
-test('任务页复用同一套阶段与控制判定', () => {
-  assert.ok(source.includes('from \'../utils/tasks.ts\''), '阶段规则集中在 utils/tasks.ts')
+test('任务页复用同一套四阶段与控制判定', () => {
+  assert.ok(source.includes('from \'../utils/tasks.ts\''), '控制规则集中在 utils/tasks.ts')
+  assert.ok(source.includes('from \'../utils/stages.ts\''), '四阶段口径集中在 utils/stages.ts')
   assert.ok(source.includes('canRetryStore(task)'), '频道失败走重试入口')
   assert.ok(source.includes('重试存图'), '重试文案与补传分开')
-  for (const name of ['uploadStage', 'channelStage', 'publishStage', 'badgeOf', 'canPause', 'canResume', 'canRetryStore', 'canStop']) {
+  for (const name of ['badgeOf', 'canPause', 'canResume', 'canRetryStore', 'canStop']) {
+    assert.ok(source.includes(name), `缺少 ${name}`)
+  }
+  for (const name of ['taskStages', 'stageInputOf', 'stageSummary', 'stageOverall']) {
     assert.ok(source.includes(name), `缺少 ${name}`)
   }
   assert.equal(source.includes('statusLabel('), false, '不再用画廊聚合状态冒充单段状态')
+})
+
+test('任务默认只有一行，展开后才出现四阶段进度与操作', () => {
+  assert.ok(source.includes('<TaskStageBar :stages="stagesOf(task)" />'), '展开区复用四阶段组件')
+  assert.ok(source.includes('v-if="isExpanded(task.id)"'), '默认收起')
+  assert.ok(source.includes(':aria-expanded="isExpanded(task.id)"'), '展开状态对读屏可见')
+  assert.ok(source.includes('toggleExpanded(task.id)'), '整行可点开')
+  // 操作按钮放在展开区里，收起时只留一行摘要。
+  const row = source.slice(source.indexOf('v-for="task in tasks"'), source.indexOf('</ul>'))
+  assert.ok(row.indexOf('isExpanded(task.id)') < row.indexOf('canResume(task)'), '操作区在展开之后')
+  assert.ok(row.includes('{{ overallOf(task) }}%'), '收起时保留进度小标识')
+  assert.ok(source.includes('<TaskStageBar'), '工作台与任务页共用同一组件')
 })

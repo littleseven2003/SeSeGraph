@@ -5,7 +5,7 @@ import DropZone from '../components/workbench/DropZone.vue'
 import ImageGrid from '../components/workbench/ImageGrid.vue'
 import ModeSwitch from '../components/workbench/ModeSwitch.vue'
 import MetaPanel from '../components/workbench/MetaPanel.vue'
-import ProgressPanel from '../components/workbench/ProgressPanel.vue'
+import TaskProgressCard from '../components/tasks/TaskProgressCard.vue'
 import {
   commitPost,
   createPost,
@@ -60,6 +60,7 @@ import {
 import { prefillFromMeta, type PostMeta } from '../utils/meta.ts'
 import { sortByNaturalName } from '../utils/natural.ts'
 import { isActiveStatus, publishActive } from '../utils/progress.ts'
+import { stageSummary, taskStages } from '../utils/stages.ts'
 import {
   browserStorage,
   clearTask,
@@ -140,6 +141,8 @@ const statuses = ref<Record<number, UploadStatus>>({})
 const snapshot = ref<TaskSnapshot | null>(null)
 // resumableHint 是本机存在可续传任务时的轻提示，只在空态展示，不阻断拖入。
 const resumableHint = ref<TaskSnapshot | null>(null)
+// compressDone 是本轮压缩已处理的项数，建任务时随请求上报，四阶段的第一段据此展示。
+const compressDone = ref<number | null>(null)
 const serverProgress = ref<ServerProgress | null>(null)
 const retrying = ref(false)
 const publishing = ref(false)
@@ -203,25 +206,44 @@ const locked = computed(
 // 封面只跟压缩/建任务阶段互斥；上传开始后仍可更换封面。
 const coverLocked = computed(() => submitting.value && phase.value !== 'uploading')
 const viewingTask = computed(() => snapshot.value !== null && tiles.value.length === 0)
-const phaseText = computed(() => {
-  if (serverProgress.value?.status === 'completed') {
-    return '已存入频道，可以关闭网页'
+// receivedCount 与服务端口径一致：上传、入库与存频道失败都算服务端收到过。
+const receivedCount = computed(() => {
+  const progress = serverProgress.value
+  if (progress === null) return uploadedCount.value
+  let received = 0
+  for (const image of progress.images) {
+    if (image.status === 'uploaded' || image.status === 'stored' || image.status === 'failed') received += 1
   }
-  if (serverProgress.value?.status === 'failed') {
-    return '部分图片存图失败，可在下方重试'
+  return received
+})
+
+const channelCount = computed(() => {
+  const progress = serverProgress.value
+  if (progress !== null) return progress.stored_count
+  let stored = 0
+  for (const status of Object.values(statuses.value)) {
+    if (status === 'stored') stored += 1
   }
-  switch (phase.value) {
-    case 'creating':
-      return '正在创建任务…'
-    case 'uploading':
-      return `正在上传 ${uploadedCount.value} / ${imageCount.value}`
-    case 'queued':
-      return '已加入上传队列，关闭网页后服务端会继续处理'
-    case 'failed':
-      return '上传中断，重新选择同一批文件后可以继续'
-    default:
-      return ''
-  }
+  return stored
+})
+
+// stages 是四阶段唯一的数据来源：有服务端进度用它，否则用本轮的压缩与上传状态。
+const stages = computed(() =>
+  taskStages({
+    imageCount: imageCount.value,
+    compressedCount: serverProgress.value?.compressed_count ?? compressDone.value,
+    receivedCount: receivedCount.value,
+    channelCount: channelCount.value,
+    publishState: serverProgress.value?.publish_state ?? 'idle',
+    controlState: serverProgress.value?.control_state ?? 'running',
+    status: serverProgress.value?.status ?? (phase.value === 'uploading' ? 'uploading' : phase.value === 'failed' ? 'failed' : 'idle'),
+  }),
+)
+
+// progressText 是右栏与移动底栏的一行概况，明细只在阶段条里呈现。
+const progressText = computed(() => {
+  if (phase.value === 'idle' && serverProgress.value === null) return ''
+  return stageSummary(stages.value)
 })
 
 function onPreviewKeydown(event: KeyboardEvent): void {
@@ -1015,6 +1037,7 @@ function clearAll(): void {
   metaSource.value = ''
   draft.value = { title: '', description: '', tags: [], author: '' }
   snapshot.value = null
+  compressDone.value = null
   resetProgress()
   resetToDefaultMode()
 }
@@ -1051,6 +1074,8 @@ async function ensureTask(): Promise<number | null> {
     image_count: tiles.value.length,
     cover_thumbnail: coverDataUrl.value,
     cover_sort_order: coverTile.value?.sortOrder ?? 0,
+    // 压缩在浏览器侧一次性完成，建任务时把已处理项数一并上报。
+    compressed_count: compressDone.value ?? undefined,
     tags: draft.value.tags,
   })
   postId.value = created.id
@@ -1114,6 +1139,7 @@ async function publish(): Promise<void> {
     if (compression.summary !== '') {
       message.value = compression.summary
     }
+    compressDone.value = tiles.value.length
 
     phase.value = 'creating'
     await runUpload()
@@ -1293,6 +1319,21 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
+      <div v-if="tiles.length === 0 && serverProgress" class="mx-auto mb-4 w-full max-w-[720px]">
+        <TaskProgressCard
+          :stages="stages"
+          :progress="serverProgress"
+          :retrying="retrying"
+          :publishing="publishing"
+          :control-busy="controlBusy"
+          @retry="retryFailed"
+          @publish="publishToTelegraph"
+          @pause="runControl('pause')"
+          @resume="runControl('resume')"
+          @stop="runControl('stop')"
+        />
+      </div>
+
       <div v-if="tiles.length === 0" class="mx-auto w-full max-w-[720px]">
         <DropZone :disabled="!ready || working || locked" @zip="onZip" @images="onImages" @error="pushError">
           <ModeSwitch layout="stack" :mode="mode" :auto-compress="autoCompress" :disabled="!ready || locked" @select="setMode" @toggle-compress="onAutoCompress" />
@@ -1304,9 +1345,31 @@ onBeforeUnmount(() => {
       <template v-else>
         <div class="lg:grid lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start lg:gap-5">
           <div class="min-w-0 space-y-4">
+            <TaskProgressCard
+              :stages="stages"
+              :progress="serverProgress"
+              :retrying="retrying"
+              :publishing="publishing"
+              :control-busy="controlBusy"
+              @retry="retryFailed"
+              @publish="publishToTelegraph"
+              @pause="runControl('pause')"
+              @resume="runControl('resume')"
+              @stop="runControl('stop')"
+            />
+
+            <MetaPanel
+              v-model="draft"
+              :meta-text="metaText"
+              :meta-source="metaSource"
+              :parse-default="metaParseMode"
+              :disabled="locked"
+              @error="pushError"
+            />
+
             <div class="flex flex-wrap items-end justify-between gap-3">
               <div class="min-w-0">
-                <h2 class="text-base font-semibold tracking-tight">图片顺序</h2>
+                <h2 class="text-base font-semibold tracking-tight">已选媒体</h2>
                 <p class="mt-1 text-xs text-muted">拖拽或用箭头调整顺序，序号即上传顺序，点选封面用于列表展示。</p>
               </div>
               <button
@@ -1336,15 +1399,6 @@ onBeforeUnmount(() => {
               @remove="onRemove"
               @select-cover="onSelectCover"
               @preview="openPreview"
-            />
-
-            <MetaPanel
-              v-model="draft"
-              :meta-text="metaText"
-              :meta-source="metaSource"
-              :parse-default="metaParseMode"
-              :disabled="locked"
-              @error="pushError"
             />
 
             <DropZone compact :disabled="working || locked" @zip="onZip" @images="onImages" @error="pushError" />
@@ -1394,7 +1448,7 @@ onBeforeUnmount(() => {
                     <template v-if="postId > 0">任务 #{{ postId }} · {{ uploadedCount }} / {{ imageCount }} 张已提交</template>
                     <template v-else>共 {{ imageCount }} 张 · {{ formatBytes(totalSize) }}</template>
                   </p>
-                  <p v-if="phaseText" class="mt-1 text-xs leading-relaxed text-muted">{{ phaseText }}</p>
+                  <p v-if="progressText" class="mt-1 text-xs leading-relaxed text-muted">{{ progressText }}</p>
                   <p v-else class="mt-1 text-xs leading-relaxed text-muted">封面 {{ coverTile?.name ?? '—' }}</p>
                 </div>
 
@@ -1437,7 +1491,7 @@ onBeforeUnmount(() => {
                 <template v-if="postId > 0">任务 #{{ postId }} · {{ uploadedCount }} / {{ imageCount }}</template>
                 <template v-else>{{ imageCount }} 张 · {{ formatBytes(totalSize) }}</template>
               </p>
-              <p class="truncate text-xs text-muted">{{ phaseText !== '' ? phaseText : '封面 ' + (coverTile?.name ?? '—') }}</p>
+              <p class="truncate text-xs text-muted">{{ progressText !== '' ? progressText : '封面 ' + (coverTile?.name ?? '—') }}</p>
             </div>
             <button
               v-if="finished"
@@ -1505,21 +1559,6 @@ onBeforeUnmount(() => {
             ×
           </button>
         </div>
-      </div>
-
-      <!-- 进度面板对所有状态可见：刷新后未重新选图也能继续发布或重试。 -->
-      <div v-if="serverProgress" class="mt-4">
-        <ProgressPanel
-          :progress="serverProgress"
-          :retrying="retrying"
-          :publishing="publishing"
-          :control-busy="controlBusy"
-          @retry="retryFailed"
-          @publish="publishToTelegraph"
-          @pause="runControl('pause')"
-          @resume="runControl('resume')"
-          @stop="runControl('stop')"
-        />
       </div>
     </main>
   </div>

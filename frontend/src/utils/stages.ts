@@ -1,0 +1,165 @@
+// 四阶段任务模型：#1 压缩 → #2 上传 → #3 同步 → #4 发布。
+// 工作台与任务页共用同一套判定，阶段口径只在这里定义一次。
+import type { TaskTone } from './tasks.ts'
+
+/** StageKey 是四阶段的稳定标识，用于测试与渲染顺序。 */
+export type StageKey = 'compress' | 'upload' | 'sync' | 'publish'
+
+/** StageView 是单个阶段的展示状态：值、色调与进度比例。 */
+export interface StageView {
+  key: StageKey
+  /** 阶段序号，从 1 开始，与界面上的 #1–#4 一致 */
+  index: number
+  label: string
+  /** 右侧紧凑状态值，如「12/31」「完成」「未记录」 */
+  value: string
+  tone: TaskTone
+  /** 0–1 的进度比例，用于进度轨宽度 */
+  ratio: number
+}
+
+/** StageInput 是四阶段判定的全部输入，字段与服务端口径一一对应。 */
+export interface StageInput {
+  imageCount: number
+  /** 提交时浏览器已处理的项数；null 表示旧任务没有这项记录 */
+  compressedCount: number | null
+  /** 真实已接收：上传、入库与存频道失败都算收到 */
+  receivedCount: number
+  /** 已存入 Telegram 频道 */
+  channelCount: number
+  publishState: string
+  controlState: string
+  status: string
+}
+
+const STAGE_LABELS: Record<StageKey, string> = {
+  compress: '压缩',
+  upload: '上传',
+  sync: '同步',
+  publish: '发布',
+}
+
+const STAGE_INDEX: Record<StageKey, number> = { compress: 1, upload: 2, sync: 3, publish: 4 }
+
+function stage(key: StageKey, value: string, tone: TaskTone, ratio: number): StageView {
+  return {
+    key,
+    index: STAGE_INDEX[key],
+    label: STAGE_LABELS[key],
+    value,
+    tone,
+    ratio: Math.min(1, Math.max(0, ratio)),
+  }
+}
+
+// ratioOf 用已完成数除以总数，总数非法时按 0 处理。
+function ratioOf(done: number, total: number): number {
+  if (total <= 0) return 0
+  return Math.min(1, Math.max(0, done / total))
+}
+
+// compressStage 只看浏览器上报的已处理项数：没有记录就如实显示未记录。
+export function compressStage(input: Pick<StageInput, 'imageCount' | 'compressedCount'>): StageView {
+  if (input.imageCount <= 0) return stage('compress', '无媒体', 'muted', 0)
+  if (input.compressedCount === null) return stage('compress', '未记录', 'muted', 0)
+  const done = input.compressedCount
+  if (done >= input.imageCount) return stage('compress', '完成', 'ok', 1)
+  if (done > 0) return stage('compress', `${done}/${input.imageCount}`, 'run', ratioOf(done, input.imageCount))
+  return stage('compress', '等待', 'muted', 0)
+}
+
+// uploadStageView 与任务页口径一致：仍在上传与已入频道的图片都算接收成功。
+export function uploadStageView(input: Pick<StageInput, 'imageCount' | 'receivedCount' | 'status'>): StageView {
+  if (input.imageCount <= 0) return stage('upload', '无媒体', 'muted', 0)
+  const received = Math.max(0, input.receivedCount)
+  if (received >= input.imageCount) return stage('upload', '完成', 'ok', 1)
+  if (input.status === 'failed') {
+    return stage('upload', `${received}/${input.imageCount}`, 'danger', ratioOf(received, input.imageCount))
+  }
+  if (received > 0) {
+    return stage('upload', `${received}/${input.imageCount}`, 'run', ratioOf(received, input.imageCount))
+  }
+  return stage('upload', '等待', 'muted', 0)
+}
+
+// syncStageView 只认确实已入频道的张数，不与已接收合并。
+export function syncStageView(input: Pick<StageInput, 'imageCount' | 'channelCount' | 'status'>): StageView {
+  if (input.imageCount <= 0) return stage('sync', '无媒体', 'muted', 0)
+  const stored = Math.max(0, input.channelCount)
+  if (stored >= input.imageCount) return stage('sync', '完成', 'ok', 1)
+  if (input.status === 'failed') {
+    return stage('sync', `${stored}/${input.imageCount}`, 'danger', ratioOf(stored, input.imageCount))
+  }
+  if (stored > 0) return stage('sync', `${stored}/${input.imageCount}`, 'run', ratioOf(stored, input.imageCount))
+  return stage('sync', '等待', 'muted', 0)
+}
+
+// publishStageView 只看 publish_state，不借用前两段的状态。
+export function publishStageView(input: Pick<StageInput, 'publishState' | 'controlState'>): StageView {
+  if (input.controlState === 'paused' && input.publishState !== 'published') {
+    return stage('publish', '已暂停', 'warn', 0)
+  }
+  switch (input.publishState) {
+    case 'published':
+      return stage('publish', '已发布', 'ok', 1)
+    case 'publishing':
+      return stage('publish', '发布中', 'run', 0.6)
+    case 'pending':
+      return stage('publish', '排队中', 'run', 0.2)
+    case 'failed':
+      return stage('publish', '发布失败', 'danger', 0)
+    default:
+      return stage('publish', '未开始', 'muted', 0)
+  }
+}
+
+// taskStages 按 #1–#4 的顺序返回四段。
+export function taskStages(input: StageInput): StageView[] {
+  return [compressStage(input), uploadStageView(input), syncStageView(input), publishStageView(input)]
+}
+
+// stageSummary 给出一行概况：正在进行的阶段与百分比，便于任务行收起时显示。
+export function stageSummary(stages: readonly StageView[]): string {
+  for (const item of stages) {
+    if (item.tone === 'danger') return `${item.label}失败`
+  }
+  for (const item of stages) {
+    if (item.ratio >= 1) continue
+    if (item.tone === 'run' || item.tone === 'warn') {
+      return `${item.value === '等待' ? '待' : ''}${item.label} ${Math.round(item.ratio * 100)}%`
+    }
+    return `${item.label}待开始`
+  }
+  return '四阶段已完成'
+}
+
+// stageOverall 返回整条进度：四段比例的均值，供任务行的小标识使用。
+export function stageOverall(stages: readonly StageView[]): number {
+  if (stages.length === 0) return 0
+  const total = stages.reduce((sum, item) => sum + item.ratio, 0)
+  return Math.round((total / stages.length) * 100)
+}
+
+/** StageSource 是任务行或进度响应里四阶段需要的字段。 */
+export interface StageSource {
+  status: string
+  publish_state: string
+  control_state: string
+  image_count: number
+  received_count?: number
+  channel_count?: number
+  compressed_count?: number | null
+}
+
+// stageInputOf 把任务行或进度响应转成四阶段输入；缺字段按未记录/未接收处理。
+export function stageInputOf(source: StageSource): StageInput {
+  return {
+    imageCount: source.image_count,
+    compressedCount: source.compressed_count ?? null,
+    receivedCount: source.received_count ?? 0,
+    channelCount: source.channel_count ?? 0,
+    publishState: source.publish_state,
+    controlState: source.control_state,
+    status: source.status,
+  }
+}

@@ -10,6 +10,8 @@ export interface CreatePostPayload {
   cover_thumbnail: string
   /** 封面来源序号，发布时会把这张图放到 Telegraph 第一位。 */
   cover_sort_order?: number
+  /** 浏览器提交前已处理的项数，用于四阶段的第一段 */
+  compressed_count?: number
   tags: string[]
 }
 
@@ -95,6 +97,8 @@ export interface ServerProgress {
   upload_round: number
   /** 当前封面来源序号，0 表示未选择封面 */
   cover_sort_order: number
+  /** 提交时浏览器已处理的项数；null 表示旧任务没有这项记录 */
+  compressed_count?: number | null
 }
 
 // uploadImage 逐张上传，请求体直接使用浏览器里的 Blob，由后端流式落盘。
@@ -178,6 +182,8 @@ export interface TaskRow {
   uploaded_count: number
   /** 已存入频道张数 */
   channel_count: number
+  /** 提交时浏览器已处理的项数；null 表示旧任务没有这项记录 */
+  compressed_count: number | null
   updated_at: string
 }
 
