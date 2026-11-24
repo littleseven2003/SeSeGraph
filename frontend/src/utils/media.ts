@@ -3,11 +3,28 @@ import { baseName, extensionOf, formatBytes, isImageName, isVideoName, limitForM
 
 // 单段视频上限，与 Telegram 云端 getFile 的 20MB 硬限制一致。
 export const MAX_VIDEO_BYTES = 20000000
-// photo 模式下超过该体积的静态图先压缩再上传。
 // 界面与提交统一使用十进制上限。
 export const PHOTO_LIMIT_BYTES = 10000000
 export const DOCUMENT_LIMIT_BYTES = 20000000
-export const PHOTO_COMPRESS_THRESHOLD = PHOTO_LIMIT_BYTES
+// 自动压缩的触发值：静态图超过该体积才尝试压缩，等于阈值时直接保留。
+// 触发值只决定「是否尝试」，上限才决定「能否上传」，两者不要混用。
+export const PHOTO_COMPRESS_THRESHOLD = 2500000
+export const DOCUMENT_COMPRESS_THRESHOLD = 8000000
+
+// compressThresholdFor 返回当前模式的自动压缩触发值。
+export function compressThresholdFor(mode: UploadMode): number {
+  return mode === 'document' ? DOCUMENT_COMPRESS_THRESHOLD : PHOTO_COMPRESS_THRESHOLD
+}
+
+// compressTriggerLabel 返回触发值的展示文案，供角标与说明共用。
+export function compressTriggerLabel(mode: UploadMode): string {
+  return mode === 'document' ? '8MB' : '2.5MB'
+}
+
+// limitLabelFor 返回当前模式上限的展示文案。
+export function limitLabelFor(mode: UploadMode): string {
+  return mode === 'document' ? '20MB' : '10MB'
+}
 // 选图阶段只拦超 50MB 的静态图，具体上限在模式与开关确定后再判定。
 export const MEDIA_IMPORT_MAX_BYTES = 50000000
 // 压缩输入的安全上限：避免把整块内存交给超大原图。
@@ -33,9 +50,10 @@ export function limitForMedia(mode: UploadMode, name: string): number {
   return isVideoName(name) ? MAX_VIDEO_BYTES : limitForMode(mode)
 }
 
-// needsCompression 判断静态图是否需要先压缩：只处理 photo 模式且超过 10MB 的图。
+// needsCompression 判断静态图是否需要尝试压缩：超过当前模式的触发值才尝试。
+// 动图与视频不参与压缩，动图由 evaluateMedia 按上限单独放行或提示。
 export function needsCompression(mode: UploadMode, name: string, size: number): boolean {
-  return mode === 'photo' && !isVideoName(name) && size > PHOTO_COMPRESS_THRESHOLD
+  return !isVideoName(name) && size > compressThresholdFor(mode)
 }
 
 // checkMediaFile 返回不放行的原因，放行时返回 null。
@@ -232,7 +250,7 @@ export async function compressImage(blob: Blob, target = COMPRESS_TARGET_BYTES):
       height = Math.max(1, Math.floor(height * 0.82))
       if (width + height <= 2) break
     }
-    throw new Error('压缩后仍超过 10MB，请先裁剪图片')
+    throw new Error(`压缩后仍超过 ${Math.round(target / 1000000)}MB，请先裁剪图片`)
   } finally {
     close()
   }
@@ -297,12 +315,29 @@ async function captureFrame(video: HTMLVideoElement, _url: string, duration: num
   })
 }
 
-// compressionSummary 汇总本轮压缩的体积变化。
-export function compressionSummary(results: CompressResult[]): string {
-  if (results.length === 0) return ''
-  const from = results.reduce((sum, item) => sum + item.fromSize, 0)
-  const to = results.reduce((sum, item) => sum + item.toSize, 0)
-  return `已自动压缩 ${results.length} 张超 10MB 静态图（合计 ${formatBytes(from)} → ${formatBytes(to)}）`
+// keepOriginalAfterCompress 判断是否保留原图：原图本身合规且产物不更小时不采用产物。
+// 原图已超上限时必须采用产物，否则无法提交。
+export function keepOriginalAfterCompress(originalSize: number, compressedSize: number, limit: number): boolean {
+  return originalSize <= limit && compressedSize >= originalSize
+}
+
+// compressFallback 判断压缩失败后能否按原图继续：原图合规就保留，超上限才算阻塞。
+export function compressFallback(originalSize: number, limit: number): 'keep' | 'block' {
+  return originalSize <= limit ? 'keep' : 'block'
+}
+
+// compressionSummary 汇总本轮压缩：成功压缩的张数与体积变化，另附保留原图的数量。
+export function compressionSummary(results: CompressResult[], keptCount = 0): string {
+  const parts: string[] = []
+  if (results.length > 0) {
+    const from = results.reduce((sum, item) => sum + item.fromSize, 0)
+    const to = results.reduce((sum, item) => sum + item.toSize, 0)
+    parts.push(`已自动压缩 ${results.length} 张静态图（合计 ${formatBytes(from)} → ${formatBytes(to)}）`)
+  }
+  if (keptCount > 0) {
+    parts.push(`${keptCount} 张压缩无收益，保留原图`)
+  }
+  return parts.join('；')
 }
 
 // 供界面显示的体积对比。
@@ -355,8 +390,8 @@ export function selectionSummary(tally: SelectionTally): string {
   return parts.join('；')
 }
 
-// 卡片发布状态：满足、待压缩、已压缩、无法满足。
-export type MediaState = 'ok' | 'pending' | 'compressed' | 'blocked'
+// 卡片发布状态：满足、可压缩、已压缩、保留原图、无法满足。
+export type MediaState = 'ok' | 'pending' | 'compressed' | 'kept' | 'blocked'
 
 export interface MediaEvaluation {
   state: MediaState
@@ -372,6 +407,7 @@ export function detailUploadModeLabel(mode: string): string {
 }
 
 // 判定只看原始体积与是否已压缩，切换模式或开关都可以重算，不会改动原图。
+// 超过触发值且合规才提示可压缩；动图始终保留动画，只按上限放行或提示超限。
 export function evaluateMedia(input: {
   kind: 'image' | 'video'
   size: number
@@ -379,19 +415,27 @@ export function evaluateMedia(input: {
   animated?: boolean
   animatedKind?: 'gif' | 'other'
   failed?: boolean
+  keptOriginal?: boolean
 }, mode: UploadMode, autoCompress: boolean): MediaEvaluation {
   if (input.kind === 'video') {
     return input.size <= MAX_VIDEO_BYTES ? { state: 'ok', label: '满足' } : { state: 'blocked', label: '超 20MB' }
   }
   const limit = mode === 'document' ? DOCUMENT_LIMIT_BYTES : PHOTO_LIMIT_BYTES
-  if (input.size <= limit) return { state: 'ok', label: '满足' }
-  if (input.failed) return { state: 'blocked', label: '压缩失败' }
-  if (input.compressed) return { state: 'compressed', label: '已压缩' }
-  // 动图先于开关判定：任何开关状态都不能压平动效。
-  if (input.animated) {
-    return { state: 'blocked', label: input.animatedKind === 'gif' ? 'GIF 超限' : '动图超限' }
+  const threshold = compressThresholdFor(mode)
+  // 超上限：只有压缩成功或原图合规才有出路，动图与关闭压缩直接拦截。
+  if (input.size > limit) {
+    if (input.compressed) return { state: 'compressed', label: '已压缩' }
+    if (input.failed) return { state: 'blocked', label: '压缩失败' }
+    if (input.animated) {
+      return { state: 'blocked', label: input.animatedKind === 'gif' ? 'GIF 超限' : '动图超限' }
+    }
+    if (!autoCompress) return { state: 'blocked', label: `超 ${limitLabelFor(mode)}` }
+    return { state: 'pending', label: '待压缩' }
   }
-  if (!autoCompress) return { state: 'blocked', label: `超 ${mode === 'document' ? 20 : 10}MB` }
+  // 合规区间：压缩是可选项，动图与未超过触发值的图直接放行。
+  if (input.compressed) return { state: 'compressed', label: '已压缩' }
+  if (input.keptOriginal) return { state: 'kept', label: '保留原图' }
+  if (input.animated || !autoCompress || input.size <= threshold) return { state: 'ok', label: '满足' }
   return { state: 'pending', label: '待压缩' }
 }
 

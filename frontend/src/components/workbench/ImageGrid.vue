@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { formatBytes } from '../../utils/image.ts'
-import { evaluateMedia, formatDuration } from '../../utils/media.ts'
+import { compressTriggerLabel, evaluateMedia, formatDuration, limitLabelFor } from '../../utils/media.ts'
 import type { UploadMode } from '../../utils/image.ts'
 import type { UploadStatus } from '../../utils/upload.ts'
 import type { WorkbenchTile } from '../../utils/workbench.ts'
@@ -45,6 +45,7 @@ function badgeOf(item: WorkbenchTile): { state: string; label: string } {
       animated: item.animated,
       animatedKind: item.animatedKind,
       failed: item.compressFailed,
+      keptOriginal: item.keptOriginal,
     },
     props.mode,
     props.autoCompress,
@@ -54,6 +55,7 @@ function badgeOf(item: WorkbenchTile): { state: string; label: string } {
 const BADGE_CLASS: Record<string, string> = {
   ok: 'bg-accent-soft text-accent',
   compressed: 'bg-accent text-white',
+  kept: 'bg-canvas text-muted',
   pending: 'bg-warn-soft text-warn',
   blocked: 'bg-danger text-white',
 }
@@ -162,7 +164,7 @@ function moveBy(index: number, delta: number): void {
         <span
           class="mt-1 inline-block rounded px-1.5 py-0.5 text-[11px] font-medium"
           :class="BADGE_CLASS[badgeOf(item).state]"
-          :title="`${badgeOf(item).label}（当前 ${props.mode === 'photo' ? '10MB' : '20MB'} 上限）`"
+          :title="`${badgeOf(item).label}（${limitLabelFor(props.mode)} 上限，超 ${compressTriggerLabel(props.mode)} 自动压缩，动图保留原样）`"
           >{{ badgeOf(item).label }}</span
         >
       </div>

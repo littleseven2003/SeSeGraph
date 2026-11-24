@@ -20,10 +20,14 @@ const options: { value: UploadMode; label: string }[] = [
 ]
 
 const limitText = computed(() => {
-  if (!props.autoCompress) return '已关闭自动压缩，超限文件需切换模式或移除后才能提交'
-  return props.mode === 'document'
-    ? '原图上限 20MB，超限静态图自动压缩（GIF 除外）；视频上限 20MB'
-    : '单图上限 10MB，超限静态图自动压缩（GIF 除外）；视频上限 20MB'
+  if (props.mode === 'document') {
+    return props.autoCompress
+      ? '单图上限 20MB，超 8MB 自动压缩（动图保留动画）；视频上限 20MB'
+      : '已关闭自动压缩，静态图超过 20MB 无法提交（动图不压缩）；视频上限 20MB'
+  }
+  return props.autoCompress
+    ? '单图上限 10MB，超 2.5MB 自动压缩（动图保留动画）；视频上限 20MB'
+    : '已关闭自动压缩，静态图超过 10MB 无法提交（动图不压缩）；视频上限 20MB'
 })
 const compressLabel = computed(() => (props.autoCompress ? '自动压缩：开' : '自动压缩：关'))
 </script>

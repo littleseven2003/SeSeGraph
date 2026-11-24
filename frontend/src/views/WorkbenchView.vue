@@ -34,13 +34,17 @@ import {
   AUTO_COMPRESS_STORAGE_KEY,
   COMPRESS_TARGET_BYTES,
   COMPRESS_TARGET_DOCUMENT,
+  DOCUMENT_LIMIT_BYTES,
   MAX_VIDEO_BYTES,
+  PHOTO_LIMIT_BYTES,
   checkImportFile,
+  compressFallback,
   compressImage,
   compressionSummary,
   evaluateMedia,
   extractVideoMeta,
   isAnimatedImage,
+  keepOriginalAfterCompress,
   readAutoCompress,
   saveAutoCompress,
   selectionSummary,
@@ -361,11 +365,29 @@ function resetToSource(): void {
     mime: tile.sourceMime ?? tile.mime,
     compressedFrom: undefined,
     compressFailed: undefined,
+    keptOriginal: undefined,
   }))
 }
 
-// compressForSubmit 提交前逐图压缩，失败即中止；成功后返回空串。
-async function compressForSubmit(frozenMode: UploadMode, frozenCompress: boolean): Promise<string> {
+// restoreSource 用原图覆盖单张卡片：压缩无收益或失败但原图合规时保留原图。
+function restoreSource(tile: WorkbenchTile): WorkbenchTile {
+  return {
+    ...tile,
+    blob: tile.sourceBlob ?? tile.blob,
+    size: tile.sourceSize ?? tile.size,
+    mime: tile.sourceMime ?? tile.mime,
+    compressedFrom: undefined,
+    compressFailed: undefined,
+    keptOriginal: true,
+  }
+}
+
+// compressForSubmit 提交前逐图压缩：返回阻塞原因与本轮压缩摘要。
+async function compressForSubmit(
+  frozenMode: UploadMode,
+  frozenCompress: boolean,
+): Promise<{ problem: string; summary: string }> {
+  const limit = frozenMode === 'document' ? DOCUMENT_LIMIT_BYTES : PHOTO_LIMIT_BYTES
   const pending: WorkbenchTile[] = []
   const blocked: string[] = []
   for (const tile of tiles.value) {
@@ -377,6 +399,7 @@ async function compressForSubmit(frozenMode: UploadMode, frozenCompress: boolean
         animated: tile.animated,
         animatedKind: tile.animatedKind,
         failed: tile.compressFailed,
+        keptOriginal: tile.keptOriginal,
       },
       frozenMode,
       frozenCompress,
@@ -388,7 +411,7 @@ async function compressForSubmit(frozenMode: UploadMode, frozenCompress: boolean
     // 定位第一张被拦的卡片，光有汇总数字不够。
     const first = tiles.value.find((tile) => {
       const verdict = evaluateMedia(
-        { kind: tile.kind ?? 'image', size: tile.sourceSize ?? tile.size, compressed: false, animated: tile.animated, animatedKind: tile.animatedKind },
+        { kind: tile.kind ?? 'image', size: tile.sourceSize ?? tile.size, compressed: false, animated: tile.animated, animatedKind: tile.animatedKind, failed: tile.compressFailed },
         mode.value,
         autoCompress.value,
       )
@@ -397,41 +420,65 @@ async function compressForSubmit(frozenMode: UploadMode, frozenCompress: boolean
     if (first) {
       document.getElementById(`tile-${first.id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
     }
-    return `有 ${blocked.length} 项超出当前模式上限且无法自动压缩，请调整模式、开启压缩或移除后再提交（已定位：${blocked[0]}）`
+    return {
+      problem: `有 ${blocked.length} 项超出当前模式上限且无法自动压缩，请调整模式、开启压缩或移除后再提交（已定位：${blocked[0]}）`,
+      summary: '',
+    }
   }
-  if (pending.length === 0) return ''
+  if (pending.length === 0) return { problem: '', summary: '' }
   const updated = tiles.value.slice()
+  const results: CompressResult[] = []
   const failures: string[] = []
+  let kept = 0
   working.value = true
   try {
     for (const [index, tile] of pending.entries()) {
       message.value = `正在压缩（${index + 1} / ${pending.length}）：${tile.name} (${formatBytes(tile.sourceSize ?? tile.size)})…`
+      const position = updated.findIndex((item) => item.id === tile.id)
       try {
         const target = frozenMode === 'document' ? COMPRESS_TARGET_DOCUMENT : COMPRESS_TARGET_BYTES
         const result = await compressImage(tile.sourceBlob ?? tile.blob, target)
-        const position = updated.findIndex((item) => item.id === tile.id)
         if (position >= 0) {
-          updated[position] = {
-            ...tile,
-            compressFailed: undefined,
-            blob: result.blob,
-            size: result.toSize,
-            mime: result.blob.type || 'image/webp',
-            compressedFrom: result.fromSize,
+          if (keepOriginalAfterCompress(tile.sourceSize ?? tile.size, result.toSize, limit)) {
+            // 压缩没有收益且原图合规：保留原图，角标不再停在待压缩。
+            kept += 1
+            updated[position] = restoreSource(tile)
+          } else {
+            updated[position] = {
+              ...tile,
+              compressFailed: undefined,
+              keptOriginal: undefined,
+              blob: result.blob,
+              size: result.toSize,
+              mime: result.blob.type || 'image/webp',
+              compressedFrom: result.fromSize,
+            }
+            results.push(result)
           }
         }
       } catch (error) {
-        const position = updated.findIndex((item) => item.id === tile.id)
-        if (position >= 0) updated[position] = { ...updated[position], compressFailed: true }
-        failures.push(`${tile.name} 压缩失败：${error instanceof Error ? error.message : '请重试'}`)
+        if (position >= 0) {
+          if (compressFallback(tile.sourceSize ?? tile.size, limit) === 'keep') {
+            // 编码失败但原图合规：允许按原图提交，避免整批卡住。
+            kept += 1
+            updated[position] = restoreSource(tile)
+          } else {
+            updated[position] = { ...updated[position], compressFailed: true }
+            const first = updated[position]
+            document.getElementById(`tile-${first.id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+            failures.push(`${tile.name} 压缩失败：${error instanceof Error ? error.message : '请重试'}`)
+          }
+        }
       }
     }
     tiles.value = updated
   } finally {
     working.value = false
   }
-  if (failures.length > 0) return failures.join('；')
-  return ''
+  if (failures.length > 0) {
+    return { problem: `${failures.join('；')}（需压到上限内才能提交，已定位）`, summary: '' }
+  }
+  return { problem: '', summary: compressionSummary(results, kept) }
 }
 
 // snapshotFiles 按原文件名与原始体积生成续传快照，压缩不改变匹配依据。
@@ -524,6 +571,7 @@ function announceStatus(): void {
         animated: tile.animated,
         animatedKind: tile.animatedKind,
         failed: tile.compressFailed,
+        keptOriginal: tile.keptOriginal,
       },
       mode.value,
       autoCompress.value,
@@ -534,7 +582,7 @@ function announceStatus(): void {
   if (blocked > 0) {
     message.value = `有 ${blocked} 项不满足当前模式上限，请开启自动压缩、切换模式或移除后再提交`
   } else if (pending > 0) {
-    message.value = `有 ${pending} 项超过当前模式上限，提交时会自动压缩`
+    message.value = `有 ${pending} 项超过自动压缩触发值，提交时会尝试压缩`
   } else if (tiles.value.length > 0) {
     message.value = `全部 ${tiles.value.length} 项满足当前要求`
   }
@@ -972,10 +1020,13 @@ async function publish(): Promise<void> {
   submitting.value = true
   try {
     const frozen = freezeSubmitStrategy(mode.value, autoCompress.value)
-    const compressionProblem = await compressForSubmit(frozen.mode, frozen.autoCompress)
-    if (compressionProblem !== '') {
-      pushError(compressionProblem)
+    const compression = await compressForSubmit(frozen.mode, frozen.autoCompress)
+    if (compression.problem !== '') {
+      pushError(compression.problem)
       return
+    }
+    if (compression.summary !== '') {
+      message.value = compression.summary
     }
 
     phase.value = 'creating'

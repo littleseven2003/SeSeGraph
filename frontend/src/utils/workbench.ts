@@ -30,6 +30,8 @@ export interface WorkbenchImage {
   animatedKind?: 'gif' | 'other'
   /** 本次提交压缩失败，角标显示具体原因 */
   compressFailed?: boolean
+  /** 压缩无收益或失败但原图合规：保留原图并标记，避免一直停在待压缩 */
+  keptOriginal?: boolean
   /** 原图 MIME，恢复原图时使用 */
   sourceMime?: string
 }

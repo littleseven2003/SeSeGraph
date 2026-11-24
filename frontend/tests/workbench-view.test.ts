@@ -19,3 +19,16 @@ test('桌面右栏用栏位自身吸顶，长列表滚动时仍可操作', () =>
   assert.ok(source.includes('lg:sticky lg:top-[76px]'), '吸顶要挂在栅格项（aside）上')
   assert.equal(source.includes('<div class="sticky top-[76px] space-y-3">'), false, '内容高度撑不满时，内层吸顶不会生效')
 })
+
+test('提交前压缩按模式上限判定，无收益或失败时保留原图', () => {
+  // 压缩是否采用产物、失败能否回落都走同一套纯函数，避免界面与提交各判一次。
+  assert.ok(source.includes('keepOriginalAfterCompress('), '需要按原图合规性与产物体积决定是否保留原图')
+  assert.ok(source.includes('compressFallback('), '压缩失败时按原图是否超限决定保留还是阻断')
+  assert.ok(source.includes('restoreSource('), '保留原图要换回 sourceBlob 与原始体积')
+  const fallback = source.indexOf("compressFallback(tile.sourceSize ?? tile.size, limit)")
+  assert.ok(fallback > 0, '失败回落应使用冻结模式的上限而不是全局设置')
+  // 提交时先冻结模式与开关，再决定阈值，切到别的模式不会改变本轮判定。
+  const frozen = source.indexOf('const compression = await compressForSubmit(frozen.mode, frozen.autoCompress)')
+  assert.ok(frozen > 0, '压缩必须使用冻结后的模式与开关')
+  assert.ok(source.includes('压缩无收益'), '汇总文案需要说明保留原图的数量')
+})

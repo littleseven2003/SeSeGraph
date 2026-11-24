@@ -4,6 +4,7 @@ import { mimeForName } from '../src/utils/image.ts'
 import {
   detailUploadModeLabel,
   COMPRESS_MAX_DIMENSION_SUM,
+  DOCUMENT_LIMIT_BYTES,
   evaluateMedia,
   isAnimatedImage,
   MAX_VIDEO_BYTES,
@@ -14,7 +15,10 @@ import {
   formatDuration,
   limitForMedia,
   mediaKind,
+  compressFallback,
+  keepOriginalAfterCompress,
   needsCompression,
+  PHOTO_LIMIT_BYTES,
   selectionSummary,
   sizeCompare,
 } from '../src/utils/media.ts'
@@ -24,17 +28,20 @@ test('checkMediaFile 区分视频、可压缩静态图与超限输入', () => {
   assert.match(checkMediaFile({ name: 'clip.mp4', size: MAX_VIDEO_BYTES + 1 }, 'photo') ?? '', /20MB/)
   // document 模式同样按 20,000,000 字节限制视频。
   assert.match(checkMediaFile({ name: 'clip.mp4', size: MAX_VIDEO_BYTES + 1 }, 'document') ?? '', /20MB/)
-  // photo 模式下超 10MB 的静态图交给压缩流程，不直接拒绝。
+  // 超触发值的静态图交给压缩流程，photo 与 document 都不直接拒绝。
   assert.equal(checkMediaFile({ name: 'big.jpg', size: 12_000_000 }, 'photo'), null)
+  assert.equal(checkMediaFile({ name: 'big.jpg', size: 25 * 1024 * 1024 }, 'document'), null)
   assert.match(checkMediaFile({ name: 'big.jpg', size: 70 * 1024 * 1024 }, 'photo') ?? '', /64MB/)
-  assert.match(checkMediaFile({ name: 'big.jpg', size: 25 * 1024 * 1024 }, 'document') ?? '', /20MB/)
+  assert.match(checkMediaFile({ name: 'big.jpg', size: 70 * 1024 * 1024 }, 'document') ?? '', /64MB/)
 })
 
-test('needsCompression 只针对 photo 模式的超大静态图', () => {
-  assert.equal(needsCompression('photo', 'a.jpg', 10_000_001), true)
-  assert.equal(needsCompression('photo', 'a.jpg', 10_000_000), false)
-  assert.equal(needsCompression('document', 'a.jpg', 12_000_000), false)
+test('needsCompression 按模式触发值判断静态图', () => {
+  assert.equal(needsCompression('photo', 'a.jpg', 2_500_000), false)
+  assert.equal(needsCompression('photo', 'a.jpg', 2_500_001), true)
+  assert.equal(needsCompression('document', 'a.jpg', 8_000_000), false)
+  assert.equal(needsCompression('document', 'a.jpg', 8_000_001), true)
   assert.equal(needsCompression('photo', 'a.mp4', 12_000_000), false)
+  assert.equal(needsCompression('document', 'a.mp4', 19_000_000), false)
 })
 
 test('limitForMedia 按视频与图片分别给出上限', () => {
@@ -73,6 +80,14 @@ test('压缩汇总与体积对比文案', () => {
   assert.match(summary, /已自动压缩 2 张/)
   assert.match(summary, /→/)
   assert.equal(compressionSummary([]), '')
+  // 压缩无收益的卡片单独计数，不与已压缩张数混在一起。
+  const mixed = compressionSummary(
+    [{ blob: new Blob(), width: 1, height: 1, fromSize: 3_200_000, toSize: 1_800_000 }],
+    2,
+  )
+  assert.match(mixed, /已自动压缩 1 张/)
+  assert.match(mixed, /2 张压缩无收益，保留原图/)
+  assert.equal(compressionSummary([], 3), '3 张压缩无收益，保留原图')
   assert.match(sizeCompare(18_400_000, 6_200_000), /^17\.5 MB → 5\.9 MB$/)
 })
 
@@ -131,30 +146,58 @@ test('40+ 张 JPG 与混合格式的导入与跳过计数', () => {
   assert.equal(skipped['格式不支持'], 2)
 })
 
-test('动图先于开关判定', () => {
+test('动图只按上限放行或提示超限，不进入压缩', () => {
+  // 合规动图即使超过触发值也保留动画，直接按满足放行。
+  assert.equal(evaluateMedia({ kind: 'image', size: 4_000_000, compressed: false, animated: true }, 'photo', true).label, '满足')
+  assert.equal(evaluateMedia({ kind: 'image', size: 9_000_000, compressed: false, animated: true, animatedKind: 'gif' }, 'photo', true).label, '满足')
+  assert.equal(evaluateMedia({ kind: 'image', size: 12_000_000, compressed: false, animated: true }, 'document', true).label, '满足')
   // 超限动图无论开关都标为不可压缩，交给界面显示 GIF 超限/动图超限。
   assert.equal(evaluateMedia({ kind: 'image', size: 12_000_000, compressed: false, animated: true }, 'photo', true).state, 'blocked')
   assert.equal(evaluateMedia({ kind: 'image', size: 12_000_000, compressed: false, animated: true }, 'photo', false).state, 'blocked')
-  assert.equal(evaluateMedia({ kind: 'image', size: 12_000_000, compressed: false }, 'document', true).label, '满足')
+  assert.equal(evaluateMedia({ kind: 'image', size: 21_000_000, compressed: false, animated: true }, 'document', true).label, '动图超限')
 })
 
 test('模式与开关切换后按原图重算', () => {
   const large = { kind: 'image' as const, size: 12_000_000, compressed: false }
   assert.equal(evaluateMedia(large, 'photo', true).state, 'pending')
   assert.equal(evaluateMedia(large, 'photo', false).state, 'blocked')
+  assert.equal(evaluateMedia(large, 'document', true).state, 'pending')
   assert.equal(evaluateMedia(large, 'document', false).label, '满足')
   assert.equal(evaluateMedia({ ...large, compressed: true }, 'photo', true).state, 'compressed')
 })
 
-test('十进制边界与动图角标文案', () => {
-  assert.equal(evaluateMedia({ kind: 'image', size: 10_000_000, compressed: false }, 'photo', true).label, '满足')
+test('触发值等值不变、加一字节进入待压缩', () => {
+  assert.equal(evaluateMedia({ kind: 'image', size: 2_500_000, compressed: false }, 'photo', true).label, '满足')
+  assert.equal(evaluateMedia({ kind: 'image', size: 2_500_001, compressed: false }, 'photo', true).label, '待压缩')
+  assert.equal(evaluateMedia({ kind: 'image', size: 8_000_000, compressed: false }, 'document', true).label, '满足')
+  assert.equal(evaluateMedia({ kind: 'image', size: 8_000_001, compressed: false }, 'document', true).label, '待压缩')
+  // 上限本身仍按十进制：等于上限是合规的，超过上限才必须压缩。
+  assert.equal(evaluateMedia({ kind: 'image', size: 10_000_000, compressed: false }, 'photo', false).label, '满足')
   assert.equal(evaluateMedia({ kind: 'image', size: 10_000_001, compressed: false }, 'photo', true).state, 'pending')
-  assert.equal(evaluateMedia({ kind: 'image', size: 20_000_000, compressed: false }, 'document', true).label, '满足')
+  assert.equal(evaluateMedia({ kind: 'image', size: 20_000_000, compressed: false }, 'document', false).label, '满足')
   assert.equal(evaluateMedia({ kind: 'image', size: 20_000_001, compressed: false }, 'document', true).state, 'pending')
   assert.equal(evaluateMedia({ kind: 'image', size: 10_000_001, compressed: false, animated: true, animatedKind: 'gif' }, 'photo', true).label, 'GIF 超限')
   assert.equal(evaluateMedia({ kind: 'image', size: 10_000_001, compressed: false, animated: true, animatedKind: 'other' }, 'photo', false).label, '动图超限')
   assert.equal(evaluateMedia({ kind: 'image', size: 10_000_001, compressed: false }, 'photo', false).label, '超 10MB')
   assert.equal(evaluateMedia({ kind: 'image', size: 20_000_001, compressed: false }, 'document', false).label, '超 20MB')
+})
+
+test('压缩无收益或失败时保留原图并收起待压缩', () => {
+  // 原图合规且产物不更小：保留原图，角标显示保留原图而不是一直待压缩。
+  assert.equal(keepOriginalAfterCompress(3_000_000, 3_000_000, PHOTO_LIMIT_BYTES), true)
+  assert.equal(keepOriginalAfterCompress(3_000_000, 3_400_000, PHOTO_LIMIT_BYTES), true)
+  assert.equal(keepOriginalAfterCompress(12_000_000, 12_500_000, PHOTO_LIMIT_BYTES), false)
+  assert.equal(keepOriginalAfterCompress(2_500_001, 2_200_000, PHOTO_LIMIT_BYTES), false)
+  assert.equal(evaluateMedia({ kind: 'image', size: 3_000_000, compressed: false, keptOriginal: true }, 'photo', true).label, '保留原图')
+  assert.equal(evaluateMedia({ kind: 'image', size: 3_000_000, compressed: false, keptOriginal: true }, 'photo', true).state, 'kept')
+  // 超上限时不允许保留原图，必须采用压缩产物或明确失败。
+  assert.equal(evaluateMedia({ kind: 'image', size: 12_000_000, compressed: false, keptOriginal: true }, 'photo', true).state, 'pending')
+  assert.equal(evaluateMedia({ kind: 'image', size: 12_000_000, compressed: false, failed: true }, 'photo', true).label, '压缩失败')
+  // 编码失败：原图合规按原图提交，超上限才阻断并定位卡片。
+  assert.equal(compressFallback(3_000_000, PHOTO_LIMIT_BYTES), 'keep')
+  assert.equal(compressFallback(10_000_000, PHOTO_LIMIT_BYTES), 'keep')
+  assert.equal(compressFallback(10_000_001, PHOTO_LIMIT_BYTES), 'block')
+  assert.equal(compressFallback(20_000_001, DOCUMENT_LIMIT_BYTES), 'block')
 })
 
 function pngChunk(type: string, data: Uint8Array): Uint8Array {
