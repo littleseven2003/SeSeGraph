@@ -568,7 +568,8 @@ async function setCover(image: GalleryImage): Promise<void> {
     const thumbnail = await readWithinBudget(
       mediaBudget,
       (inner) => fetchMediaBlob(postId, image.sort_order, inner),
-      async (media) => (await makeCoverFromMedia(media)).dataUrl,
+      // 取帧要吃同一个取消信号，超时后不能留一个还在等的播放器。
+      async (media, inner) => (await makeCoverFromMedia(media, inner)).dataUrl,
       { signal: controller.signal, decodeTimeout: COVER_DECODE_TIMEOUT_MS },
     )
     // 切帖后旧响应不许改新帖。

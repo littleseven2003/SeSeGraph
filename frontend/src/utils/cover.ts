@@ -80,7 +80,9 @@ function toBlob(canvas: OffscreenCanvas | HTMLCanvasElement): Promise<Blob> {
 }
 
 // makeCover 缩放到目标尺寸并编码为 WebP；浏览器不支持时回退 JPEG。
-export async function makeCover(blob: Blob): Promise<CoverResult> {
+// signal 只用于中止视频取帧：图片解码本身不可中断，但会在关键节点检查取消。
+export async function makeCover(blob: Blob, signal?: AbortSignal): Promise<CoverResult> {
+  if (signal?.aborted === true) throw new Error('封面生成已取消')
   const { source, width, height } = await loadImage(blob)
   const target = coverSize(width, height)
   const canvas =
@@ -113,9 +115,11 @@ export async function makeCover(blob: Blob): Promise<CoverResult> {
 }
 
 // makeCoverFromMedia 按媒体类型生成封面：视频取首帧，图片直接缩放。
-export async function makeCoverFromMedia(blob: Blob): Promise<CoverResult> {
+// 取消信号必须一路传到取帧，否则超时后播放器还会留在等待里。
+export async function makeCoverFromMedia(blob: Blob, signal?: AbortSignal): Promise<CoverResult> {
   if (isVideoBlob(blob)) {
-    return makeCover(await captureVideoFrame(blob))
+    const frame = await captureVideoFrame(blob, { signal })
+    return makeCover(frame, signal)
   }
-  return makeCover(blob)
+  return makeCover(blob, signal)
 }

@@ -74,6 +74,7 @@ test('缩略图与换封面共用一个原媒体额度，取流与解码都有�
   assert.ok(source.includes('读取原图超时'), '超时给出可重试提示')
   const loader = source.slice(source.indexOf('function ensureThumbs'), source.indexOf('function requestThumb'))
   assert.ok(loader.includes('renderThumb(media, THUMB_MAX_PIXELS, inner)'), '缩略图解码在额度内且可被中止')
+  assert.ok(source.includes('makeCoverFromMedia(media, inner)'), '换封面解码同样要吃取消信号')
 })
 
 test('切帖或关闭时取消在途取图并清掉忙碌状态', () => {
