@@ -9,6 +9,7 @@ import {
   canContinueUpload,
   canPause,
   canResume,
+  canRetryStore,
   canStop,
   channelStage,
   publishStage,
@@ -57,6 +58,12 @@ async function load(): Promise<void> {
     const result = await fetchTasks(page.value, pageSize, filter.value)
     // 只有最后一次请求可以写入，避免旧筛选或旧页码的结果盖掉新状态。
     if (seq !== requestSeq) return
+    // 命中数在翻页期间变少时，服务端已钳到最后一页；这里再兜一层，避免空白页。
+    if (result.items.length === 0 && result.total > 0 && page.value > 1) {
+      page.value = Math.max(1, Math.ceil(result.total / pageSize))
+      void load()
+      return
+    }
     tasks.value = result.items
     total.value = result.total
     if (result.page !== page.value) page.value = result.page
@@ -256,6 +263,13 @@ onBeforeUnmount(() => {
             >
               继续
             </button>
+            <router-link
+              v-else-if="canRetryStore(task)"
+              :to="{ name: 'workbench', query: { resume: task.id } }"
+              class="inline-flex h-11 items-center rounded-full border border-brand/30 bg-brand-soft px-4 text-xs font-medium text-brand-strong transition hover:border-brand/50"
+            >
+              重试存图
+            </router-link>
             <router-link
               v-else-if="canContinueUpload(task)"
               :to="{ name: 'workbench', query: { resume: task.id } }"

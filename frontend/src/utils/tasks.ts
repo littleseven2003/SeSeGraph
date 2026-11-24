@@ -18,7 +18,10 @@ export interface TaskState {
   publish_state: string
   control_state: string
   image_count: number
+  /** 兼容口径，仅上传加已入频道 */
   stored_count: number
+  /** 真实已接收，含已接收后存频道失败 */
+  received_count: number
   channel_count: number
 }
 
@@ -30,7 +33,7 @@ export interface TaskStage {
 // uploadStage 只看已接收张数：仍在上传与已入频道的图片都算接收成功。
 export function uploadStage(task: TaskState): TaskStage {
   if (task.image_count <= 0) return { value: '无图片', tone: 'muted' }
-  const received = task.stored_count
+  const received = task.received_count
   if (received >= task.image_count) return { value: '已完成', tone: 'ok' }
   if (task.status === 'failed') return { value: `${received}/${task.image_count} 张`, tone: 'danger' }
   return { value: `${received}/${task.image_count} 张`, tone: received > 0 ? 'run' : 'muted' }
@@ -90,8 +93,15 @@ export function canStop(task: TaskState): boolean {
   return task.control_state !== 'stopped' && task.publish_state !== 'published'
 }
 
-// 缺项任务给出直达工作台的续传入口；暂停状态先继续再补传。
+// 只有仍在往服务器传的任务才叫「继续上传」；频道存图失败走重试入口。
 export function canContinueUpload(task: TaskState): boolean {
-  if (task.control_state !== 'running') return false
-  return task.image_count > 0 && task.stored_count < task.image_count
+  if (task.control_state !== 'running' || task.status !== 'uploading') return false
+  return task.image_count > 0 && task.received_count < task.image_count
+}
+
+// 存频道失败的任务已收齐图片，只能在频道侧重试，不再补传文件。
+export function canRetryStore(task: TaskState): boolean {
+  if (task.control_state === 'stopped') return false
+  if (task.status !== 'failed') return false
+  return task.received_count > task.channel_count
 }

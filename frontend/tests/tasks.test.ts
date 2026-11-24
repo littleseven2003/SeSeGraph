@@ -6,6 +6,7 @@ import {
   canContinueUpload,
   canPause,
   canResume,
+  canRetryStore,
   canStop,
   channelStage,
   publishStage,
@@ -19,6 +20,7 @@ const running = {
   control_state: 'running',
   image_count: 3,
   stored_count: 2,
+  received_count: 2,
   channel_count: 1,
 }
 
@@ -40,7 +42,7 @@ test('三阶段各自独立，不互相冒充', () => {
   assert.deepEqual(publishStage(running), { value: '未开始', tone: 'muted' })
 
   // 已存入频道但未发布：前两段完成，第三段仍待发布。
-  const stored = { ...running, stored_count: 3, channel_count: 3, publish_state: 'pending' }
+  const stored = { ...running, stored_count: 3, received_count: 3, channel_count: 3, publish_state: 'pending' }
   assert.deepEqual(uploadStage(stored), { value: '已完成', tone: 'ok' })
   assert.deepEqual(channelStage(stored), { value: '已完成', tone: 'ok' })
   assert.deepEqual(publishStage(stored), { value: '待发布', tone: 'run' })
@@ -52,7 +54,7 @@ test('三阶段各自独立，不互相冒充', () => {
 })
 
 test('传图失败只影响未完成的那一段', () => {
-  const failed = { ...running, status: 'failed', stored_count: 1, channel_count: 0 }
+  const failed = { ...running, status: 'failed', stored_count: 1, received_count: 1, channel_count: 0 }
   assert.deepEqual(uploadStage(failed), { value: '1/3 张', tone: 'danger' })
   assert.deepEqual(channelStage(failed), { value: '0/3 张', tone: 'danger' })
   assert.deepEqual(publishStage(failed), { value: '未开始', tone: 'muted' })
@@ -80,7 +82,7 @@ test('控制入口：已完成无停止，暂停可继续', () => {
   assert.equal(canContinueUpload(paused), false)
   assert.equal(canStop(paused), true)
 
-  const published = { ...running, status: 'completed', publish_state: 'published', stored_count: 3, channel_count: 3 }
+  const published = { ...running, status: 'completed', publish_state: 'published', stored_count: 3, received_count: 3, channel_count: 3 }
   assert.equal(canStop(published), false)
   assert.equal(canContinueUpload(published), false)
 
@@ -91,10 +93,34 @@ test('控制入口：已完成无停止，暂停可继续', () => {
 })
 
 test('空任务与仅发布中的任务也有明确文案', () => {
-  const empty = { ...running, image_count: 0, stored_count: 0, channel_count: 0 }
+  const empty = { ...running, image_count: 0, stored_count: 0, received_count: 0, channel_count: 0 }
   assert.deepEqual(uploadStage(empty), { value: '无图片', tone: 'muted' })
   assert.deepEqual(channelStage(empty), { value: '无图片', tone: 'muted' })
-  const publishing = { ...running, stored_count: 3, channel_count: 3, publish_state: 'publishing' }
+  const publishing = { ...running, stored_count: 3, received_count: 3, channel_count: 3, publish_state: 'publishing' }
   assert.deepEqual(publishStage(publishing), { value: '发布中', tone: 'run' })
   assert.deepEqual(badgeOf(publishing), { label: '发布中', tone: 'run' })
+})
+
+test('存频道失败不倒退已接收，并给出频道重试入口', () => {
+  // 3 张都收下，2 张入库、1 张存频道失败：第一段仍是已完成。
+  const channelFailed = {
+    status: 'failed',
+    publish_state: 'idle',
+    control_state: 'running',
+    image_count: 3,
+    stored_count: 2,
+    received_count: 3,
+    channel_count: 2,
+  }
+  assert.deepEqual(uploadStage(channelFailed), { value: '已完成', tone: 'ok' })
+  assert.deepEqual(channelStage(channelFailed), { value: '2/3 张', tone: 'danger' })
+  // 已收齐的失败任务不再显示「继续上传」，改为频道重试。
+  assert.equal(canContinueUpload(channelFailed), false)
+  assert.equal(canRetryStore(channelFailed), true)
+  // 已停止的任务不给重试入口；仍在上传的任务不叫重试存图。
+  assert.equal(canRetryStore({ ...channelFailed, control_state: 'stopped' }), false)
+  assert.equal(canRetryStore({ ...channelFailed, status: 'uploading' }), false)
+  // 只有正在往服务器传才叫「继续上传」。
+  assert.equal(canContinueUpload({ ...channelFailed, status: 'uploading', received_count: 2 }), true)
+  assert.equal(canContinueUpload({ ...channelFailed, status: 'queued' }), false)
 })

@@ -168,8 +168,10 @@ export interface TaskRow {
   control_state: string
   upload_round: number
   image_count: number
-  /** 已接收张数：已上传加已存入频道，字段名沿用 stored_count */
+  /** 兼容口径：已上传加已存入频道，不含存频道失败项 */
   stored_count: number
+  /** 真实已接收张数：上传、入库与存频道失败都算收到 */
+  received_count: number
   /** 只在服务器、尚未存入频道的张数 */
   uploaded_count: number
   /** 已存入频道张数 */

@@ -24,6 +24,12 @@ test('筛选在窄屏局部横滑且不影响整页', () => {
   assert.ok(setter.indexOf('page.value = 1') < setter.indexOf('void load()'), '回第一页后按新条件加载')
 })
 
+test('筛选后命中变少时回到有效页，不留假空态', () => {
+  assert.ok(source.includes('result.items.length === 0 && result.total > 0'), '空页要先判断是否越界')
+  assert.ok(source.includes('Math.ceil(result.total / pageSize)'), '越界时回到最后一页')
+  assert.ok(source.includes('if (result.page !== page.value) page.value = result.page'), '采用服务端钳制后的页码')
+})
+
 test('旧轮询不会覆盖新筛选结果', () => {
   assert.ok(source.includes('const seq = (requestSeq += 1)'), '每次加载取序号')
   assert.ok(source.includes('if (seq !== requestSeq) return'), '过期响应直接丢弃')
@@ -45,7 +51,9 @@ test('卡片结构、空态与控件热区', () => {
 
 test('任务页复用同一套阶段与控制判定', () => {
   assert.ok(source.includes('from \'../utils/tasks.ts\''), '阶段规则集中在 utils/tasks.ts')
-  for (const name of ['uploadStage', 'channelStage', 'publishStage', 'badgeOf', 'canPause', 'canResume', 'canStop']) {
+  assert.ok(source.includes('canRetryStore(task)'), '频道失败走重试入口')
+  assert.ok(source.includes('重试存图'), '重试文案与补传分开')
+  for (const name of ['uploadStage', 'channelStage', 'publishStage', 'badgeOf', 'canPause', 'canResume', 'canRetryStore', 'canStop']) {
     assert.ok(source.includes(name), `缺少 ${name}`)
   }
   assert.equal(source.includes('statusLabel('), false, '不再用画廊聚合状态冒充单段状态')
