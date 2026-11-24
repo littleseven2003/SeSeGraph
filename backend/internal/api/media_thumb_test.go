@@ -12,15 +12,34 @@ import (
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
 )
 
-// thumbBytes 构造一段带 WebP 头的负载，供接口测试使用。
+// thumbBytes 构造一张 320x240、总长为 size 的静态 WebP，供接口测试使用。
+// 体积超限用例在解析前就被拒绝，此时不要求内容可解析。
 func thumbBytes(size int) []byte {
-	data := make([]byte, size)
-	copy(data, []byte("RIFF"))
-	copy(data[8:], []byte("WEBP"))
-	for index := 12; index < size; index++ {
-		data[index] = byte(index % 251)
+	if size < 34 || (size-34)%2 != 0 {
+		data := make([]byte, size)
+		copy(data, []byte("RIFF"))
+		copy(data[8:], []byte("WEBP"))
+		return data
 	}
+	data := make([]byte, size)
+	copy(data[0:4], []byte("RIFF"))
+	putUint32LE(data[4:8], uint32(size-8))
+	copy(data[8:12], []byte("WEBP"))
+	copy(data[12:16], []byte("VP8L"))
+	putUint32LE(data[16:20], 5)
+	data[20] = 0x2f
+	putUint32LE(data[21:25], uint32(320-1)|uint32(240-1)<<14)
+	copy(data[26:30], []byte("JUNK"))
+	putUint32LE(data[30:34], uint32(size-34))
 	return data
+}
+
+// putUint32LE 按小端写入 32 位无符号整数。
+func putUint32LE(dst []byte, value uint32) {
+	dst[0] = byte(value)
+	dst[1] = byte(value >> 8)
+	dst[2] = byte(value >> 16)
+	dst[3] = byte(value >> 24)
 }
 
 // detailImages 读取详情里的图片清单。
@@ -67,7 +86,8 @@ func TestMediaThumbUploadAndServe(t *testing.T) {
 	}
 
 	body := thumbBytes(2048)
-	path := "/api/posts/" + itoa(postID) + "/media/1/thumb?version=" + images[0].MediaVersion
+	// 与前端一致的查询参数名，确认 v 能被正确读取。
+	path := "/api/posts/" + itoa(postID) + "/media/1/thumb?v=" + images[0].MediaVersion
 	up := env.do(t, http.MethodPut, path, string(body), cookie)
 	if up.Code != http.StatusOK {
 		t.Fatalf("写入小图失败: %d %s", up.Code, up.Body.String())

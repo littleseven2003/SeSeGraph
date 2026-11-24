@@ -69,7 +69,11 @@ func mediaThumbUploadHandler(deps Deps) gin.HandlerFunc {
 		if !ok {
 			return
 		}
-		version := strings.TrimSpace(c.Query("version"))
+		// 读写共用同一查询参数名，避免前端带 v、后端读 version 时被静默拒收。
+		version := strings.TrimSpace(c.Query("v"))
+		if version == "" {
+			version = strings.TrimSpace(c.Query("version"))
+		}
 		if !media.ValidVersion(version) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "缩略图版本不合法"})
 			return
@@ -99,13 +103,19 @@ func mediaThumbUploadHandler(deps Deps) gin.HandlerFunc {
 			return
 		}
 
-		relPath, size, storeErr := media.Store(deps.DataDir, postID, sortOrder, version, body)
+		relPath, size, storeErr := media.Store(deps.DataDir, postID, sortOrder, version, body, thumbCacheLimit(deps, c))
 		switch {
 		case errors.Is(storeErr, media.ErrTooLarge):
 			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "缩略图超过上限"})
 			return
 		case errors.Is(storeErr, media.ErrInvalidThumb):
 			c.JSON(http.StatusBadRequest, gin.H{"error": "缩略图内容不合法"})
+			return
+		case errors.Is(storeErr, media.ErrCacheFull):
+			c.JSON(http.StatusInsufficientStorage, gin.H{"error": "缩略图缓存已满，请调大上限或清理后重试"})
+			return
+		case errors.Is(storeErr, media.ErrDiskFull):
+			c.JSON(http.StatusInsufficientStorage, gin.H{"error": "磁盘余量不足，暂停写入小图"})
 			return
 		case storeErr != nil:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存缩略图失败"})
@@ -134,6 +144,18 @@ func mediaThumbUploadHandler(deps Deps) gin.HandlerFunc {
 			"thumb_url": "/api/posts/" + strconv.FormatInt(postID, 10) + "/media/" + strconv.Itoa(sortOrder) + "/thumb?v=" + version,
 		})
 	}
+}
+
+// thumbCacheLimit 读取当前生效的逐图缓存上限，配置不可用时按不限处理。
+func thumbCacheLimit(deps Deps, c *gin.Context) int64 {
+	if deps.Settings == nil {
+		return 0
+	}
+	effective, err := deps.Settings.Effective(c.Request.Context())
+	if err != nil {
+		return 0
+	}
+	return parseIntValue(effective.MediaThumbLimit.Value)
 }
 
 // thumbTarget 解析路径里的帖子编号与序号。
