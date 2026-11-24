@@ -51,7 +51,7 @@ test('放大气泡用 Teleport 出裁切容器，左侧定位并受安全区约�
   assert.ok(source.includes('bubblePosition('), '定位集中到可测函数')
   assert.ok(source.includes("scroller.value?.addEventListener('scroll', onScrollerScroll"), '滚动时收起')
   assert.ok(source.includes("window.addEventListener('resize', onViewportResize)"), '窗口缩放时重新锚定')
-  assert.ok(source.includes('@click="togglePreview(image.sort_order, $event)"'), '触控可点击预览')
+  assert.ok(source.includes('@click="onThumbClick(image.sort_order, $event)"'), '触控可点击预览')
   assert.ok(source.includes('previewOpenedAt'), '同一次点按的 hover 不会把气泡立刻关掉')
   assert.ok(source.includes('@mouseleave="onThumbLeave"'), '离开事件要区分是否移向另一张缩略图')
   assert.ok(source.includes("next.closest('[data-thumb-order]') !== null"), '移向另一张缩略图时不收起')
@@ -90,4 +90,31 @@ test('缩略图取失败或超时会结束加载态并显示占位', () => {
   assert.ok(source.includes('onFail: (order) => {'), '队列失败要回调界面')
   assert.ok(source.includes('previewFailed.value = true'), '失败后停止转圈')
   assert.ok(source.includes('无法预览该媒体'), '失败显示占位文案')
+})
+
+test('抽屉沿用全局防社死，单次只揭开一项', () => {
+  assert.ok(source.includes('blurred?: boolean'), '抽屉接收全局开关')
+  assert.ok(source.includes('thumbBlurred(image.sort_order)'), '行内小图按项遮罩')
+  assert.ok(source.includes('thumbBlurred(previewOrder)'), '气泡图与行内共用同一条判定')
+  assert.ok(source.includes('revealedOrder'), '只记录被点开的那一项')
+  assert.ok(source.includes('thumbClickAction('), '点按推进交给可测函数')
+  assert.ok(source.includes('TOUCH_REVEAL_MS'), '触屏与键盘按固定时长回遮')
+})
+
+test('离开、滚动、切帖与重新开启都会回遮', () => {
+  const close = source.slice(source.indexOf('function closePreview'))
+  assert.ok(close.slice(0, 400).includes('remask()'), '关闭气泡立即回遮')
+  const open = source.slice(source.indexOf('function openPreview'), source.indexOf('function positionPreview'))
+  assert.ok(open.includes('if (revealedOrder.value !== order) remask()'), '换到另一项时回遮上一项')
+  assert.ok(source.includes('watch(\n  () => props.blurred'), '全局开关变化要清状态')
+  assert.ok(source.includes('clearRevealTimer()'), '卸载时清掉计时')
+  assert.ok(source.includes("trigger === 'pointer'"), '鼠标点按保持到手移开')
+  assert.ok(source.includes('function onDocumentClick'), '点外部要收起气泡')
+  assert.ok(source.includes('Date.now() - previewOpenedAt < 250'), '聚焦引发的滚动不能把刚打开的气泡关掉')
+  assert.ok(source.includes("target.closest('[data-thumb-order]') !== null"), '点缩略图本身交给点按逻辑')
+})
+
+test('画廊把全局开关传给抽屉', () => {
+  const home = readFileSync(new URL('../src/views/HomeView.vue', import.meta.url), 'utf8')
+  assert.ok(home.includes(':blurred="blurEnabled"'), '抽屉与列表共用同一个开关')
 })

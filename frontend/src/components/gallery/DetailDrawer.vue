@@ -7,6 +7,7 @@ import { copyText } from '../../utils/clipboard.ts'
 import { detailUploadModeLabel } from '../../utils/media.ts'
 import { makeCoverFromMedia } from '../../utils/cover.ts'
 import { splitTags } from '../../utils/meta.ts'
+import { TOUCH_REVEAL_MS, resolveRevealTrigger, thumbClickAction } from '../../utils/gallery.ts'
 import { bubblePosition, type BubblePosition } from '../../utils/bubble.ts'
 import {
   MediaBudget,
@@ -45,6 +46,8 @@ import {
 
 const props = defineProps<{
   detail: PostDetail | null
+  /** 全局防社死开关：开启时缩略图与放大气泡默认遮罩，单次点按只揭开一项。 */
+  blurred?: boolean
   loading: boolean
   error: string
   viewsRefreshing?: boolean
@@ -86,6 +89,9 @@ const previewPos = ref<BubblePosition | null>(null)
 const previewLoading = ref(false)
 // 读取失败或超时后不再转圈，直接显示占位说明。
 const previewFailed = ref(false)
+// revealedOrder 记录当前被点按揭开的那一项；0 表示全部保持遮罩。
+const revealedOrder = ref(0)
+let revealTimer: number | undefined
 // 原媒体额度：缩略图与换封面共用，整个抽屉同时只有一个原始媒体请求在途。
 const mediaBudget = new MediaBudget(1)
 let thumbs: ThumbQueue | null = null
@@ -357,6 +363,7 @@ onMounted(() => {
   templateDraft.value = shareTemplate.value
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('resize', onViewportResize)
+  document.addEventListener('click', onDocumentClick)
   scroller.value?.addEventListener('scroll', onScrollerScroll, { passive: true })
   document.body.style.overflow = 'hidden'
   closeButton.value?.focus()
@@ -484,6 +491,8 @@ function openPreview(order: number, event: Event): void {
   const target = event.currentTarget as HTMLElement | null
   if (target === null) return
   thumbs?.unpin(previewOrder.value)
+  // 换到另一项时上一项的揭开立即作废，避免逐项累积暴露。
+  if (revealedOrder.value !== order) remask()
   previewAnchor = target
   previewOrder.value = order
   previewOpenedAt = Date.now()
@@ -510,11 +519,20 @@ function positionPreview(): void {
   if (previewPos.value === null) previewOrder.value = 0
 }
 
+// 全局开关重新打开时立刻回遮，已经清晰的项不会残留。
+watch(
+  () => props.blurred,
+  (value) => {
+    if (value === true) remask()
+  },
+)
+
 watch(previewUrl, (url) => {
   if (url !== '') previewLoading.value = false
 })
 
 function closePreview(): void {
+  remask()
   thumbs?.unpin(previewOrder.value)
   previewOrder.value = 0
   previewPos.value = null
@@ -524,15 +542,63 @@ function closePreview(): void {
   previewOpenedAt = 0
 }
 
-// togglePreview 供触控与键盘使用：点一下打开，再点关闭。
-// 刚由同一次点按的 hover 补发打开时保持展开，避免触屏上一点就闪没。
-function togglePreview(order: number, event: Event): void {
-  if (previewOrder.value === order) {
-    if (Date.now() - previewOpenedAt < 500) return
+// isRevealed 判断某一项此刻是否已被点开；只有当前项能同时影响行内小图与气泡。
+function isRevealed(order: number): boolean {
+  return revealedOrder.value === order
+}
+
+// thumbBlurred 决定该项是否还要盖遮罩：全局开关关闭时一律清晰。
+function thumbBlurred(order: number): boolean {
+  return props.blurred === true && order !== 0 && !isRevealed(order)
+}
+
+function clearRevealTimer(): void {
+  if (revealTimer === undefined) return
+  window.clearTimeout(revealTimer)
+  revealTimer = undefined
+}
+
+// remask 立刻回遮并取消计时，供离开、滚动、切帖与关闭复用。
+function remask(): void {
+  clearRevealTimer()
+  revealedOrder.value = 0
+}
+
+// revealThumb 揭开某一项：鼠标点按保持到手移开，触屏与键盘按固定时长自动回遮。
+function revealThumb(order: number, trigger: string): void {
+  clearRevealTimer()
+  revealedOrder.value = order
+  if (trigger === 'pointer') return
+  revealTimer = window.setTimeout(() => {
+    revealTimer = undefined
+    revealedOrder.value = 0
+  }, TOUCH_REVEAL_MS)
+}
+
+// onThumbClick 按输入来源推进一次状态：
+// 鼠标悬停已开气泡时点按只揭开；触屏与键盘首点看模糊、次点揭开、清晰后再点收起。
+function onThumbClick(order: number, event: MouseEvent): void {
+  const trigger = resolveRevealTrigger(event)
+  const action = thumbClickAction({
+    blurred: props.blurred === true,
+    open: previewOrder.value === order,
+    revealed: isRevealed(order),
+    trigger,
+    // 按下时浏览器会先聚焦按钮并打开气泡，这次手势不算「用户已经看过」。
+    fresh: Date.now() - previewOpenedAt < 400,
+  })
+  if (action === 'close') {
     closePreview()
     return
   }
+  if (action === 'reveal') {
+    revealThumb(order, trigger)
+    return
+  }
+  if (action === 'stay') return
   openPreview(order, event)
+  // 桌面点按顺手揭开；触屏首点只打开模糊气泡，避免一次操作直接露图。
+  if (action === 'open-reveal') revealThumb(order, trigger)
 }
 
 // onThumbLeave 只在真正离开缩略图区时收起气泡：移到另一张缩略图上时，
@@ -543,9 +609,25 @@ function onThumbLeave(event: MouseEvent): void {
   closePreview()
 }
 
+// onDocumentClick 处理「点外部」：点在缩略图之外（含触屏点空白处）就收起气泡并回遮，
+// 缩略图自身的点按由 onThumbClick 推进状态，这里直接放行。
+function onDocumentClick(event: MouseEvent): void {
+  if (previewOrder.value === 0) return
+  const target = event.target as HTMLElement | null
+  if (target === null) return
+  if (target.closest('[data-thumb-order]') !== null) return
+  closePreview()
+}
+
 // onScrollerScroll 滚动时直接收起气泡，比跟随重算更稳，也避免滚动中反复重排。
+// 键盘聚焦会顺带把缩略图滚进视口，这次滚动紧跟打开动作，按重新锚定处理而不是立刻收起。
 function onScrollerScroll(): void {
-  if (previewOrder.value !== 0) closePreview()
+  if (previewOrder.value === 0) return
+  if (Date.now() - previewOpenedAt < 250) {
+    positionPreview()
+    return
+  }
+  closePreview()
 }
 
 function onViewportResize(): void {
@@ -596,8 +678,10 @@ async function setCover(image: GalleryImage): Promise<void> {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('resize', onViewportResize)
+  document.removeEventListener('click', onDocumentClick)
   scroller.value?.removeEventListener('scroll', onScrollerScroll)
   teardownThumbs()
+  clearRevealTimer()
   if (copiedTimer !== undefined) window.clearTimeout(copiedTimer)
   document.body.style.overflow = ''
   // 关闭后把焦点还给打开抽屉的元素，键盘用户不会丢失位置。
@@ -938,13 +1022,14 @@ watch(
                     @mouseleave="onThumbLeave"
                     @focus="openPreview(image.sort_order, $event)"
                     @blur="closePreview"
-                    @click="togglePreview(image.sort_order, $event)"
+                    @click="onThumbClick(image.sort_order, $event)"
                   >
                     <img
                       v-if="thumbUrl(image) !== ''"
                       :src="thumbUrl(image)"
                       alt=""
-                      class="h-full w-full object-cover"
+                      class="h-full w-full object-cover transition"
+                      :class="thumbBlurred(image.sort_order) ? 'scale-125 blur-[6px]' : ''"
                       loading="lazy"
                       decoding="async"
                     />
@@ -1147,7 +1232,13 @@ watch(
             <div
               class="flex aspect-square w-[224px] max-w-full items-center justify-center overflow-hidden rounded-xl bg-canvas"
             >
-              <img v-if="previewUrl !== ''" :src="previewUrl" alt="" class="h-full w-full object-contain" />
+              <img
+                v-if="previewUrl !== ''"
+                :src="previewUrl"
+                alt=""
+                class="h-full w-full object-contain transition"
+                :class="thumbBlurred(previewOrder) ? 'scale-105 blur-[18px]' : ''"
+              />
               <span v-else class="px-3 text-center text-xs text-muted">
                 {{ previewLoading ? '正在读取…' : previewFailed ? '无法预览该媒体' : '暂无缩略图' }}
               </span>

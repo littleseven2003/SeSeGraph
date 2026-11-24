@@ -579,6 +579,7 @@ onBeforeUnmount(() => {
     <DetailDrawer
       v-if="drawerOpen"
       :detail="detail"
+      :blurred="blurEnabled"
       :loading="detailLoading"
       :error="detailError"
       :views-refreshing="viewsRefreshing"

@@ -374,6 +374,30 @@ export function resolveRevealTrigger(event?: { pointerType?: string; detail?: nu
   return 'pointer'
 }
 
+/** ThumbClickAction 是详情抽屉缩略图点按要推进的那一步。 */
+export type ThumbClickAction = 'close' | 'reveal' | 'open' | 'open-reveal' | 'stay'
+
+/**
+ * thumbClickAction 决定点按推进哪一步，保证一轮点按只走一步。
+ * fresh 表示气泡是这次手势里刚被悬停或聚焦打开的：鼠标与键盘把它当作同一动作的下一步，
+ * 触屏则维持「首点只看模糊」，避免按下时补发的 focus 让首点直接露图。
+ */
+export function thumbClickAction(input: {
+  blurred: boolean
+  open: boolean
+  revealed: boolean
+  trigger: RevealTrigger
+  fresh?: boolean
+}): ThumbClickAction {
+  if (!input.open) {
+    return input.blurred && input.trigger === 'pointer' ? 'open-reveal' : 'open'
+  }
+  // 全局关闭时沿用清晰预览：点按只负责开合气泡。
+  if (!input.blurred) return 'close'
+  if (input.fresh === true) return input.trigger === 'touch' ? 'stay' : 'reveal'
+  return input.revealed ? 'close' : 'reveal'
+}
+
 /** shouldRevealOnTap 判断这次点按是否只做临时去模糊：桌面与触屏一致，先点一次揭开，再点才打开。 */
 export function shouldRevealOnTap(input: { blurred: boolean; revealed: boolean }): boolean {
   return input.blurred && !input.revealed
