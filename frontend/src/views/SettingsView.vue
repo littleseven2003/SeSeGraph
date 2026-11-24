@@ -112,6 +112,8 @@ const rebuildPosts = ref<GalleryItem[]>([])
 const rebuildPostId = ref<number | null>(null)
 const rebuildRunning = ref(false)
 const rebuildCancel = ref(false)
+// rebuildAbort 取消正在读取的原媒体，界面不必等当前请求自然结束。
+let rebuildAbort: AbortController | null = null
 const rebuildNote = ref('')
 const rebuildError = ref('')
 const rebuildProgress = reactive({ done: 0, total: 0, failed: 0 })
@@ -357,32 +359,43 @@ async function startRebuild(): Promise<void> {
   rebuildProgress.done = 0
   rebuildProgress.total = 0
   rebuildProgress.failed = 0
+  rebuildAbort = new AbortController()
+  const signal = rebuildAbort.signal
   try {
     await resetPostThumbs(postId)
     const detail = await fetchPostDetail(postId)
     const targets = detail.images.filter((image) => image.status === 'stored')
     rebuildProgress.total = targets.length
     for (const image of targets) {
-      if (rebuildCancel.value) break
+      if (signal.aborted) break
       try {
-        const source = await fetchMediaBlob(postId, image.sort_order)
-        const thumb = await renderThumb(source, THUMB_MAX_PIXELS)
-        await uploadThumb(postId, image.sort_order, image.media_version, thumb)
+        const source = await fetchMediaBlob(postId, image.sort_order, signal)
+        const thumb = await renderThumb(source, THUMB_MAX_PIXELS, signal)
+        if (signal.aborted) break
+        await uploadThumb(postId, image.sort_order, image.media_version, thumb, signal)
       } catch {
-        rebuildProgress.failed += 1
+        // 取消导致的中断不算失败项。
+        if (!signal.aborted) rebuildProgress.failed += 1
       }
-      rebuildProgress.done += 1
+      if (!signal.aborted) rebuildProgress.done += 1
     }
     const okCount = rebuildProgress.done - rebuildProgress.failed
-    rebuildNote.value = rebuildCancel.value
+    rebuildNote.value = signal.aborted
       ? '已取消重建，已完成的项保留小图。'
       : '重建完成：' + String(okCount) + '/' + String(rebuildProgress.total) + ' 项成功。'
     await refreshThumbUsage()
   } catch (cause) {
-    rebuildError.value = cause instanceof Error ? cause.message : '重建失败，请稍后重试'
+    if (!signal.aborted) rebuildError.value = cause instanceof Error ? cause.message : '重建失败，请稍后重试'
   } finally {
+    rebuildAbort = null
     rebuildRunning.value = false
   }
+}
+
+// cancelRebuild 立即中止正在读取的原媒体，并保留已完成项。
+function cancelRebuild(): void {
+  rebuildCancel.value = true
+  rebuildAbort?.abort()
 }
 
 async function load(): Promise<void> {
@@ -572,6 +585,10 @@ function syncActiveFromScroll(): void {
   }
   activeSection.value = current
 }
+
+onBeforeUnmount(() => {
+  rebuildAbort?.abort()
+})
 
 onMounted(() => {
   window.addEventListener('scroll', syncActiveFromScroll, { passive: true })
@@ -1273,7 +1290,7 @@ onBeforeUnmount(() => {
                           v-if="rebuildRunning"
                           type="button"
                           class="h-11 shrink-0 rounded-full border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-surface hover:text-ink"
-                          @click="rebuildCancel = true"
+                          @click="cancelRebuild"
                         >
                           取消
                         </button>
