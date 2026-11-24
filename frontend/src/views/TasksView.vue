@@ -82,8 +82,12 @@ async function load(silent = false): Promise<void> {
   }
 }
 
+// disposed 在离页后置位：此后不再接受新的刷新，迟到的补跑也一起作废。
+let disposed = false
+
 // requestLoad 串行化所有刷新入口：在途时只记一次补跑，避免重叠请求。
 function requestLoad(silent = false): Promise<void> {
+  if (disposed) return Promise.resolve()
   if (inFlight !== null) {
     queued = { silent: queued !== null && queued.silent === false ? false : silent }
     return inFlight
@@ -95,7 +99,8 @@ function requestLoad(silent = false): Promise<void> {
       inFlight = null
       const next = queued
       queued = null
-      if (next !== null) void requestLoad(next.silent)
+      // 隐藏或已离页时不补跑，回到可见时由 visibilitychange 重新发起。
+      if (next !== null && !disposed && document.visibilityState === 'visible') void requestLoad(next.silent)
     }
   })()
   return inFlight
@@ -118,6 +123,11 @@ function stopPolling(): void {
   timer = undefined
 }
 
+// dropQueued 丢掉已排队的补跑：页面隐藏或卸载后不该再发请求。
+function dropQueued(): void {
+  queued = null
+}
+
 // onVisibility 切回页面时立即补拉一次，离开时停掉轮询。
 function onVisibility(): void {
   if (document.visibilityState === 'visible') {
@@ -126,6 +136,7 @@ function onVisibility(): void {
     return
   }
   stopPolling()
+  dropQueued()
 }
 
 function setFilter(next: TaskFilter): void {
@@ -147,7 +158,8 @@ async function control(task: TaskRow, action: 'pause' | 'resume' | 'stop'): Prom
     else if (action === 'resume') await resumeTask(task.id)
     else await stopTask(task.id)
     notice.value = action === 'pause' ? '任务已暂停' : action === 'resume' ? '任务已继续' : '任务已停止'
-    await load()
+    // 控制后的刷新与定时、切筛选、翻页共用同一调度，不与在途请求叠加。
+    await requestLoad(false)
   } catch (cause) {
     error.value = cause instanceof ApiError ? cause.message : '任务操作失败，请稍后重试'
   } finally {
@@ -173,7 +185,9 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  disposed = true
   stopPolling()
+  dropQueued()
   document.removeEventListener('visibilitychange', onVisibility)
 })
 </script>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AppHeader from '../components/AppHeader.vue'
 import DropZone from '../components/workbench/DropZone.vue'
 import ImageGrid from '../components/workbench/ImageGrid.vue'
@@ -147,12 +147,25 @@ let pollTimer: number | undefined
 // 视频预览：只在点击时创建对象 URL，关闭后立刻释放。
 const previewTile = ref<WorkbenchTile | null>(null)
 const previewUrl = ref('')
+// 防社死模糊：封面预览与视频预览默认模糊，点按临时揭开，重新开启开关时复位。
+const coverRevealed = ref(false)
+const previewRevealed = ref(false)
+const coverBlurred = computed(() => blurEnabled.value && !coverRevealed.value)
+const previewBlurred = computed(() => blurEnabled.value && !previewRevealed.value)
+
+// 开关重新开启的瞬间把两处临时揭开记录一起复位，避免切页后“漏光”。
+watch(blurEnabled, (on) => {
+  if (!on) return
+  coverRevealed.value = false
+  previewRevealed.value = false
+})
 
 function openPreview(id: string): void {
   const tile = tiles.value.find((item) => item.id === id)
   if (!tile || tile.kind !== 'video') return
   closePreview()
   previewTile.value = tile
+  previewRevealed.value = false
   previewUrl.value = URL.createObjectURL(tile.blob)
 }
 
@@ -1316,7 +1329,7 @@ onBeforeUnmount(() => {
             </div>
 
             <ImageGrid
-        :blurred="blurEnabled"
+              :blurred="blurEnabled"
               :items="tiles"
               :mode="mode"
               :auto-compress="autoCompress"
@@ -1346,10 +1359,22 @@ onBeforeUnmount(() => {
             <div class="space-y-3">
               <section class="rounded-2xl bg-surface p-3.5 shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
                 <p class="text-xs font-medium text-muted">封面缩略图</p>
-                <div class="mt-2 aspect-[4/3] overflow-hidden rounded bg-canvas">
-                  <img v-if="coverPreview" :src="coverPreview" alt="封面缩略图" class="h-full w-full object-cover" />
-                  <div v-else class="flex h-full items-center justify-center text-xs text-muted">生成中…</div>
-                </div>
+                <button
+                  type="button"
+                  class="mt-2 block aspect-[4/3] w-full overflow-hidden rounded bg-canvas"
+                  :aria-label="coverBlurred ? '点按揭开封面预览' : '封面缩略图'"
+                  @click="coverRevealed = coverBlurred"
+                >
+                  <img
+                    v-if="coverPreview"
+                    :src="coverPreview"
+                    alt="封面缩略图"
+                    class="h-full w-full object-cover transition-[filter] duration-200"
+                    :class="coverBlurred ? 'blur-lg' : ''"
+                  />
+                  <span v-else class="flex h-full items-center justify-center text-xs text-muted">生成中…</span>
+                </button>
+                <p v-if="coverBlurred" class="mt-1 text-[11px] text-muted">防社死模糊已开启，点按封面可临时揭开。</p>
                 <dl class="tnum mt-3 space-y-1 text-xs text-muted">
                   <div class="flex justify-between gap-2">
                     <dt>宽度</dt>
@@ -1458,7 +1483,24 @@ onBeforeUnmount(() => {
         @click.self="closePreview"
       >
         <div class="relative w-full max-w-[720px]">
-          <video :src="previewUrl" controls autoplay playsinline class="w-full rounded-2xl bg-ink" />
+          <video
+            :src="previewUrl"
+            controls
+            autoplay
+            playsinline
+            class="w-full rounded-2xl bg-ink transition-[filter] duration-200"
+            :class="previewBlurred ? 'blur-lg' : ''"
+            @click="previewRevealed = previewBlurred"
+          />
+          <button
+            v-if="previewBlurred"
+            type="button"
+            class="absolute inset-0 flex items-end justify-center rounded-2xl bg-ink/25 pb-3 text-xs font-medium text-white"
+            aria-label="点按揭开视频预览"
+            @click="previewRevealed = true"
+          >
+            防社死模糊已开启，点按画面揭开
+          </button>
           <button
             type="button"
             class="absolute -top-12 right-0 flex h-11 w-11 items-center justify-center rounded-full bg-surface text-lg text-ink shadow transition hover:bg-canvas"

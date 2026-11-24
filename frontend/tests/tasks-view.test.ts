@@ -36,6 +36,18 @@ test('刷新入口共用一个在途请求', () => {
   assert.ok(source.includes('requestLoad(true)'), '后台轮询用静默刷新')
 })
 
+test('控制后的刷新与隐藏、卸载都走同一调度', () => {
+  const control = source.slice(source.indexOf('async function control'), source.indexOf('function updatedText'))
+  assert.ok(control.includes('await requestLoad(false)'), '暂停、继续、停止后按新状态刷新')
+  assert.equal(control.includes('await load()'), false, '不再直调 load 叠加请求')
+  const visibility = source.slice(source.indexOf('function onVisibility'), source.indexOf('function setFilter'))
+  assert.ok(visibility.includes('dropQueued()'), '隐藏时丢弃排队补跑')
+  assert.ok(source.includes('function dropQueued()'), '补跑可以整体清空')
+  assert.ok(source.includes('document.visibilityState === \'visible\''), '隐藏期间不再补跑')
+  const unmount = source.slice(source.indexOf('onBeforeUnmount('))
+  assert.ok(unmount.includes('disposed = true') && unmount.includes('dropQueued()'), '卸载后不再发请求')
+})
+
 test('任务列表为可续传任务提供入口', () => {
   assert.ok(source.includes("name: 'workbench', query: { resume: task.id }"), '续传跳转带任务编号')
   assert.ok(source.includes('canContinueUpload(task)'), '只为可续传任务显示')

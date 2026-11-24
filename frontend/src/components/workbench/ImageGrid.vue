@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { formatBytes } from '../../utils/image.ts'
 import { compressTriggerLabel, evaluateMedia, formatDuration, limitLabelFor } from '../../utils/media.ts'
 import type { UploadMode } from '../../utils/image.ts'
@@ -33,6 +33,14 @@ function toggleReveal(item: WorkbenchTile): void {
 function blurredOf(item: WorkbenchTile): boolean {
   return props.blurred === true && !revealed.value.has(item.id)
 }
+
+// 重新开启防社死时清空临时揭开记录：否则此前揭开过的项会一直露着。
+watch(
+  () => props.blurred,
+  (on) => {
+    if (on) revealed.value.clear()
+  },
+)
 
 const STATUS_TEXT: Record<UploadStatus, string> = {
   pending: '待上传',

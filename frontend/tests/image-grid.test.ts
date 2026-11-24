@@ -31,3 +31,16 @@ test('防社死开启时小图默认模糊并可点按揭开', () => {
   assert.ok(grid.includes('scale-125 blur-[6px]'), '模糊与放大复用图集样式')
   assert.ok(grid.includes('toggleReveal(item)'), '点按单项临时揭开')
 })
+
+test('重新开启防社死时清空临时揭开，旧项不会一直露着', () => {
+  assert.ok(grid.includes('if (on) revealed.value.clear()'), '开关重新开启时复位揭开记录')
+})
+
+test('工作台封面与视频预览同样接入全局模糊', () => {
+  assert.ok(view.includes('coverBlurred'), '封面预览按开关模糊')
+  assert.ok(view.includes('previewBlurred'), '视频预览按开关模糊')
+  assert.ok(view.includes('点按封面可临时揭开'), '封面给出揭开提示')
+  assert.ok(view.includes('点按画面揭开'), '视频给出揭开提示')
+  assert.ok(view.includes('coverRevealed.value = false'), '重新开启开关时封面复位')
+  assert.ok(view.includes('previewRevealed.value = false'), '重新开启开关时视频复位')
+})
