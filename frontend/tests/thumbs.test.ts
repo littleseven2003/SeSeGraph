@@ -2,12 +2,14 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   MediaBudget,
+  MediaReadTimeoutError,
   THUMB_CACHE_LIMIT,
   THUMB_EAGER_MAX_BYTES,
   ThumbQueue,
   canLoadThumb,
   needsExplicitPreview,
   pickEagerOrders,
+  readWithinBudget,
   withTimeout,
 } from '../src/utils/thumbs.ts'
 import { isVideoBlob } from '../src/utils/video-frame.ts'
@@ -185,30 +187,75 @@ test('原媒体额度同时只放行一个任务，其余按顺序等待', async
   assert.equal(budget.pending, 0)
 })
 
-test('缩略图与换封面共用额度时总并发仍为 1', async () => {
+test('缩略图与换封面取图共用额度时总并发仍为 1，解码也在额度内', async () => {
   const budget = new MediaBudget(1)
   let active = 0
   let peak = 0
-  const held = async () => {
-    active += 1
-    peak = Math.max(peak, active)
-    await new Promise((resolve) => setTimeout(resolve, 10))
-    active -= 1
-    return new Blob(['x'])
-  }
-  const queue = new ThumbQueue(async () => await held(), {
+  const read = async (kind: string) =>
+    await readWithinBudget(
+      budget,
+      async () => {
+        active += 1
+        peak = Math.max(peak, active)
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        active -= 1
+        return new Blob([kind])
+      },
+      async () => {
+        // 解码同样计数：如果额度提前释放，这里会出现并发。
+        active += 1
+        peak = Math.max(peak, active)
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        active -= 1
+        return kind
+      },
+      { fetchTimeout: 500, decodeTimeout: 500 },
+    )
+  const results = await Promise.all([read('thumb'), read('cover')])
+  assert.deepEqual(results, ['thumb', 'cover'])
+  assert.equal(peak, 1, '取流与解码都不能并发')
+  assert.equal(budget.running, 0, '结束后额度必须归还')
+})
+
+test('慢响应到点即中断并让出额度，下一项可以继续', async () => {
+  const budget = new MediaBudget(1)
+  let aborted = false
+  const slow = readWithinBudget(
     budget,
-    createUrl: () => 'blob:shared',
-    revokeUrl: () => {},
-  })
-  queue.request(1)
-  queue.request(2)
-  const cover = budget.run(held)
-  await new Promise((resolve) => setTimeout(resolve, 80))
-  await cover
-  assert.equal(peak, 1, '缩略图与封面取图不能同时占两条连接')
-  assert.equal(queue.size, 2)
-  queue.dispose()
+    (_signal) =>
+      // 模拟响应体一直不结束：只有中断信号能结束它。
+      new Promise<Blob>((_resolve, reject) => {
+        _signal.addEventListener('abort', () => {
+          aborted = true
+          reject(new Error('aborted'))
+        })
+      }),
+    async () => 'never',
+    { fetchTimeout: 40, decodeTimeout: 500 },
+  )
+  await assert.rejects(slow, (error: Error) => error instanceof MediaReadTimeoutError && error.message === '读取超时')
+  assert.equal(aborted, true, '超时必须中断在途请求')
+  assert.equal(budget.running, 0, '超时后额度要归还')
+  const next = await readWithinBudget(
+    budget,
+    async () => new Blob(['ok']),
+    async () => 'next',
+    { fetchTimeout: 200, decodeTimeout: 200 },
+  )
+  assert.equal(next, 'next', '下一项应立刻能拿到通道')
+})
+
+test('解码超时同样释放额度并标记为超时错误', async () => {
+  const budget = new MediaBudget(1)
+  const result = readWithinBudget(
+    budget,
+    async () => new Blob(['x']),
+    () => new Promise<string>(() => {}),
+    { fetchTimeout: 200, decodeTimeout: 30 },
+  )
+  await assert.rejects(result, (error: Error) => error instanceof MediaReadTimeoutError)
+  assert.equal(budget.running, 0)
+  assert.equal(budget.pending, 0)
 })
 
 test('排队中被取消的任务不再占用额度', async () => {

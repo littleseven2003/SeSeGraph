@@ -10,12 +10,14 @@ import { splitTags } from '../../utils/meta.ts'
 import { bubblePosition, type BubblePosition } from '../../utils/bubble.ts'
 import {
   MediaBudget,
+  MediaReadTimeoutError,
   ThumbQueue,
+  THUMB_MAX_PIXELS,
   canLoadThumb,
   needsExplicitPreview,
   pickEagerOrders,
+  readWithinBudget,
   renderThumb,
-  withTimeout,
 } from '../../utils/thumbs.ts'
 import {
   DEFAULT_SHARE_TEMPLATE,
@@ -97,8 +99,7 @@ let previewOpenedAt = 0
 // 气泡尺寸固定，方便定位时先按预估高度钳制，加载完成后再校正。
 const PREVIEW_WIDTH = 240
 const PREVIEW_HEIGHT = 264
-// 取流与解码各有一道截止时间：链路卡住时结束等待并给出可重试的提示。
-const MEDIA_FETCH_TIMEOUT_MS = 20_000
+// 封面解码比缩略图稍宽松：视频取帧后再缩放，成品宽 400px。
 const COVER_DECODE_TIMEOUT_MS = 12_000
 
 function togglePlay(code: string): void {
@@ -391,13 +392,14 @@ function ensureThumbs(): ThumbQueue | null {
   const postId = detail.id
   thumbPostId = postId
   thumbs = new ThumbQueue(
-    async (order, signal) => {
-      const media = await fetchMediaBlob(postId, order, signal)
-      if (signal.aborted) throw new Error('已取消')
-      return await withTimeout(renderThumb(media), 8000)
-    },
+    async (order, signal) =>
+      await readWithinBudget(
+        mediaBudget,
+        (inner) => fetchMediaBlob(postId, order, inner),
+        (media, inner) => renderThumb(media, THUMB_MAX_PIXELS, inner),
+        { signal },
+      ),
     {
-      budget: mediaBudget,
       onStore: (order) => {
         if (props.detail?.id !== postId || thumbs === null) return
         const url = thumbs.get(order)
@@ -533,6 +535,14 @@ function togglePreview(order: number, event: Event): void {
   openPreview(order, event)
 }
 
+// onThumbLeave 只在真正离开缩略图区时收起气泡：移到另一张缩略图上时，
+// 浏览器的离开与进入事件顺序不确定，交给那一项的 mouseenter 接管才不会一移就消失。
+function onThumbLeave(event: MouseEvent): void {
+  const next = event.relatedTarget as HTMLElement | null
+  if (next !== null && next.closest('[data-thumb-order]') !== null) return
+  closePreview()
+}
+
 // onScrollerScroll 滚动时直接收起气泡，比跟随重算更稳，也避免滚动中反复重排。
 function onScrollerScroll(): void {
   if (previewOrder.value !== 0) closePreview()
@@ -553,22 +563,15 @@ async function setCover(image: GalleryImage): Promise<void> {
   coverAbort?.abort()
   const controller = new AbortController()
   coverAbort = controller
-  let timedOut = false
-  const timer = window.setTimeout(() => {
-    timedOut = true
-    controller.abort()
-  }, MEDIA_FETCH_TIMEOUT_MS)
   try {
-    // 与缩略图共用一个额度：设置封面期间不会再多开一条原媒体连接。
-    const media = await mediaBudget.run(
-      () => fetchMediaBlob(postId, image.sort_order, controller.signal),
-      controller.signal,
+    // 取流、解码与缩略图共用同一条通道：整段完成才让出额度，慢请求会被截止时间中断。
+    const thumbnail = await readWithinBudget(
+      mediaBudget,
+      (inner) => fetchMediaBlob(postId, image.sort_order, inner),
+      async (media) => (await makeCoverFromMedia(media)).dataUrl,
+      { signal: controller.signal, decodeTimeout: COVER_DECODE_TIMEOUT_MS },
     )
     // 切帖后旧响应不许改新帖。
-    if (props.detail?.id !== postId || controller.signal.aborted) return
-    const thumbnail = (
-      await withTimeout(makeCoverFromMedia(media), COVER_DECODE_TIMEOUT_MS, '生成封面超时')
-    ).dataUrl
     if (props.detail?.id !== postId || controller.signal.aborted) return
     await changeCover(postId, image.sort_order, thumbnail)
     if (props.detail?.id !== postId) return
@@ -576,15 +579,14 @@ async function setCover(image: GalleryImage): Promise<void> {
     emit('saved')
   } catch (cause) {
     if (props.detail?.id !== postId) return
-    // 切帖或关闭引起的取消不再提示，超时则给出可重试的说明。
-    if (controller.signal.aborted && !timedOut) return
-    coverError.value = timedOut
-      ? '读取原图超时，已停止，请稍后重试'
-      : cause instanceof ApiError
-        ? cause.message
-        : '更换封面失败，请稍后重试'
+    // 截止时间到点给出可重试的说明；切帖或关闭引起的取消静默收场。
+    if (cause instanceof MediaReadTimeoutError) {
+      coverError.value = '读取原图超时，已停止，请稍后重试'
+      return
+    }
+    if (controller.signal.aborted) return
+    coverError.value = cause instanceof ApiError ? cause.message : '更换封面失败，请稍后重试'
   } finally {
-    window.clearTimeout(timer)
     if (coverAbort === controller) coverAbort = null
     if (props.detail?.id === postId) coverBusy.value = false
   }
@@ -932,7 +934,7 @@ watch(
                     :aria-label="`放大预览第 ${image.sort_order} 项`"
                     :aria-expanded="previewOrder === image.sort_order"
                     @mouseenter="openPreview(image.sort_order, $event)"
-                    @mouseleave="closePreview"
+                    @mouseleave="onThumbLeave"
                     @focus="openPreview(image.sort_order, $event)"
                     @blur="closePreview"
                     @click="togglePreview(image.sort_order, $event)"

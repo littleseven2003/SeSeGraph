@@ -53,6 +53,8 @@ test('放大气泡用 Teleport 出裁切容器，左侧定位并受安全区约�
   assert.ok(source.includes("window.addEventListener('resize', onViewportResize)"), '窗口缩放时重新锚定')
   assert.ok(source.includes('@click="togglePreview(image.sort_order, $event)"'), '触控可点击预览')
   assert.ok(source.includes('previewOpenedAt'), '同一次点按的 hover 不会把气泡立刻关掉')
+  assert.ok(source.includes('@mouseleave="onThumbLeave"'), '离开事件要区分是否移向另一张缩略图')
+  assert.ok(source.includes("next.closest('[data-thumb-order]') !== null"), '移向另一张缩略图时不收起')
   assert.ok(source.includes("teardownThumbs()"), '关闭或切帖释放缩略图与观察器')
 })
 
@@ -63,17 +65,21 @@ test('窄屏点按预览在视口内居中，不再返回空', () => {
 
 test('缩略图与换封面共用一个原媒体额度，取流与解码都有截止时间', () => {
   assert.ok(source.includes('new MediaBudget(1)'), '整个抽屉只开一条原始媒体通道')
-  assert.ok(source.includes('budget: mediaBudget'), '缩略图队列使用同一额度')
-  assert.ok(source.includes('mediaBudget.run('), '换封面取图也走同一额度')
-  assert.ok(source.includes('MEDIA_FETCH_TIMEOUT_MS'), '取流有截止时间')
-  assert.ok(source.includes('COVER_DECODE_TIMEOUT_MS'), '解码有截止时间')
+  const reads = source.split('readWithinBudget(').length - 1
+  assert.equal(reads, 2, '缩略图与换封面都走同一段「取流 + 解码」封装')
+  for (const chunk of source.split('readWithinBudget(').slice(1)) {
+    assert.ok(chunk.slice(0, 400).includes('mediaBudget'), '两处都必须带同一个额度')
+  }
+  assert.ok(source.includes('MediaReadTimeoutError'), '截止时间到点单独上报')
   assert.ok(source.includes('读取原图超时'), '超时给出可重试提示')
+  const loader = source.slice(source.indexOf('function ensureThumbs'), source.indexOf('function requestThumb'))
+  assert.ok(loader.includes('renderThumb(media, THUMB_MAX_PIXELS, inner)'), '缩略图解码在额度内且可被中止')
 })
 
 test('切帖或关闭时取消在途取图并清掉忙碌状态', () => {
   const cover = source.slice(source.indexOf('async function setCover'), source.indexOf('onBeforeUnmount(() => {'))
-  assert.ok(cover.includes('controller.abort()'), '切帖与关闭时中断取流')
-  assert.ok(cover.includes("if (controller.signal.aborted && !timedOut) return"), '取消不弹错误')
+  assert.ok(cover.includes('coverAbort?.abort()'), '切帖与关闭时中断取流')
+  assert.ok(cover.includes('if (controller.signal.aborted) return'), '取消不弹错误')
   assert.ok(source.includes('function resetCover()'), '统一复位封面状态')
   assert.ok(source.includes('coverAbort?.abort()'), '复位时取消在途请求')
   assert.ok(source.includes('coverBusy.value = false'), '复位后按钮恢复可用')

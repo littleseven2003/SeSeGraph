@@ -5,6 +5,8 @@ export interface FrameOptions {
   maxPixels?: number
   /** 截取位置占时长的比例，默认避开开头黑场。 */
   position?: number
+  /** 取消信号：超时或切帖时中止等待，并清理播放器与对象 URL。 */
+  signal?: AbortSignal
 }
 
 // isVideoBlob 判断媒体是否为视频，决定是否需要先取帧再缩放。
@@ -17,25 +19,50 @@ export async function captureVideoFrame(blob: Blob, options: FrameOptions = {}):
   if (typeof document === 'undefined') throw new Error('当前环境无法截取视频画面')
   const maxPixels = options.maxPixels ?? 0
   const position = options.position ?? 0.1
+  const signal = options.signal
+  if (signal?.aborted === true) throw new Error('视频取帧已取消')
   const url = URL.createObjectURL(blob)
   const video = document.createElement('video')
   video.preload = 'auto'
   video.muted = true
   video.playsInline = true
-  try {
-    await new Promise<void>((resolve, reject) => {
-      video.onloadedmetadata = () => resolve()
-      video.onerror = () => reject(new Error('视频读取失败'))
-      video.src = url
+  // wait 让每个可能长期挂起的步骤都能被取消信号打断，打断后由 finally 清理。
+  const wait = async <T>(task: Promise<T>): Promise<T> => {
+    if (signal === undefined) return await task
+    return await new Promise<T>((resolve, reject) => {
+      const onAbort = (): void => reject(new Error('视频取帧已取消'))
+      const done = (): void => signal.removeEventListener('abort', onAbort)
+      signal.addEventListener('abort', onAbort, { once: true })
+      void task.then(
+        (value) => {
+          done()
+          resolve(value)
+        },
+        (error) => {
+          done()
+          reject(error)
+        },
+      )
     })
+  }
+  try {
+    await wait(
+      new Promise<void>((resolve, reject) => {
+        video.onloadedmetadata = () => resolve()
+        video.onerror = () => reject(new Error('视频读取失败'))
+        video.src = url
+      }),
+    )
     const duration = Number.isFinite(video.duration) ? video.duration : 0
     const seekTo = duration > 0 ? Math.min(duration * position, 1) : 0
     if (seekTo > 0) {
-      await new Promise<void>((resolve, reject) => {
-        video.onseeked = () => resolve()
-        video.onerror = () => reject(new Error('视频定位失败'))
-        video.currentTime = seekTo
-      })
+      await wait(
+        new Promise<void>((resolve, reject) => {
+          video.onseeked = () => resolve()
+          video.onerror = () => reject(new Error('视频定位失败'))
+          video.currentTime = seekTo
+        }),
+      )
     }
     const width = video.videoWidth
     const height = video.videoHeight
@@ -56,6 +83,10 @@ export async function captureVideoFrame(blob: Blob, options: FrameOptions = {}):
       )
     })
   } finally {
+    // 取消或超时同样走这里：断开数据源、停掉加载并回收对象 URL。
+    video.onloadedmetadata = null
+    video.onseeked = null
+    video.onerror = null
     video.removeAttribute('src')
     video.load()
     URL.revokeObjectURL(url)

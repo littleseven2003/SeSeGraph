@@ -89,6 +89,82 @@ interface WaitingTask {
   onAbort: (() => void) | null
 }
 
+// 原媒体的统一截止时间：取流与解码各自封顶，超时立即中断并让出共享额度。
+export const MEDIA_FETCH_TIMEOUT_MS = 20_000
+export const THUMB_DECODE_TIMEOUT_MS = 8_000
+
+export interface MediaReadOptions {
+  /** 取流截止时间，超时中断请求而不是干等响应体读完。 */
+  fetchTimeout?: number
+  /** 解码截止时间，超时中止取帧并释放播放器与对象 URL。 */
+  decodeTimeout?: number
+  /** 外部取消信号：切帖、关抽屉或换封面被新的操作顶掉。 */
+  signal?: AbortSignal
+}
+
+// MediaReadTimeoutError 标记截止时间到点导致的失败，界面据此给出可重试的提示。
+export class MediaReadTimeoutError extends Error {
+  constructor(stage: 'fetch' | 'decode') {
+    super(stage === 'fetch' ? '读取超时' : '解码超时')
+    this.name = 'MediaReadTimeoutError'
+  }
+}
+
+// readWithinBudget 在共享额度内完成一次「取流 + 解码」。
+// 额度覆盖整段过程：慢响应会在截止时间被中断，下一个任务立刻能拿到通道。
+export async function readWithinBudget<T>(
+  budget: MediaBudget,
+  load: (signal: AbortSignal) => Promise<Blob>,
+  decode: (media: Blob, signal: AbortSignal) => Promise<T>,
+  options: MediaReadOptions = {},
+): Promise<T> {
+  const fetchTimeout = options.fetchTimeout ?? MEDIA_FETCH_TIMEOUT_MS
+  const decodeTimeout = options.decodeTimeout ?? THUMB_DECODE_TIMEOUT_MS
+  const controller = new AbortController()
+  const forward = (): void => controller.abort()
+  if (options.signal?.aborted === true) controller.abort()
+  else options.signal?.addEventListener('abort', forward, { once: true })
+  try {
+    return await budget.run(async () => {
+      let timedOut = false
+      // 计时从真正拿到通道开始，排队时间不计入取流截止时间。
+      const fetchTimer = setTimeout(() => {
+        timedOut = true
+        controller.abort()
+      }, fetchTimeout)
+      try {
+        let media: Blob
+        try {
+          media = await load(controller.signal)
+        } catch (cause) {
+          // 截止时间到点就按超时上报，其余错误原样抛出。
+          if (timedOut) throw new MediaReadTimeoutError('fetch')
+          throw cause
+        }
+        if (controller.signal.aborted) throw new Error('已取消')
+        clearTimeout(fetchTimer)
+        // 解码也占用额度：小机器上不会一边读一边解两张大图。
+        const decodeTimer = setTimeout(() => {
+          timedOut = true
+          controller.abort()
+        }, decodeTimeout)
+        try {
+          return await withTimeout(decode(media, controller.signal), decodeTimeout, '解码超时')
+        } catch (cause) {
+          if (timedOut) throw new MediaReadTimeoutError('decode')
+          throw cause
+        } finally {
+          clearTimeout(decodeTimer)
+        }
+      } finally {
+        clearTimeout(fetchTimer)
+      }
+    }, controller.signal)
+  } finally {
+    options.signal?.removeEventListener('abort', forward)
+  }
+}
+
 export interface ThumbEntry {
   url: string
   order: number
@@ -104,8 +180,6 @@ export interface ThumbQueueOptions {
   onStore?: (order: number) => void
   /** 单张读取失败或超时后回调，界面据此结束加载动画并显示占位。 */
   onFail?: (order: number) => void
-  /** 与换封面共用的原媒体额度；不传时由队列自己串行。 */
-  budget?: MediaBudget
 }
 
 // ThumbQueue 串行回源并做 LRU 淘汰，任一时刻最多一个请求在途。
@@ -118,7 +192,6 @@ export class ThumbQueue {
   private readonly pinned = new Set<number>()
   private readonly onStore: ((order: number) => void) | undefined
   private readonly onFail: ((order: number) => void) | undefined
-  private readonly budget: MediaBudget | undefined
   private readonly waiting: number[] = []
   private current: AbortController | null = null
   private running = false
@@ -132,7 +205,6 @@ export class ThumbQueue {
     this.revokeUrl = options.revokeUrl ?? ((url) => URL.revokeObjectURL(url))
     this.onStore = options.onStore
     this.onFail = options.onFail
-    this.budget = options.budget
   }
 
   /** size 返回当前缓存的缩略图数量。 */
@@ -175,11 +247,8 @@ export class ThumbQueue {
         const controller = new AbortController()
         this.current = controller
         try {
-          // 与换封面共用额度：整条链路任何时刻只有一个原始媒体请求。
-          const blob =
-            this.budget === undefined
-              ? await this.loader(order, controller.signal)
-              : await this.budget.run(() => this.loader(order, controller.signal), controller.signal)
+          // 取流与解码由加载器统一放进共享额度，队列本身只负责串行排队。
+          const blob = await this.loader(order, controller.signal)
           if (this.disposed || controller.signal.aborted) continue
           this.store(order, blob)
         } catch {
@@ -248,11 +317,11 @@ export function pickEagerOrders(visible: number[], images: GalleryImage[]): numb
 
 // renderThumb 把原图缩到最长边 max 的 WebP：只保留小体积 Blob，原始大图随即释放。
 // 视频先按目标尺寸截一帧，再走同一条缩放流程；不会把视频交给图片解码器。
-export async function renderThumb(blob: Blob, max = THUMB_MAX_PIXELS): Promise<Blob> {
+export async function renderThumb(blob: Blob, max = THUMB_MAX_PIXELS, signal?: AbortSignal): Promise<Blob> {
   if (typeof createImageBitmap !== 'function' || typeof document === 'undefined') {
     throw new Error('当前浏览器不支持缩略图')
   }
-  const still = isVideoBlob(blob) ? await captureVideoFrame(blob, { maxPixels: max }) : blob
+  const still = isVideoBlob(blob) ? await captureVideoFrame(blob, { maxPixels: max, signal }) : blob
   const bitmap = await decodeStill(still, max)
   try {
     const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height))
