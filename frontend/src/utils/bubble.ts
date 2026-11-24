@@ -1,4 +1,4 @@
-// 缩略图放大气泡的定位：放在缩略图左侧，纵向钳在视口安全区内。
+// 缩略图放大气泡的定位：桌面贴在缩略图左侧，窄屏落到视口内居中，纵向一律钳在安全区。
 export interface BubbleAnchor {
   left: number
   top: number
@@ -12,23 +12,28 @@ export interface BubbleMetrics {
   bubbleHeight: number
   gap?: number
   margin?: number
-  minViewport?: number
+  /** 视口窄于该宽度时不再硬挤左侧，改用视口内居中预览。 */
+  compactWidth?: number
 }
 
-export interface BubblePosition {
-  right: number
-  top: number
-}
+export type BubblePosition =
+  | { side: 'left'; right: number; top: number }
+  | { side: 'center'; left: number; top: number; width: number }
 
-// bubblePosition 返回气泡的 right/top；左侧空间不足或窄屏时返回 null，不硬挤。
+// bubblePosition 返回气泡的贴边方式与坐标；视口尺寸不可用时返回 null。
 export function bubblePosition(anchor: BubbleAnchor, metrics: BubbleMetrics): BubblePosition | null {
   const gap = metrics.gap ?? 12
   const margin = metrics.margin ?? 16
-  const minViewport = metrics.minViewport ?? 640
-  if (metrics.viewportWidth < minViewport) return null
-  // 缩略图左侧放不下气泡就不弹，避免压住抽屉或超出窗口。
-  if (anchor.left - gap - metrics.bubbleWidth < margin) return null
-  const maxTop = metrics.viewportHeight - metrics.bubbleHeight - margin
-  const top = Math.min(Math.max(anchor.top, margin), Math.max(margin, maxTop))
-  return { right: metrics.viewportWidth - anchor.left + gap, top }
+  const compactWidth = metrics.compactWidth ?? 640
+  if (metrics.viewportWidth <= 0 || metrics.viewportHeight <= 0) return null
+  // 气泡最多占到安全区宽度，窄屏时按实际可用宽度收缩。
+  const width = Math.min(metrics.bubbleWidth, Math.max(1, metrics.viewportWidth - margin * 2))
+  const height = Math.min(metrics.bubbleHeight, Math.max(1, metrics.viewportHeight - margin * 2))
+  const top = Math.min(Math.max(anchor.top, margin), Math.max(margin, metrics.viewportHeight - height - margin))
+  // 左侧放得下就贴左侧，和抽屉列表保持一条视线。
+  if (metrics.viewportWidth >= compactWidth && anchor.left - gap - width >= margin) {
+    return { side: 'left', right: metrics.viewportWidth - anchor.left + gap, top }
+  }
+  // 窄屏或左侧空间不足时落到视口内居中：触控点按同样能看到预览，也不会被抽屉裁切。
+  return { side: 'center', left: Math.max(margin, Math.round((metrics.viewportWidth - width) / 2)), top, width }
 }

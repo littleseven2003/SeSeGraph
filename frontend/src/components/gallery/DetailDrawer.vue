@@ -9,6 +9,7 @@ import { makeCoverFromMedia } from '../../utils/cover.ts'
 import { splitTags } from '../../utils/meta.ts'
 import { bubblePosition, type BubblePosition } from '../../utils/bubble.ts'
 import {
+  MediaBudget,
   ThumbQueue,
   canLoadThumb,
   needsExplicitPreview,
@@ -81,13 +82,22 @@ const thumbUrls = ref<Map<number, string>>(new Map())
 const previewOrder = ref(0)
 const previewPos = ref<BubblePosition | null>(null)
 const previewLoading = ref(false)
+// 读取失败或超时后不再转圈，直接显示占位说明。
+const previewFailed = ref(false)
+// 原媒体额度：缩略图与换封面共用，整个抽屉同时只有一个原始媒体请求在途。
+const mediaBudget = new MediaBudget(1)
 let thumbs: ThumbQueue | null = null
+// coverAbort 用于切帖或关闭时取消在途的封面取图。
+let coverAbort: AbortController | null = null
 let thumbPostId = 0
 let observer: IntersectionObserver | null = null
 let previewAnchor: HTMLElement | null = null
 // 气泡尺寸固定，方便定位时先按预估高度钳制，加载完成后再校正。
 const PREVIEW_WIDTH = 240
 const PREVIEW_HEIGHT = 264
+// 取流与解码各有一道截止时间：链路卡住时结束等待并给出可重试的提示。
+const MEDIA_FETCH_TIMEOUT_MS = 20_000
+const COVER_DECODE_TIMEOUT_MS = 12_000
 
 function togglePlay(code: string): void {
   playingCode.value = playingCode.value === code ? '' : code
@@ -154,6 +164,20 @@ const previewSizeText = computed(() => {
   if (detail === null || previewOrder.value === 0) return ''
   const image = detail.images.find((item) => item.sort_order === previewOrder.value)
   return image === undefined ? '' : formatFileSize(image.file_size)
+})
+
+// previewStyle 把定位结果转成内联样式：桌面贴左侧，窄屏居中且占满安全区宽度。
+const previewStyle = computed<Record<string, string>>(() => {
+  const position = previewPos.value
+  if (position === null) return {}
+  const style: Record<string, string> = { top: position.top + 'px' }
+  if (position.side === 'left') {
+    style.right = position.right + 'px'
+    return style
+  }
+  style.left = position.left + 'px'
+  style.width = position.width + 'px'
+  return style
 })
 
 function imageLink(image: { short_code: string; status: string }): string {
@@ -279,6 +303,11 @@ function focusable(): HTMLElement[] {
 
 function onKeydown(event: KeyboardEvent): void {
   if (event.key === 'Escape') {
+    // 有预览气泡时先收起气泡，再按一次才关抽屉。
+    if (previewOrder.value !== 0) {
+      closePreview()
+      return
+    }
     emit('close')
     return
   }
@@ -340,6 +369,15 @@ function teardownThumbs(): void {
   thumbPostId = 0
   thumbUrls.value = new Map()
   closePreview()
+  resetCover()
+}
+
+// resetCover 清掉上一帖的换封面状态：取消在途取流，按钮回到可用。
+function resetCover(): void {
+  coverAbort?.abort()
+  coverAbort = null
+  coverBusy.value = false
+  coverError.value = ''
 }
 
 // ensureThumbs 为当前帖子建一条串行队列：同一时刻最多回源一张管理员媒体。
@@ -357,6 +395,7 @@ function ensureThumbs(): ThumbQueue | null {
       return await withTimeout(renderThumb(media), 8000)
     },
     {
+      budget: mediaBudget,
       onStore: (order) => {
         if (props.detail?.id !== postId || thumbs === null) return
         const url = thumbs.get(order)
@@ -365,6 +404,13 @@ function ensureThumbs(): ThumbQueue | null {
         const next = new Map(thumbUrls.value)
         next.set(order, url)
         thumbUrls.value = next
+      },
+      onFail: (order) => {
+        if (props.detail?.id !== postId) return
+        // 失败只影响正在看的那一项，其余行继续按需加载。
+        if (previewOrder.value !== order) return
+        previewLoading.value = false
+        previewFailed.value = true
       },
     },
   )
@@ -438,6 +484,7 @@ function openPreview(order: number, event: Event): void {
   previewOrder.value = order
   thumbs?.pin(order)
   previewLoading.value = !thumbUrls.value.has(order)
+  previewFailed.value = false
   requestThumb(order, true)
   positionPreview()
 }
@@ -467,6 +514,7 @@ function closePreview(): void {
   previewOrder.value = 0
   previewPos.value = null
   previewLoading.value = false
+  previewFailed.value = false
   previewAnchor = null
 }
 
@@ -488,7 +536,7 @@ function onViewportResize(): void {
   if (previewOrder.value !== 0) positionPreview()
 }
 
-// setCover 把某一张设为封面：先取管理员媒体生成新缩略图，再交给现有换封面接口。
+// setCover 把某一张设为封面：先按共享额度取管理员媒体生成新缩略图，再交给现有换封面接口。
 async function setCover(image: GalleryImage): Promise<void> {
   const detail = props.detail
   if (detail === null || coverBusy.value) return
@@ -496,18 +544,42 @@ async function setCover(image: GalleryImage): Promise<void> {
   const postId = detail.id
   coverBusy.value = true
   coverError.value = ''
+  coverAbort?.abort()
+  const controller = new AbortController()
+  coverAbort = controller
+  let timedOut = false
+  const timer = window.setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, MEDIA_FETCH_TIMEOUT_MS)
   try {
-    const media = await fetchMediaBlob(postId, image.sort_order)
+    // 与缩略图共用一个额度：设置封面期间不会再多开一条原媒体连接。
+    const media = await mediaBudget.run(
+      () => fetchMediaBlob(postId, image.sort_order, controller.signal),
+      controller.signal,
+    )
     // 切帖后旧响应不许改新帖。
-    if (props.detail?.id !== postId) return
-    const thumbnail = (await makeCoverFromMedia(media)).dataUrl
+    if (props.detail?.id !== postId || controller.signal.aborted) return
+    const thumbnail = (
+      await withTimeout(makeCoverFromMedia(media), COVER_DECODE_TIMEOUT_MS, '生成封面超时')
+    ).dataUrl
+    if (props.detail?.id !== postId || controller.signal.aborted) return
     await changeCover(postId, image.sort_order, thumbnail)
     if (props.detail?.id !== postId) return
+    coverError.value = ''
     emit('saved')
   } catch (cause) {
     if (props.detail?.id !== postId) return
-    coverError.value = cause instanceof ApiError ? cause.message : '更换封面失败，请稍后重试'
+    // 切帖或关闭引起的取消不再提示，超时则给出可重试的说明。
+    if (controller.signal.aborted && !timedOut) return
+    coverError.value = timedOut
+      ? '读取原图超时，已停止，请稍后重试'
+      : cause instanceof ApiError
+        ? cause.message
+        : '更换封面失败，请稍后重试'
   } finally {
+    window.clearTimeout(timer)
+    if (coverAbort === controller) coverAbort = null
     if (props.detail?.id === postId) coverBusy.value = false
   }
 }
@@ -1060,12 +1132,16 @@ watch(
         <div
           v-if="previewOrder !== 0 && previewPos !== null"
           class="pointer-events-none fixed z-50"
-          :style="{ right: previewPos.right + 'px', top: previewPos.top + 'px' }"
+          :style="previewStyle"
         >
           <div class="rounded-2xl border border-line bg-surface p-2 shadow-lg">
-            <div class="flex h-[224px] w-[224px] items-center justify-center overflow-hidden rounded-xl bg-canvas">
+            <div
+              class="flex aspect-square w-[224px] max-w-full items-center justify-center overflow-hidden rounded-xl bg-canvas"
+            >
               <img v-if="previewUrl !== ''" :src="previewUrl" alt="" class="h-full w-full object-contain" />
-              <span v-else class="text-xs text-muted">{{ previewLoading ? '正在读取…' : '暂无缩略图' }}</span>
+              <span v-else class="px-3 text-center text-xs text-muted">
+                {{ previewLoading ? '正在读取…' : previewFailed ? '无法预览该媒体' : '暂无缩略图' }}
+              </span>
             </div>
             <p class="mt-1.5 px-1 text-[11px] text-muted tnum">第 {{ previewOrder }} 项 · {{ previewSizeText }}</p>
           </div>
