@@ -624,6 +624,17 @@ onBeforeUnmount(() => {
     <AppHeader />
 
     <main class="mx-auto w-full max-w-[1240px] px-5 py-7">
+      <nav class="mb-4 flex gap-2 overflow-x-auto overscroll-x-contain pb-1 lg:hidden" aria-label="设置分组">
+        <a
+          v-for="item in SETTING_NAV"
+          :key="'narrow-' + item.id"
+          :href="'#' + item.id"
+          class="inline-flex h-11 shrink-0 items-center rounded-full border px-3.5 text-xs font-medium transition"
+          :class="activeSection === item.id ? 'border-ink bg-ink text-brand-ink' : 'border-line bg-surface text-muted hover:bg-canvas hover:text-ink'"
+        >
+          {{ item.label }}
+        </a>
+      </nav>
       <div class="flex items-start gap-8">
       <nav class="sticky top-24 hidden w-[168px] shrink-0 lg:block" aria-label="设置分组">
         <ul class="space-y-0.5">
