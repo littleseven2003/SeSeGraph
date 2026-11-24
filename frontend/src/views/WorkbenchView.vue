@@ -1031,15 +1031,19 @@ async function refreshServerProgress(): Promise<void> {
 const controlBusy = ref(false)
 
 async function runControl(action: 'pause' | 'resume' | 'stop'): Promise<void> {
-  if (postId.value === 0 || controlBusy.value) return
+  const target = postId.value
+  if (target === 0 || controlBusy.value) return
+  const round = initSeq
   controlBusy.value = true
   try {
     // 主动暂停或停止时先结束在途上传；服务端仍会复核轮次。
     if (action !== 'resume' && uploadAbort !== null) uploadAbort.abort()
-    if (action === 'pause') await pauseTask(postId.value)
-    else if (action === 'resume') await resumeTask(postId.value)
-    else await stopTask(postId.value)
+    if (action === 'pause') await pauseTask(target)
+    else if (action === 'resume') await resumeTask(target)
+    else await stopTask(target)
+    if (round !== initSeq || postId.value !== target) return
     await refreshServerProgress()
+    if (round !== initSeq || postId.value !== target) return
     if (action === 'stop') {
       phase.value = 'idle'
       message.value = '任务已停止，未完成的项不再上传'
@@ -1049,7 +1053,9 @@ async function runControl(action: 'pause' | 'resume' | 'stop'): Promise<void> {
       message.value = '任务已继续，可点「继续上传」补齐缺项'
     }
   } catch (error) {
-    pushError(error instanceof ApiError ? error.message : '任务操作失败，请稍后重试')
+    if (round === initSeq && postId.value === target) {
+      pushError(error instanceof ApiError ? error.message : '任务操作失败，请稍后重试')
+    }
   } finally {
     controlBusy.value = false
   }
@@ -1155,15 +1161,20 @@ function startPolling(id: number): void {
 
 // 管理员确认发布：开启图片访问并进入 Telegraph 发布队列。
 async function publishToTelegraph(): Promise<void> {
-  if (publishing.value || postId.value === 0) return
+  const target = postId.value
+  if (publishing.value || target === 0) return
+  const round = initSeq
   publishing.value = true
   message.value = ''
   try {
-    await publishPost(postId.value)
+    await publishPost(target)
+    if (round !== initSeq || postId.value !== target) return
     message.value = '已提交发布，正在生成 Telegraph 页面'
-    startPolling(postId.value)
+    startPolling(target)
   } catch (error) {
-    pushError(error instanceof ApiError ? error.message : '发布失败，请稍后重试')
+    if (round === initSeq && postId.value === target) {
+      pushError(error instanceof ApiError ? error.message : '发布失败，请稍后重试')
+    }
   } finally {
     publishing.value = false
   }
@@ -1173,14 +1184,18 @@ async function publishToTelegraph(): Promise<void> {
 async function retryFailed(): Promise<void> {
   const target = postId.value
   if (retrying.value || target === 0) return
+  const round = initSeq
   retrying.value = true
   message.value = ''
   try {
     const result = await retryPost(target)
+    if (round !== initSeq || postId.value !== target) return
     phase.value = result.status === 'queued' ? 'queued' : 'failed'
     startPolling(target)
   } catch (error) {
-    pushError(error instanceof ApiError ? error.message : '重试失败，请稍后重试')
+    if (round === initSeq && postId.value === target) {
+      pushError(error instanceof ApiError ? error.message : '重试失败，请稍后重试')
+    }
   } finally {
     retrying.value = false
   }
@@ -1340,9 +1355,12 @@ async function publish(intent: 'auto' | 'manual' = 'manual'): Promise<void> {
   }
 
   submitting.value = true
+  // 本轮轮次在压缩之前固定：压缩期间切走，后续上传与收尾都不再写回。
+  const routeRound = initSeq
   try {
     const frozen = freezeSubmitStrategy(mode.value, autoCompress.value)
     const compression = await compressForSubmit(frozen.mode, frozen.autoCompress)
+    if (routeRound !== initSeq) return
     if (compression.problem !== '') {
       pushError(compression.problem)
       return
@@ -1353,15 +1371,14 @@ async function publish(intent: 'auto' | 'manual' = 'manual'): Promise<void> {
     compressDone.value = tiles.value.length
 
     phase.value = 'creating'
-    await runUpload(intent)
+    await runUpload(intent, routeRound)
   } finally {
     submitting.value = false
   }
 }
 
 // runUpload 建任务并按服务端进度补传；由 publish 在提交锁内调用。
-async function runUpload(intent: 'auto' | 'manual'): Promise<void> {
-  const routeRound = initSeq
+async function runUpload(intent: 'auto' | 'manual', routeRound = initSeq): Promise<void> {
   try {
     const id = await ensureTask(intent, routeRound)
     if (routeRound !== initSeq) return
