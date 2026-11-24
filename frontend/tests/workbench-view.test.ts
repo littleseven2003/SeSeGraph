@@ -40,4 +40,8 @@ test('新建图集默认干净新建态，只在显式续传时加载任务', ()
   assert.ok(source.includes('前往续传'), '提示里提供续传入口')
   assert.ok(source.includes('不影响直接拖入新素材'), '提示不阻断新建')
   assert.ok(source.includes('readUploadConcurrency(window.localStorage)'), '每轮读取同时上传数')
+  assert.ok(
+    source.includes('effectiveUploadConcurrency(') && source.includes('rules.value.uploadConcurrency'),
+    '派发宽度按服务端上限收敛，不多占排队名额',
+  )
 })

@@ -43,6 +43,19 @@ function progress(mode: string): ServerProgress {
 
 const snapshot = { postId: 7, imageCount: 2, files: [{ name: 'a.jpg', size: 10 }], createdAt: 1 }
 
+test('默认规则带上服务端上传上限', () => {
+  const view = settings()
+  view.upload.concurrency = 3
+  const defaults = defaultsFromSettings(view)
+  assert.equal(defaults.uploadConcurrency, 3)
+})
+
+test('服务端上限缺失时回落默认宽度', () => {
+  const defaults = defaultsFromSettings(settings())
+  assert.equal(defaults.uploadConcurrency, 2)
+  assert.equal(fallbackDefaults().uploadConcurrency, 2)
+})
+
 test('设置读取延迟时初始化不会提前返回', async () => {
   const settingsCall = deferred<SettingsView>()
   const initPromise = loadWorkbenchInitialization({

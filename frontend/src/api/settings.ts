@@ -56,10 +56,12 @@ export interface BackupSettings {
   keep_source: string
 }
 
-/** UploadSettings 是新任务的默认画质及其来源。 */
+/** UploadSettings 是新任务的默认画质及其来源，以及服务端同时接收上传的上限。 */
 export interface UploadSettings {
   default_mode: string
   mode_source: string
+  /** 服务端上传入口的并发上限，客户端据此收敛派发宽度 */
+  concurrency?: number
 }
 
 /** MetaSettings 是压缩包说明文件的候选名与默认解析方式。 */

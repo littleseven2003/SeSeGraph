@@ -6,17 +6,25 @@ import type { SettingsView } from '../api/settings.ts'
 import type { ServerProgress } from '../api/posts.ts'
 import type { TaskSnapshot } from './task-store.ts'
 import { discardBlocked, type WorkbenchPhase } from './workbench.ts'
+import { UPLOAD_CONCURRENCY_DEFAULT, serverUploadConcurrency } from './upload-pref.ts'
 
 /** WorkbenchDefaults 是导入与校验前必须确定的规则。 */
 export interface WorkbenchDefaults {
   metaNames: string[]
   parseMode: ParseMode
   defaultMode: UploadMode
+  /** 服务端同时接收上传的上限，派发宽度不会超过它 */
+  uploadConcurrency: number
 }
 
 /** FALLBACK_DEFAULTS 是设置读取失败时使用的内置规则。 */
 export function fallbackDefaults(): WorkbenchDefaults {
-  return { metaNames: [...DEFAULT_META_FILENAMES], parseMode: 'first-line', defaultMode: 'photo' }
+  return {
+    metaNames: [...DEFAULT_META_FILENAMES],
+    parseMode: 'first-line',
+    defaultMode: 'photo',
+    uploadConcurrency: UPLOAD_CONCURRENCY_DEFAULT,
+  }
 }
 
 /** defaultsFromSettings 把设置视图转成本次使用的规则，空值回落内置默认。 */
@@ -27,6 +35,7 @@ export function defaultsFromSettings(view: SettingsView | null): WorkbenchDefaul
     metaNames: names.length > 0 ? names : [...DEFAULT_META_FILENAMES],
     parseMode: view.meta.parse_mode === 'key-value' ? 'key-value' : 'first-line',
     defaultMode: view.upload.default_mode === 'document' ? 'document' : 'photo',
+    uploadConcurrency: serverUploadConcurrency(view.upload.concurrency),
   }
 }
 

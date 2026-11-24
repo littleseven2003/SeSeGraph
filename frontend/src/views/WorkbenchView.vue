@@ -71,7 +71,7 @@ import {
   type TaskSnapshot,
 } from '../utils/task-store.ts'
 import { acceptedCount, initialStatuses, planUploads, type UploadStatus, runUploadPool } from '../utils/upload.ts'
-import { readUploadConcurrency } from '../utils/upload-pref.ts'
+import { effectiveUploadConcurrency, readUploadConcurrency } from '../utils/upload-pref.ts'
 import { DEFAULT_META_FILENAMES, unpackZip } from '../utils/zip.ts'
 import { fetchSettings } from '../api/settings.ts'
 import {
@@ -1137,8 +1137,12 @@ async function runUpload(): Promise<void> {
     // 受控并发：首错停止派发，已在途的请求收尾，全部成功才提交入队。
     const round = progress.upload_round
     uploadAbort = new AbortController()
-    // 每轮开始时读取一次「同时上传数」，设置页调整后下一轮生效。
-    const concurrency = readUploadConcurrency(window.localStorage)
+    // 每轮开始时读取一次「同时上传数」，设置页调整后下一轮生效；
+    // 再按服务端声明的上限收敛，避免多占一个必然排队的名额。
+    const concurrency = effectiveUploadConcurrency(
+      readUploadConcurrency(window.localStorage),
+      rules.value.uploadConcurrency,
+    )
     const failure = await runUploadPool(queue, concurrency, async (item) => {
       statuses.value = { ...statuses.value, [item.sortOrder]: 'uploading' }
       try {

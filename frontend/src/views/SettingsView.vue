@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ApiError } from '../api/client.ts'
 import {
@@ -26,6 +26,7 @@ import {
   clampUploadConcurrency,
   readUploadConcurrency,
   saveUploadConcurrency,
+  serverUploadConcurrency,
 } from '../utils/upload-pref.ts'
 import { fetchGallery, fetchPostDetail, type GalleryItem } from '../api/gallery.ts'
 import { fetchMediaBlob, uploadThumb } from '../api/posts.ts'
@@ -87,6 +88,8 @@ import {
 } from '../utils/settings.ts'
 
 const view = ref<SettingsView | null>(null)
+// uploadCap 是服务端同时接收上传的上限，仅用于说明；派发时按 min(本地偏好, 上限) 执行。
+const uploadCap = computed(() => serverUploadConcurrency(view.value?.upload.concurrency))
 const loading = ref(true)
 const loadError = ref('')
 const saving = ref(false)
@@ -1012,7 +1015,7 @@ onBeforeUnmount(() => {
                       <option v-for="count in 4" :key="count" :value="String(count)">{{ count }} 路</option>
                     </select>
                     <p class="mt-1 text-xs text-muted">
-                      每轮同时上传的图片数，范围 {{ UPLOAD_CONCURRENCY_MIN }}–{{ UPLOAD_CONCURRENCY_MAX }} 路，默认 2 路；实际值还受服务端上传入口限额约束，调整后下一轮上传生效。
+                      每轮同时上传的图片数，范围 {{ UPLOAD_CONCURRENCY_MIN }}–{{ UPLOAD_CONCURRENCY_MAX }} 路，默认 2 路；服务端上限 {{ uploadCap }} 路，超出时按上限派发，调整后下一轮上传生效。
                     </p>
                   </label>
                 </div>
