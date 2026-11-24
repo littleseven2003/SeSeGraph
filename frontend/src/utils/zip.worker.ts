@@ -43,23 +43,23 @@ scope.onmessage = (event: MessageEvent<ZipRequest | ZipAck>) => {
 }
 
 // waitAck 让下一项等到主线程处理完上一项再开始，避免整批字节同时压进主线程。
-function waitAck(id: number, deadlineMs = 10000): Promise<void> {
+// 超时说明主线程已经不再接收这批结果（例如页面卡死或已切走），按失败收尾而不是继续展开。
+function waitAck(id: number, deadlineMs = 10000): Promise<boolean> {
   return new Promise((resolve) => {
     if (active !== id) {
-      resolve()
+      resolve(false)
       return
     }
     let settled = false
-    const finish = (): void => {
+    const finish = (ok: boolean): void => {
       if (settled) return
       settled = true
       clearTimeout(timer)
       acks.delete(id)
-      resolve()
+      resolve(ok)
     }
-    acks.set(id, finish)
-    // 主线程长时间不确认时继续展开，宁可短时占用高一些也不能卡住整批导入。
-    const timer = setTimeout(finish, deadlineMs)
+    acks.set(id, () => finish(true))
+    const timer = setTimeout(() => finish(false), deadlineMs)
   })
 }
 
@@ -70,6 +70,16 @@ async function unpackInWorker(
   metaNames: string[] | undefined,
   limits: Partial<ArchiveLimits> | undefined,
 ): Promise<void> {
+  // 整包读入前按体积拦一次，超限的包不进内存。
+  const archiveLimit = limits?.maxArchiveBytes ?? DEFAULT_ARCHIVE_LIMITS.maxArchiveBytes
+  if (file.size > archiveLimit) {
+    scope.postMessage({
+      id,
+      type: 'error',
+      error: `压缩包超过 ${Math.round(archiveLimit / (1024 * 1024))}MB 上限，请分批上传`,
+    })
+    return
+  }
   let buffer: ArrayBuffer
   try {
     buffer = await file.arrayBuffer()
@@ -98,9 +108,14 @@ async function unpackInWorker(
         return
       }
       scope.postMessage({ id, type: 'image', name: image.name, data }, [data.buffer])
-      await waitAck(id)
+      if (!(await waitAck(id))) {
+        active = 0
+        scope.postMessage({ id, type: 'error', error: '解压逐项交接超时，请重试' })
+        return
+      }
     }
     const metaBytes = plan.metaEntry !== '' ? expandEntry(bytes, plan.metaEntry, plan.metaSize) : null
+    active = 0
     scope.postMessage({
       id,
       type: 'done',

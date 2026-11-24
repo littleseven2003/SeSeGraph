@@ -291,3 +291,16 @@ test('逐项交接仍执行同一套数量与单项限制', async () => {
   assert.match(result.error, /超过 3 张/)
   assert.deepEqual(handed, [])
 })
+
+test('整包读取前按压缩文件体积拦截', async () => {
+  const archive = buildArchive({ '1.jpg': new Uint8Array(64) })
+  // 把上限压到比包还小，函数应在读入与解压之前就返回原因。
+  const blocked = await unpackArchive(new File([archive], 'big.zip'), { limits: { maxArchiveBytes: 8 } })
+  assert.ok(!blocked.ok)
+  assert.match(blocked.error, /超过 .*MB 上限/)
+
+  // 上限放宽后同一份包照常解开，说明拦截只按体积判断。
+  const allowed = await unpackArchive(new File([archive], 'big.zip'), { limits: { maxArchiveBytes: 1024 } })
+  assert.ok(allowed.ok)
+  assert.deepEqual(allowed.images.map((image) => image.name), ['1.jpg'])
+})

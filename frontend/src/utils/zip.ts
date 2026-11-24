@@ -18,6 +18,8 @@ export interface ArchiveLimits {
   maxTotalBytes: number
   /** 说明文件展开后的上限，与图片限制相互独立 */
   maxMetaBytes: number
+  /** 压缩文件本身体积上限：整包读入前先拦，避免把超大文件塞进内存 */
+  maxArchiveBytes: number
 }
 
 export const DEFAULT_ARCHIVE_LIMITS: ArchiveLimits = {
@@ -26,6 +28,7 @@ export const DEFAULT_ARCHIVE_LIMITS: ArchiveLimits = {
   maxVideoBytes: 20000000,
   maxTotalBytes: 512 * 1024 * 1024,
   maxMetaBytes: 64 * 1024,
+  maxArchiveBytes: 512 * 1024 * 1024,
 }
 
 // 解压后的单张图片。

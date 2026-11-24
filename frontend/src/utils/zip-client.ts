@@ -1,5 +1,6 @@
 // 压缩包解压的调用侧：优先交给 Worker 逐项展开，环境不支持时回落到主线程的同一套流程。
 import {
+  DEFAULT_ARCHIVE_LIMITS,
   unpackZipProgressive,
   type ArchiveImage,
   type ArchiveLimits,
@@ -109,6 +110,14 @@ export async function unpackArchive(
   options: ZipOptions = {},
   onImage?: (image: ArchiveImage) => void,
 ): Promise<ZipOutcome> {
+  // 整包读入前先按体积拦一次：超大压缩包不进线程，也不占主线程内存。
+  const archiveLimit = options.limits?.maxArchiveBytes ?? DEFAULT_ARCHIVE_LIMITS.maxArchiveBytes
+  if (file.size > archiveLimit) {
+    return {
+      ok: false,
+      error: `压缩包超过 ${Math.round(archiveLimit / (1024 * 1024))}MB 上限，请分批上传`,
+    }
+  }
   const target = ensureWorker()
   if (target === null) {
     // 没有 Worker 时才在主线程整包读入，流程与线程内一致。
