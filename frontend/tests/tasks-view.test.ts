@@ -26,7 +26,14 @@ test('筛选在窄屏局部横滑且不影响整页', () => {
   // 换筛选必须先回到第一页，再发请求。
   const setter = source.slice(source.indexOf('function setFilter'), source.indexOf('async function control'))
   assert.ok(setter.indexOf('filter.value = next') < setter.indexOf('page.value = 1'))
-  assert.ok(setter.indexOf('page.value = 1') < setter.indexOf('void load()'), '回第一页后按新条件加载')
+  assert.ok(setter.indexOf('page.value = 1') < setter.indexOf('void requestLoad(false)'), '回第一页后按新条件加载')
+})
+
+test('刷新入口共用一个在途请求', () => {
+  assert.ok(source.includes('function requestLoad('), '统一调度函数')
+  assert.ok(source.includes('if (inFlight !== null)'), '在途时只记补跑，不叠加请求')
+  assert.ok(source.includes("addEventListener('visibilitychange'"), '恢复可见走同一调度')
+  assert.ok(source.includes('requestLoad(true)'), '后台轮询用静默刷新')
 })
 
 test('筛选后命中变少时回到有效页，不留假空态', () => {

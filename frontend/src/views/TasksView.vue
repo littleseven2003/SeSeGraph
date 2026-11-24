@@ -32,7 +32,9 @@ let timer: ReturnType<typeof setInterval> | undefined
 let requestSeq = 0
 // 每页只保留一个在途请求；隐藏时停轮询，恢复可见立即补一次。
 const POLL_MS = 2000
-let inFlight = false
+// requestLoad 统一调度所有入口：定时、切筛选、翻页、恢复可见共用一个在途请求。
+let inFlight: Promise<void> | null = null
+let queued: { silent: boolean } | null = null
 
 const pages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
 const filtered = computed(() => filter.value !== '')
@@ -65,7 +67,7 @@ async function load(silent = false): Promise<void> {
     // 命中数在翻页期间变少时，服务端已钳到最后一页；这里再兜一层，避免空白页。
     if (result.items.length === 0 && result.total > 0 && page.value > 1) {
       page.value = Math.max(1, Math.ceil(result.total / pageSize))
-      void load()
+      void requestLoad(false)
       return
     }
     tasks.value = result.items
@@ -75,19 +77,34 @@ async function load(silent = false): Promise<void> {
     if (seq !== requestSeq) return
     error.value = cause instanceof ApiError ? cause.message : '读取任务失败，请稍后重试'
   } finally {
-    if (seq === requestSeq && !silent) loading.value = false
+    // 前台请求无论是否被后来者顶掉，都要把自己的加载态收掉。
+    if (!silent) loading.value = false
   }
+}
+
+// requestLoad 串行化所有刷新入口：在途时只记一次补跑，避免重叠请求。
+function requestLoad(silent = false): Promise<void> {
+  if (inFlight !== null) {
+    queued = { silent: queued !== null && queued.silent === false ? false : silent }
+    return inFlight
+  }
+  inFlight = (async () => {
+    try {
+      await load(silent)
+    } finally {
+      inFlight = null
+      const next = queued
+      queued = null
+      if (next !== null) void requestLoad(next.silent)
+    }
+  })()
+  return inFlight
 }
 
 // poll 只在页面可见且没有在途请求时刷新，避免叠加请求。
 async function poll(): Promise<void> {
-  if (inFlight || document.visibilityState === 'hidden') return
-  inFlight = true
-  try {
-    await load(true)
-  } finally {
-    inFlight = false
-  }
+  if (document.visibilityState === 'hidden') return
+  await requestLoad(true)
 }
 
 function startPolling(): void {
@@ -104,7 +121,7 @@ function stopPolling(): void {
 // onVisibility 切回页面时立即补拉一次，离开时停掉轮询。
 function onVisibility(): void {
   if (document.visibilityState === 'visible') {
-    void load(true)
+    void requestLoad(true)
     startPolling()
     return
   }
@@ -117,7 +134,7 @@ function setFilter(next: TaskFilter): void {
   // 换筛选回到第一页，避免停在旧页码上看到空白。
   page.value = 1
   notice.value = ''
-  void load()
+  void requestLoad(false)
 }
 
 async function control(task: TaskRow, action: 'pause' | 'resume' | 'stop'): Promise<void> {
@@ -146,11 +163,11 @@ function go(delta: number): void {
   const next = page.value + delta
   if (next < 1 || next > pages.value) return
   page.value = next
-  void load()
+  void requestLoad(false)
 }
 
 onMounted(() => {
-  void load()
+  void requestLoad(false)
   startPolling()
   document.addEventListener('visibilitychange', onVisibility)
 })
