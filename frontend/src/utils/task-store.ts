@@ -132,12 +132,18 @@ export function saveTask(storage: StorageLike | null, snapshot: TaskSnapshot): v
   }
 }
 
-// clearTask 清除快照；给出任务编号时同时清除独立槽位。
+// clearTask 清除快照，只动指定任务自己的槽位。
+// 给出编号时，只有最近任务正好是这一条才一并清掉全局索引，别的任务提示不受影响。
 export function clearTask(storage: StorageLike | null, postId?: number): void {
   if (!storage) return
   try {
-    storage.removeItem(STORAGE_KEY)
-    if (postId !== undefined && postId > 0) storage.removeItem(taskKey(postId))
+    if (postId === undefined || postId <= 0) {
+      storage.removeItem(STORAGE_KEY)
+      return
+    }
+    const recent = readSnapshot(storage, STORAGE_KEY)
+    if (recent === null || recent.postId === postId) storage.removeItem(STORAGE_KEY)
+    storage.removeItem(taskKey(postId))
   } catch {
     // 忽略清理失败
   }

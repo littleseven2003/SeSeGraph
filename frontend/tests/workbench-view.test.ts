@@ -131,7 +131,7 @@ test('路由重置只清页面状态，最近任务提示不丢', () => {
   const reset = source.slice(source.indexOf('function resetForRoute()'), source.indexOf('async function applyRoute'))
   assert.equal(reset.includes('resetProgress()'), false, '切路由不能删本机快照')
   assert.ok(reset.includes('resetProgressView()'), '只清页面状态')
-  const view = source.slice(source.indexOf('function resetProgressView()'), source.indexOf('function resetProgress()'))
+  const view = source.slice(source.indexOf('function resetProgressView()'), source.indexOf('// resetProgress 清展示'))
   assert.equal(view.includes('clearTask'), false, '页面重置不碰本机存储')
   assert.ok(view.includes('stopPolling()'), '展示清掉时轮询一并停止')
   // 只有服务端明确 404 才清快照，网络失败仍保留。
@@ -147,7 +147,7 @@ test('发布意图按提交轮次下传，被拦下的提交不会改写上一�
   const pass = publish.indexOf('await runUpload(intent)')
   assert.ok(lock > 0 && pass > lock, '先过提交锁，再把本轮意图交给上传')
   assert.ok(source.includes("async function runUpload(intent: 'auto' | 'manual')"), '上传沿用本轮意图')
-  assert.ok(source.includes("async function ensureTask(intent: 'auto' | 'manual')"), '建任务沿用本轮意图')
+  assert.ok(source.includes("async function ensureTask(intent: 'auto' | 'manual'"), '建任务沿用本轮意图')
   assert.ok(source.includes("publish_intent: intent === 'auto' ? 'auto' : undefined"), '请求体用局部参数')
 })
 test('压缩结果绑定发起时的策略版本', () => {
@@ -162,4 +162,14 @@ test('压缩结果绑定发起时的策略版本', () => {
   assert.ok(reset.includes('bumpStrategy()'), '换模式或开关立即升版')
   const clear = source.slice(source.indexOf('function clearAll'), source.indexOf('async function ensureTask'))
   assert.ok(clear.includes('bumpStrategy()'), '清空同样升版')
+})
+
+test('清理只作用于当前任务，别的任务续传入口保留', () => {
+  const reset = source.slice(source.indexOf('function resetProgress'), source.indexOf('function discardSnapshot'))
+  assert.ok(reset.includes('if (abandoned !== undefined && abandoned > 0)'), '没有任务编号时不碰存储')
+  assert.ok(
+    source.includes('resetProgress(snapshot.value?.postId ?? (postId.value > 0 ? postId.value : undefined))'),
+    '清空按当前任务编号清理',
+  )
+  assert.ok(source.includes('resumableHint.value = loadTask(storage)'), '清空后按剩余快照重读提示')
 })

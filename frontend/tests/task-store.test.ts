@@ -149,14 +149,30 @@ test('兼容旧的单键快照，但只在编号一致时采用', () => {
   assert.equal(loadTaskFor(storage, 1), null)
 })
 
-test('清除指定任务时同时移除独立槽位与旧单键', () => {
+test('清除指定任务只移除它自己的槽位，较新的续传入口保留', () => {
   const storage = memoryStorage()
   saveTask(storage, snapshotA)
   saveTask(storage, snapshotB)
+  // B(2) 是最近任务；清较旧的 A(1) 不应影响 B 的入口。
+  clearTask(storage, 1)
+  assert.deepEqual(loadTask(storage), snapshotB)
+  assert.deepEqual(loadTaskFor(storage, 2), snapshotB)
+  assert.equal(loadTaskFor(storage, 1), null)
+
+  // 清最近任务本身时才一并清掉全局索引。
   clearTask(storage, 2)
   assert.equal(loadTask(storage), null)
-  assert.deepEqual(loadTaskFor(storage, 1), snapshotA)
   assert.equal(loadTaskFor(storage, 2), null)
+})
+
+test('没有编号的清理只动最近任务索引，不碰其它任务的槽位', () => {
+  const storage = memoryStorage()
+  saveTask(storage, snapshotA)
+  saveTask(storage, snapshotB)
+  clearTask(storage)
+  assert.equal(loadTask(storage), null)
+  assert.deepEqual(loadTaskFor(storage, 1), snapshotA)
+  assert.deepEqual(loadTaskFor(storage, 2), snapshotB)
 })
 
 test('同数量但不同文件被拒绝', () => {

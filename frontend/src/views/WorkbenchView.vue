@@ -1184,11 +1184,11 @@ function resetProgressView(): void {
   stopPolling()
 }
 
-// resetProgress 清展示并删除本机快照，只用于「放弃此任务」这类明确放弃的入口。
-function resetProgress(): void {
-  const abandoned = snapshot.value?.postId
+// resetProgress 清展示并在有明确任务编号时删除该任务的快照。
+// 没有任务的新草稿不碰存储，避免把别的任务的续传入口一并抹掉。
+function resetProgress(abandoned = snapshot.value?.postId): void {
   resetProgressView()
-  clearTask(storage, abandoned)
+  if (abandoned !== undefined && abandoned > 0) clearTask(storage, abandoned)
 }
 
 // discardSnapshot 放弃上次任务的续传入口，允许直接开新任务。
@@ -1228,8 +1228,8 @@ function clearAll(): void {
   metaSource.value = ''
   draft.value = { title: '', description: '', tags: [], author: '' }
   compressDone.value = null
-  // 先按当前快照编号清掉两个槽位，再放开引用。
-  resetProgress()
+  // 先按当前任务编号清掉它自己的槽位，再放开引用；新草稿没有编号就不动存储。
+  resetProgress(snapshot.value?.postId ?? (postId.value > 0 ? postId.value : undefined))
   snapshot.value = null
   resumableHint.value = loadTask(storage)
   resetToDefaultMode()
