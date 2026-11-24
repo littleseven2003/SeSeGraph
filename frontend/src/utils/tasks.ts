@@ -1,4 +1,5 @@
-// 任务列表的分段筛选与三阶段展示规则，独立于页面便于逐条验证。
+// 任务列表的筛选、整体状态胶囊与控制入口判定，独立于页面便于逐条验证。
+// 四阶段的展示口径统一在 utils/stages.ts，这里不再重复定义。
 import type { TaskFilter } from '../api/posts.ts'
 
 // 筛选顺序即界面顺序：全部在最前，其余按任务生命周期排列。
@@ -23,45 +24,6 @@ export interface TaskState {
   /** 真实已接收，含已接收后存频道失败 */
   received_count: number
   channel_count: number
-}
-
-export interface TaskStage {
-  value: string
-  tone: TaskTone
-}
-
-// uploadStage 只看已接收张数：仍在上传与已入频道的图片都算接收成功。
-export function uploadStage(task: TaskState): TaskStage {
-  if (task.image_count <= 0) return { value: '无图片', tone: 'muted' }
-  const received = task.received_count
-  if (received >= task.image_count) return { value: '已完成', tone: 'ok' }
-  if (task.status === 'failed') return { value: `${received}/${task.image_count} 张`, tone: 'danger' }
-  return { value: `${received}/${task.image_count} 张`, tone: received > 0 ? 'run' : 'muted' }
-}
-
-// channelStage 只认确实已入频道的张数，不与已接收合并。
-export function channelStage(task: TaskState): TaskStage {
-  if (task.image_count <= 0) return { value: '无图片', tone: 'muted' }
-  const stored = task.channel_count
-  if (stored >= task.image_count) return { value: '已完成', tone: 'ok' }
-  if (task.status === 'failed') return { value: `${stored}/${task.image_count} 张`, tone: 'danger' }
-  return { value: `${stored}/${task.image_count} 张`, tone: stored > 0 ? 'run' : 'muted' }
-}
-
-// publishStage 只看 publish_state，不借用前两段的状态。
-export function publishStage(task: TaskState): TaskStage {
-  switch (task.publish_state) {
-    case 'published':
-      return { value: '已发布', tone: 'ok' }
-    case 'publishing':
-      return { value: '发布中', tone: 'run' }
-    case 'pending':
-      return { value: '待发布', tone: 'run' }
-    case 'failed':
-      return { value: '发布失败', tone: 'danger' }
-    default:
-      return { value: '未开始', tone: 'muted' }
-  }
 }
 
 // badgeOf 给出整体状态胶囊：暂停与停止优先，其次才是完成与运行中的细分。
