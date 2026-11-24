@@ -10,6 +10,7 @@ import {
   hasStoredThumb,
   needsExplicitPreview,
   pickEagerOrders,
+  shouldWaitExplicit,
   readWithinBudget,
   withTimeout,
 } from '../src/utils/thumbs.ts'
@@ -48,6 +49,17 @@ test('可视区只挑选可自动加载的项', () => {
     image(5),
   ]
   assert.deepEqual(pickEagerOrders([1, 2, 3, 4, 5, 9], images), [1, 5])
+})
+
+test('小图未命中时视频与大图只在明确预览时才回源', () => {
+  const video = { mime_type: 'video/mp4', file_size: 1000 }
+  const big = { mime_type: 'image/jpeg', file_size: THUMB_EAGER_MAX_BYTES + 1 }
+  const small = { mime_type: 'image/jpeg', file_size: 1000 }
+  assert.equal(shouldWaitExplicit(video, false), true)
+  assert.equal(shouldWaitExplicit(big, false), true)
+  assert.equal(shouldWaitExplicit(small, false), false)
+  assert.equal(shouldWaitExplicit(video, true), false)
+  assert.equal(shouldWaitExplicit(big, true), false)
 })
 
 test('已有落盘小图的视频与大图也会自动加载', () => {

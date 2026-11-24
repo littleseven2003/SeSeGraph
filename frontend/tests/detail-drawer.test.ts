@@ -22,6 +22,12 @@ test('每行前置缩略图只按需回源', () => {
   assert.equal(source.includes('/i/'), false, '缩略图不能走公开网关')
 })
 
+test('小图被淘汰后不会借 404 分支自动回源大文件', () => {
+  assert.ok(source.includes('shouldWaitExplicit(image, explicitOrders.has(order))'), '加载器按是否明确预览判定')
+  assert.ok(source.includes('explicitOrders.add(order)'), '明确预览过的序号才允许回源')
+  assert.ok(source.includes('explicitOrders.clear()'), '切帖时清空明确预览记录')
+})
+
 test('旧封面下拉框已删除，改为行内设为封面', () => {
   assert.equal(source.includes('<select'), false, '不应再有封面下拉框')
   assert.equal(source.includes('onCoverChange'), false, '旧处理函数要一起删除')

@@ -18,6 +18,7 @@ import {
   hasStoredThumb,
   needsExplicitPreview,
   pickEagerOrders,
+  shouldWaitExplicit,
   readWithinBudget,
   renderThumb,
 } from '../../utils/thumbs.ts'
@@ -374,6 +375,9 @@ onMounted(() => {
   void syncEagerThumbs()
 })
 
+// explicitOrders 记录本次会话里被明确预览过的序号：小图被淘汰后，只有这些项才允许回源。
+const explicitOrders = new Set<number>()
+
 // teardownThumbs 释放上一帖的缩略图、观察器与气泡，避免切帖后仍持有旧对象。
 function teardownThumbs(): void {
   observer?.disconnect()
@@ -381,6 +385,7 @@ function teardownThumbs(): void {
   thumbs?.dispose()
   thumbs = null
   thumbPostId = 0
+  explicitOrders.clear()
   thumbUrls.value = new Map()
   closePreview()
   resetCover()
@@ -410,6 +415,10 @@ function ensureThumbs(): ThumbQueue | null {
       if (version !== '') {
         const cached = await fetchThumbBlob(postId, order, version, signal)
         if (cached !== null) return cached
+        // 小图已被淘汰：视频与大图要等明确预览，不能借 404 分支直接回源。
+        if (image !== undefined && shouldWaitExplicit(image, explicitOrders.has(order))) {
+          throw new Error('缩略图已淘汰，等待明确预览')
+        }
       }
       // 冷缓存：回源一次原图，生成小图后回存，下次打开只走小图。
       return await readWithinBudget(
@@ -455,7 +464,8 @@ function requestThumb(order: number, explicit: boolean): void {
   const image = detail.images.find((item) => item.sort_order === order)
   if (image === undefined || !canLoadThumb(image)) return
   // 已有落盘小图时直接取小图，不因视频或大图而拖到明确预览。
-  if (!explicit && needsExplicitPreview(image) && !hasStoredThumb(image)) return
+  if (shouldWaitExplicit(image, explicit) && !hasStoredThumb(image)) return
+  if (explicit) explicitOrders.add(order)
   const queue = ensureThumbs()
   if (queue === null || queue.has(order)) return
   queue.request(order)

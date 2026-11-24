@@ -302,6 +302,15 @@ export class ThumbQueue {
   }
 }
 
+// shouldWaitExplicit 判断小图未命中时是否要等明确预览再回源：
+// 详情里的 thumb_url 可能已被缓存淘汰，视频与大图不能借这条 404 分支自动拉原媒体。
+export function shouldWaitExplicit(
+  image: Pick<GalleryImage, 'file_size' | 'mime_type'>,
+  explicit: boolean,
+): boolean {
+  return !explicit && needsExplicitPreview(image)
+}
+
 // hasStoredThumb 判断服务端是否已有这一项的小图；有就不必回源原媒体。
 export function hasStoredThumb(image: Pick<GalleryImage, 'thumb_url'>): boolean {
   return (image.thumb_url ?? '') !== ''
