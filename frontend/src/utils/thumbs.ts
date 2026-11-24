@@ -1,5 +1,6 @@
 // 详情抽屉的缩略图按需加载：同一时间只回源一张，缓存固定上限，切帖或关闭即释放。
 import type { GalleryImage } from '../api/gallery.ts'
+import { captureVideoFrame, isVideoBlob } from './video-frame.ts'
 
 // 缓存上限：只留低分辨率 Blob 的 object URL，几天内几十项的列表也不会累计占内存。
 export const THUMB_CACHE_LIMIT = 16
@@ -18,6 +19,76 @@ export function needsExplicitPreview(image: Pick<GalleryImage, 'file_size' | 'mi
   return image.mime_type === 'video/mp4' || image.file_size > THUMB_EAGER_MAX_BYTES
 }
 
+// MediaBudget 是整个抽屉共享的原媒体额度：缩略图取图与换封面取原图都从这里排队，
+// 任何时刻只有一个原始媒体请求在途，1 核小机器不会因为两个入口同时拉大图而翻倍占用。
+export class MediaBudget {
+  private readonly limit: number
+  private active = 0
+  private readonly waiting: WaitingTask[] = []
+
+  constructor(limit = 1) {
+    this.limit = Math.max(1, limit)
+  }
+
+  /** running 返回正在占用额度的任务数。 */
+  get running(): number {
+    return this.active
+  }
+
+  /** pending 返回仍在排队等待的任务数。 */
+  get pending(): number {
+    return this.waiting.length
+  }
+
+  /** run 在额度内执行一次读取；排队期间被取消则直接失败，不占用槽位。 */
+  async run<T>(task: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    await this.acquire(signal)
+    try {
+      return await task()
+    } finally {
+      this.release()
+    }
+  }
+
+  private acquire(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted === true) return Promise.reject(new Error('已取消'))
+    if (this.active < this.limit) {
+      this.active += 1
+      return Promise.resolve()
+    }
+    return new Promise<void>((resolve, reject) => {
+      const entry: WaitingTask = { resolve, reject, signal, onAbort: null }
+      if (signal !== undefined) {
+        entry.onAbort = () => {
+          const index = this.waiting.indexOf(entry)
+          if (index >= 0) this.waiting.splice(index, 1)
+          reject(new Error('已取消'))
+        }
+        signal.addEventListener('abort', entry.onAbort, { once: true })
+      }
+      this.waiting.push(entry)
+    })
+  }
+
+  private release(): void {
+    const next = this.waiting.shift()
+    if (next === undefined) {
+      this.active = Math.max(0, this.active - 1)
+      return
+    }
+    if (next.onAbort !== null) next.signal?.removeEventListener('abort', next.onAbort)
+    // 直接把槽位交给下一位，active 保持不变。
+    next.resolve()
+  }
+}
+
+interface WaitingTask {
+  resolve: () => void
+  reject: (error: Error) => void
+  signal?: AbortSignal
+  onAbort: (() => void) | null
+}
+
 export interface ThumbEntry {
   url: string
   order: number
@@ -31,6 +102,10 @@ export interface ThumbQueueOptions {
   revokeUrl?: (url: string) => void
   /** 每张缩略图入缓存后回调一次，界面据此刷新行内小图。 */
   onStore?: (order: number) => void
+  /** 单张读取失败或超时后回调，界面据此结束加载动画并显示占位。 */
+  onFail?: (order: number) => void
+  /** 与换封面共用的原媒体额度；不传时由队列自己串行。 */
+  budget?: MediaBudget
 }
 
 // ThumbQueue 串行回源并做 LRU 淘汰，任一时刻最多一个请求在途。
@@ -42,6 +117,8 @@ export class ThumbQueue {
   private readonly cache = new Map<number, string>()
   private readonly pinned = new Set<number>()
   private readonly onStore: ((order: number) => void) | undefined
+  private readonly onFail: ((order: number) => void) | undefined
+  private readonly budget: MediaBudget | undefined
   private readonly waiting: number[] = []
   private current: AbortController | null = null
   private running = false
@@ -54,6 +131,8 @@ export class ThumbQueue {
     this.createUrl = options.createUrl ?? ((blob) => URL.createObjectURL(blob))
     this.revokeUrl = options.revokeUrl ?? ((url) => URL.revokeObjectURL(url))
     this.onStore = options.onStore
+    this.onFail = options.onFail
+    this.budget = options.budget
   }
 
   /** size 返回当前缓存的缩略图数量。 */
@@ -96,11 +175,16 @@ export class ThumbQueue {
         const controller = new AbortController()
         this.current = controller
         try {
-          const blob = await this.loader(order, controller.signal)
+          // 与换封面共用额度：整条链路任何时刻只有一个原始媒体请求。
+          const blob =
+            this.budget === undefined
+              ? await this.loader(order, controller.signal)
+              : await this.budget.run(() => this.loader(order, controller.signal), controller.signal)
           if (this.disposed || controller.signal.aborted) continue
           this.store(order, blob)
         } catch {
-          // 单张失败不影响其余项：调用方会在需要时重试。
+          // 单张失败不影响其余项：通知界面结束加载态，调用方可在需要时重试。
+          if (!this.disposed && !controller.signal.aborted) this.onFail?.(order)
         } finally {
           if (this.current === controller) this.current = null
         }
@@ -163,11 +247,13 @@ export function pickEagerOrders(visible: number[], images: GalleryImage[]): numb
 }
 
 // renderThumb 把原图缩到最长边 max 的 WebP：只保留小体积 Blob，原始大图随即释放。
+// 视频先按目标尺寸截一帧，再走同一条缩放流程；不会把视频交给图片解码器。
 export async function renderThumb(blob: Blob, max = THUMB_MAX_PIXELS): Promise<Blob> {
   if (typeof createImageBitmap !== 'function' || typeof document === 'undefined') {
     throw new Error('当前浏览器不支持缩略图')
   }
-  const bitmap = await createImageBitmap(blob)
+  const still = isVideoBlob(blob) ? await captureVideoFrame(blob, { maxPixels: max }) : blob
+  const bitmap = await decodeStill(still, max)
   try {
     const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height))
     const width = Math.max(1, Math.round(bitmap.width * scale))
@@ -183,6 +269,16 @@ export async function renderThumb(blob: Blob, max = THUMB_MAX_PIXELS): Promise<B
     return output
   } finally {
     bitmap.close?.()
+  }
+}
+
+// decodeStill 解码时就让浏览器按目标宽度缩小，避免把整张大图先展开进内存。
+async function decodeStill(blob: Blob, max: number): Promise<ImageBitmap> {
+  try {
+    return await createImageBitmap(blob, { resizeWidth: max, resizeQuality: 'low' })
+  } catch {
+    // 老版本浏览器不认缩放参数时退回原尺寸解码，再在画布上缩放。
+    return await createImageBitmap(blob)
   }
 }
 

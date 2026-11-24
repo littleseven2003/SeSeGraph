@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
+  MediaBudget,
   THUMB_CACHE_LIMIT,
   THUMB_EAGER_MAX_BYTES,
   ThumbQueue,
   canLoadThumb,
   needsExplicitPreview,
   pickEagerOrders,
+  withTimeout,
 } from '../src/utils/thumbs.ts'
+import { isVideoBlob } from '../src/utils/video-frame.ts'
 
 const image = (order: number, extra: Partial<{ status: string; mime_type: string; file_size: number }> = {}) => ({
   sort_order: order,
@@ -160,4 +163,135 @@ test('预览中的项被钉住，不被淘汰也不回收地址', async () => {
   await new Promise((resolve) => setTimeout(resolve, 60))
   assert.equal(queue.has(1), false, '取消钉住后可以正常淘汰')
   queue.dispose()
+})
+
+test('原媒体额度同时只放行一个任务，其余按顺序等待', async () => {
+  const budget = new MediaBudget(1)
+  let active = 0
+  let peak = 0
+  const order: number[] = []
+  const job = (id: number) => async () => {
+    active += 1
+    peak = Math.max(peak, active)
+    order.push(id)
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    active -= 1
+    return id
+  }
+  const results = await Promise.all([budget.run(job(1)), budget.run(job(2)), budget.run(job(3))])
+  assert.deepEqual(results, [1, 2, 3])
+  assert.equal(peak, 1, '任何时刻只有一个原始媒体任务')
+  assert.equal(budget.running, 0)
+  assert.equal(budget.pending, 0)
+})
+
+test('缩略图与换封面共用额度时总并发仍为 1', async () => {
+  const budget = new MediaBudget(1)
+  let active = 0
+  let peak = 0
+  const held = async () => {
+    active += 1
+    peak = Math.max(peak, active)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    active -= 1
+    return new Blob(['x'])
+  }
+  const queue = new ThumbQueue(async () => await held(), {
+    budget,
+    createUrl: () => 'blob:shared',
+    revokeUrl: () => {},
+  })
+  queue.request(1)
+  queue.request(2)
+  const cover = budget.run(held)
+  await new Promise((resolve) => setTimeout(resolve, 80))
+  await cover
+  assert.equal(peak, 1, '缩略图与封面取图不能同时占两条连接')
+  assert.equal(queue.size, 2)
+  queue.dispose()
+})
+
+test('排队中被取消的任务不再占用额度', async () => {
+  const budget = new MediaBudget(1)
+  const controller = new AbortController()
+  const first = budget.run(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    return 'first'
+  })
+  const cancelled = budget.run(async () => 'second', controller.signal)
+  controller.abort()
+  await assert.rejects(cancelled, /已取消/)
+  assert.equal(await first, 'first')
+  assert.equal(budget.running, 0)
+  assert.equal(budget.pending, 0)
+})
+
+test('已取消的信号不会启动任务', async () => {
+  const budget = new MediaBudget(1)
+  const controller = new AbortController()
+  controller.abort()
+  let started = false
+  await assert.rejects(
+    budget.run(async () => {
+      started = true
+      return 1
+    }, controller.signal),
+    /已取消/,
+  )
+  assert.equal(started, false)
+})
+
+test('单张读取失败时回调界面结束加载态，不影响后续项', async () => {
+  const failed: number[] = []
+  const stored: number[] = []
+  const queue = new ThumbQueue(
+    async (order) => {
+      if (order === 1) throw new Error('读取失败')
+      return new Blob(['x'])
+    },
+    {
+      createUrl: () => 'blob:ok',
+      revokeUrl: () => {},
+      onFail: (order) => failed.push(order),
+      onStore: (order) => stored.push(order),
+    },
+  )
+  queue.request(1)
+  queue.request(2)
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  assert.deepEqual(failed, [1])
+  assert.deepEqual(stored, [2])
+  assert.equal(queue.has(1), false)
+  queue.dispose()
+})
+
+test('取消导致的失败不回调，避免切帖后弹错误', async () => {
+  const failed: number[] = []
+  const queue = new ThumbQueue(
+    async (_order, signal) => {
+      signal.addEventListener('abort', () => {})
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      return new Blob(['x'])
+    },
+    { createUrl: () => 'blob:x', revokeUrl: () => {}, onFail: (order) => failed.push(order) },
+  )
+  queue.request(1)
+  await new Promise((resolve) => setTimeout(resolve, 5))
+  queue.dispose()
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  assert.deepEqual(failed, [])
+})
+
+test('withTimeout 到点即失败，不会无限等待解码', async () => {
+  await assert.rejects(
+    withTimeout(new Promise(() => {}), 10, '解码超时'),
+    /解码超时/,
+  )
+  assert.equal(await withTimeout(Promise.resolve('ok'), 50), 'ok')
+})
+
+test('视频先取帧再缩放，isVideoBlob 只认视频类型', () => {
+  assert.equal(isVideoBlob(new Blob([], { type: 'video/mp4' })), true)
+  assert.equal(isVideoBlob(new Blob([], { type: 'image/jpeg' })), false)
+  assert.equal(isVideoBlob(new Blob([], { type: 'image/webp' })), false)
 })
