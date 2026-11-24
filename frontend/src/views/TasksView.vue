@@ -212,11 +212,19 @@ onBeforeUnmount(() => {
     <AppHeader />
 
     <main class="mx-auto w-full max-w-[960px] px-5 py-7">
-      <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">任务</h1>
-        <p class="tnum rounded-full border border-line bg-surface px-2.5 py-0.5 text-xs text-muted">
-          共 {{ total }} 个<template v-if="filtered"> · {{ filterLabel }}</template>
-        </p>
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">任务</h1>
+          <p class="tnum rounded-full border border-line bg-surface px-2.5 py-0.5 text-xs text-muted">
+            共 {{ total }} 个<template v-if="filtered"> · {{ filterLabel }}</template>
+          </p>
+        </div>
+        <router-link
+          :to="{ name: 'workbench' }"
+          class="inline-flex h-11 items-center rounded-full bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong"
+        >
+          新建图集
+        </router-link>
       </div>
 
       <div class="mt-3 max-w-full overflow-x-auto overscroll-x-contain">
@@ -270,32 +278,35 @@ onBeforeUnmount(() => {
         <li
           v-for="task in tasks"
           :key="task.id"
-          class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]"
+          class="overflow-hidden rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]"
         >
           <button
             type="button"
-            class="flex min-h-11 w-full items-center gap-2 px-4 py-1.5 text-left transition hover:bg-canvas/60 sm:px-5"
+            class="flex w-full flex-col px-4 py-1 text-left transition hover:bg-canvas/60 sm:px-5"
             :aria-expanded="isExpanded(task.id)"
             :aria-controls="`task-stages-${task.id}`"
             @click="toggleExpanded(task.id)"
           >
-            <span class="tnum shrink-0 text-xs text-muted">#{{ task.id }}</span>
-            <span class="min-w-0 flex-1 truncate text-sm font-semibold" :title="task.title">{{ task.title }}</span>
-            <span class="tnum hidden shrink-0 text-xs text-muted sm:inline">{{ updatedText(task.updated_at) }}</span>
-            <span class="tnum shrink-0 rounded-full bg-canvas px-2 py-0.5 text-[11px] font-medium text-muted">{{ overallOf(task) }}%</span>
-            <span
-              class="shrink-0 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium"
-              :class="BADGE_CLASS[badgeOf(task).tone]"
-            >
-              {{ badgeOf(task).label }}
+            <span class="flex min-h-11 w-full items-center gap-2">
+              <span class="tnum shrink-0 text-xs text-muted">#{{ task.id }}</span>
+              <span class="min-w-0 flex-1 truncate text-sm font-semibold" :title="task.title">{{ task.title }}</span>
+              <span class="tnum hidden shrink-0 text-xs text-muted sm:inline">{{ updatedText(task.updated_at) }}</span>
+              <span class="tnum shrink-0 rounded-full bg-canvas px-2 py-0.5 text-[11px] font-medium text-muted">{{ overallOf(task) }}%</span>
+              <span
+                class="shrink-0 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium"
+                :class="BADGE_CLASS[badgeOf(task).tone]"
+              >
+                {{ badgeOf(task).label }}
+              </span>
+              <span class="shrink-0 text-muted transition-transform" :class="isExpanded(task.id) ? 'rotate-180' : ''" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="h-4 w-4">
+                  <path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </span>
             </span>
-            <span class="shrink-0 text-muted transition-transform" :class="isExpanded(task.id) ? 'rotate-180' : ''" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="h-4 w-4">
-                <path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-            </span>
+            <!-- 窄屏把更新时间收进按钮内部，整行点按都能展开。 -->
+            <span class="pb-1.5 text-left text-xs text-muted sm:hidden">更新于 {{ updatedText(task.updated_at) }}</span>
           </button>
-          <p class="px-4 pb-2 text-xs text-muted sm:hidden">更新于 {{ updatedText(task.updated_at) }}</p>
 
           <div v-if="isExpanded(task.id)" :id="`task-stages-${task.id}`" class="border-t border-line/70 px-4 py-3 sm:px-5">
             <TaskStageBar :stages="stagesOf(task)" />

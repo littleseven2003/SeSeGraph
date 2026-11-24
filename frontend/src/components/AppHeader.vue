@@ -1,13 +1,29 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { logout } from '../api/client.ts'
 import BrandMark from './BrandMark.vue'
 import { blurEnabled, toggleBlur } from '../utils/blur.ts'
 
 // 全站统一顶栏：左侧品牌，右侧防社死开关与三个入口；窄屏折成两行避免拥挤。
 const router = useRouter()
+const route = useRoute()
 const signingOut = ref(false)
+
+// 当前页导航项用互斥类：静态态只带 text-muted，避免与高亮色同时挂在同一节点上被覆盖。
+function navClass(name: string): string {
+  const active = route.name === name
+  return active
+    ? 'inline-flex h-11 shrink-0 items-center rounded-full bg-brand-soft px-2.5 text-sm font-medium text-brand-strong transition sm:px-3.5'
+    : 'inline-flex h-11 shrink-0 items-center rounded-full px-2.5 text-sm text-muted transition hover:bg-canvas hover:text-ink sm:px-3.5'
+}
+
+function narrowNavClass(name: string): string {
+  const active = route.name === name
+  return active
+    ? 'inline-flex h-10 flex-1 items-center justify-center rounded-full bg-brand-soft text-sm font-medium text-brand-strong transition'
+    : 'inline-flex h-10 flex-1 items-center justify-center rounded-full text-sm text-muted transition hover:bg-canvas hover:text-ink'
+}
 
 const NAV = [
   { name: 'home', label: '图集' },
@@ -67,8 +83,7 @@ async function signOut(): Promise<void> {
               v-for="item in NAV"
               :key="item.name"
               :to="{ name: item.name }"
-              class="inline-flex h-11 shrink-0 items-center rounded-full px-2.5 text-sm text-muted transition hover:bg-canvas hover:text-ink sm:px-3.5"
-              active-class="bg-brand-soft font-medium text-brand-strong"
+              :class="navClass(item.name)"
             >
               {{ item.label }}
             </router-link>
@@ -77,11 +92,12 @@ async function signOut(): Promise<void> {
           <button
             type="button"
             class="inline-flex h-11 shrink-0 items-center rounded-full px-2.5 text-sm text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60 sm:px-3.5"
+            :aria-label="signingOut ? '正在退出…' : '退出登录'"
             :disabled="signingOut"
             @click="signOut"
           >
             <span class="hidden sm:inline">{{ signingOut ? '正在退出…' : '退出登录' }}</span>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4 sm:hidden" aria-label="退出登录">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4 sm:hidden" aria-hidden="true">
               <path d="M15 5H7a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h8M18 12H10M14 8l4 4-4 4" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
           </button>
@@ -93,8 +109,7 @@ async function signOut(): Promise<void> {
           v-for="item in NAV"
           :key="'narrow-' + item.name"
           :to="{ name: item.name }"
-          class="inline-flex h-10 flex-1 items-center justify-center rounded-full text-sm text-muted transition hover:bg-canvas hover:text-ink"
-          active-class="bg-brand-soft font-medium text-brand-strong"
+          :class="narrowNavClass(item.name)"
         >
           {{ item.label }}
         </router-link>

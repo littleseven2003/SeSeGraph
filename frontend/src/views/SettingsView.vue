@@ -648,7 +648,8 @@ onBeforeUnmount(() => {
           :key="'narrow-' + item.id"
           :href="'#' + item.id"
           class="inline-flex h-11 shrink-0 items-center rounded-full border px-3.5 text-xs font-medium transition"
-          :class="activeSection === item.id ? 'border-ink bg-ink text-brand-ink' : 'border-line bg-surface text-muted hover:bg-canvas hover:text-ink'"
+          :class="activeSection === item.id ? 'border-brand-soft bg-brand-soft text-ink' : 'border-line bg-surface text-muted hover:bg-canvas hover:text-ink'"
+          @click="selectSection(item.id)"
         >
           {{ item.label }}
         </a>

@@ -1266,33 +1266,6 @@ onBeforeUnmount(() => {
     <AppHeader />
 
     <main class="mx-auto w-full max-w-[1240px] px-5 py-6">
-      <div class="mb-3 flex items-center justify-end gap-2">
-        <span class="tnum text-xs text-muted">{{ imageCount }} 项 · {{ formatBytes(totalSize) }}</span>
-        <button
-          v-if="tiles.length > 0 && !locked"
-          type="button"
-          class="h-11 rounded-md border border-line px-3 text-sm font-medium transition hover:border-ink/25 hover:bg-canvas"
-          @click="clearAll"
-        >
-          清空
-        </button>
-      </div>
-
-      <div
-        v-if="resumableHint && tiles.length === 0 && snapshot === null && postId === 0"
-        class="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-surface px-3.5 py-2.5 text-sm"
-      >
-        <span class="min-w-0 truncate text-muted">
-          有未完成任务 <span class="tnum font-medium text-ink">#{{ resumableHint.postId }}</span>（{{ resumableHint.files.length }} 个文件），不影响直接拖入新素材。
-        </span>
-        <router-link
-          :to="{ name: 'workbench', query: { resume: resumableHint.postId } }"
-          class="shrink-0 rounded-full px-3 py-1.5 text-sm font-medium text-brand-strong transition hover:bg-canvas"
-        >
-          前往续传 →
-        </router-link>
-      </div>
-
       <p v-if="message" class="mb-4 rounded-2xl bg-surface px-3.5 py-2.5 text-sm text-muted shadow-[0_1px_0_0_rgba(27,26,23,0.05)]" role="status">
         {{ message }}
       </p>
@@ -1349,6 +1322,21 @@ onBeforeUnmount(() => {
         </DropZone>
         <p v-if="!ready" class="mt-3 text-center text-sm text-muted">正在读取设置与续传信息…</p>
         <p v-else-if="working" class="mt-3 text-center text-sm text-muted">正在解压压缩包…</p>
+        <!-- 续传入口放在拖放区下方，与 720px 容器同宽，不改变新建素材的视觉主导权。 -->
+        <div
+          v-if="resumableHint && snapshot === null && postId === 0"
+          class="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-surface px-3.5 py-2.5 text-sm"
+        >
+          <span class="min-w-0 truncate text-muted">
+            有未完成任务 <span class="tnum font-medium text-ink">#{{ resumableHint.postId }}</span>（{{ resumableHint.files.length }} 个文件），不影响直接拖入新素材。
+          </span>
+          <router-link
+            :to="{ name: 'workbench', query: { resume: resumableHint.postId } }"
+            class="shrink-0 rounded-full px-3 py-1.5 text-sm font-medium text-brand-strong transition hover:bg-canvas"
+          >
+            前往续传 →
+          </router-link>
+        </div>
       </div>
 
       <template v-else>
@@ -1382,14 +1370,25 @@ onBeforeUnmount(() => {
                 <h2 class="text-base font-semibold tracking-tight">已选媒体</h2>
                 <p class="mt-1 text-xs text-muted">拖拽或用箭头调整顺序，序号即上传顺序，点选封面用于列表展示。</p>
               </div>
-              <button
-                type="button"
-                class="h-11 rounded-full px-3.5 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-50"
-                :disabled="locked"
-                @click="onSortByName"
-              >
-                按文件名排序
-              </button>
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="tnum text-xs text-muted">{{ imageCount }} 项 · {{ formatBytes(totalSize) }}</span>
+                <button
+                  type="button"
+                  class="inline-flex h-11 items-center rounded-full px-3.5 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-50"
+                  :disabled="locked"
+                  @click="onSortByName"
+                >
+                  按文件名排序
+                </button>
+                <button
+                  v-if="!locked"
+                  type="button"
+                  class="inline-flex h-11 items-center rounded-full border border-line px-3.5 text-xs font-medium text-muted transition hover:border-ink/25 hover:bg-canvas hover:text-ink"
+                  @click="clearAll"
+                >
+                  清空
+                </button>
+              </div>
             </div>
 
             <div class="rounded-2xl bg-surface px-3 py-3 shadow-[0_1px_0_0_rgba(27,26,23,0.05)] lg:hidden">

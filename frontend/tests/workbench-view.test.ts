@@ -60,3 +60,19 @@ test('新建图集默认干净新建态，只在显式续传时加载任务', ()
     '派发宽度按服务端上限收敛，不多占排队名额',
   )
 })
+
+test('空态不显示数量与清空，续传提示放在拖放区下方', () => {
+  assert.equal(source.includes('mb-3 flex items-center justify-end gap-2'), false, '空态顶部不再留孤立工具栏')
+  const empty = source.indexOf('v-if="tiles.length === 0" class="mx-auto w-full max-w-[720px]"')
+  const hint = source.indexOf('前往续传')
+  assert.ok(empty > 0 && hint > empty, '续传提示在空态容器内')
+  const dropzone = source.indexOf('<DropZone :disabled="!ready || working || locked"', empty)
+  assert.ok(dropzone > empty && dropzone < hint, '提示排在拖放区下方')
+  assert.ok(source.includes('与 720px 容器同宽'), '说明同宽口径')
+  // 数量与清空收进「已选媒体」标题行，清空改为胶囊形态。
+  const media = source.indexOf('已选媒体')
+  const count = source.indexOf('{{ imageCount }} 项 · {{ formatBytes(totalSize) }}', media)
+  const clear = source.indexOf('清空', media)
+  assert.ok(count > media && clear > count, '标题行右侧依次是数量与清空')
+  assert.ok(source.slice(clear - 260, clear).includes('rounded-full'), '清空按钮为胶囊形态')
+})

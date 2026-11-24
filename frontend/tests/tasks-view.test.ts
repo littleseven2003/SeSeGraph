@@ -102,3 +102,13 @@ test('任务默认只有一行，展开后才出现四阶段进度与操作', ()
   assert.ok(row.includes('{{ overallOf(task) }}%'), '收起时保留进度小标识')
   assert.ok(source.includes('<TaskStageBar'), '工作台与任务页共用同一组件')
 })
+
+test('窄屏更新时间收进可点行内，卡片圆角不被悬停背景溢出', () => {
+  assert.ok(source.includes('overflow-hidden rounded-2xl bg-surface'), '卡片裁掉悬停圆角溢出')
+  assert.ok(source.includes('sm:hidden">更新于'), '更新时间作为按钮内部次行')
+  const updated = source.indexOf('sm:hidden">更新于')
+  const buttonEnd = source.indexOf('</button>', updated)
+  assert.ok(buttonEnd > updated, '更新时间仍在按钮内部')
+  // 顶行右侧提供与画廊对称的新建入口。
+  assert.ok(source.includes('bg-brand px-4 text-sm font-medium text-brand-ink'), '新建图集主胶囊')
+})
