@@ -409,6 +409,28 @@ test('超出像素预算的源图在解码前被拦下', async () => {
   assert.equal(pixelBudgetExceeded(null), false)
   await assert.rejects(async () => assertDecodable(pngBlob(9000, 7000)))
   await assert.doesNotReject(async () => assertDecodable(pngBlob(1200, 900)))
+  // 读不出尺寸时同样跳过：否则上限拦不住未知格式。
+  await assert.rejects(async () => assertDecodable(new Blob([new Uint8Array([9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9])])))
+})
+
+test('尺寸无法确认时跳过生成，队列继续处理下一项', async () => {
+  const failed: number[] = []
+  const unknown = new Blob([new Uint8Array(32)])
+  const queue = new ThumbQueue(
+    async (order) => {
+      const blob = order === 1 ? unknown : pngBlob(512, 512)
+      await assertDecodable(blob)
+      return new Blob([String(order)])
+    },
+    { createUrl: () => 'blob:' + String(Math.random()), revokeUrl: () => {}, onFail: (order) => failed.push(order) },
+  )
+  queue.request(1)
+  queue.request(2)
+  for (let tick = 0; tick < 40 && !queue.has(2); tick += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  assert.deepEqual(failed, [1])
+  assert.equal(queue.has(2), true)
 })
 
 test('单张被拒绝后队列继续处理下一项', async () => {

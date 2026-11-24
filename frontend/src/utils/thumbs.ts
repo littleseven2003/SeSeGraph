@@ -85,8 +85,12 @@ export async function readImageSize(blob: Blob): Promise<{ width: number; height
 }
 
 // assertDecodable 在解码前拦下超预算的原图，避免先展开整张图再缩放。
+// 读不出尺寸就无从判断像素，同样按不可解码处理：跳过生成、保留占位。
 export async function assertDecodable(blob: Blob): Promise<void> {
   const size = await readImageSize(blob)
+  if (size === null) {
+    throw new Error('无法确认原图尺寸，已跳过小图生成')
+  }
   if (pixelBudgetExceeded(size)) {
     throw new Error('原图像素超出预算，已跳过小图生成')
   }
