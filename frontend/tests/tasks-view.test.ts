@@ -36,6 +36,11 @@ test('刷新入口共用一个在途请求', () => {
   assert.ok(source.includes('requestLoad(true)'), '后台轮询用静默刷新')
 })
 
+test('任务列表为可续传任务提供入口', () => {
+  assert.ok(source.includes("name: 'workbench', query: { resume: task.id }"), '续传跳转带任务编号')
+  assert.ok(source.includes('canContinueUpload(task)'), '只为可续传任务显示')
+})
+
 test('筛选后命中变少时回到有效页，不留假空态', () => {
   assert.ok(source.includes('result.items.length === 0 && result.total > 0'), '空页要先判断是否越界')
   assert.ok(source.includes('Math.ceil(result.total / pageSize)'), '越界时回到最后一页')

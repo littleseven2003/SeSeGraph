@@ -250,12 +250,21 @@ onBeforeUnmount(() => {
               </p>
               <p class="mt-0.5 text-xs text-muted">更新于 {{ updatedText(task.updated_at) }}</p>
             </div>
-            <span
-              class="shrink-0 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium"
-              :class="BADGE_CLASS[badgeOf(task).tone]"
-            >
-              {{ badgeOf(task).label }}
-            </span>
+            <div class="flex shrink-0 items-center gap-2">
+              <router-link
+                v-if="canContinueUpload(task)"
+                :to="{ name: 'workbench', query: { resume: task.id } }"
+                class="rounded-full border border-line px-2.5 py-1 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
+              >
+                续传
+              </router-link>
+              <span
+                class="whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium"
+                :class="BADGE_CLASS[badgeOf(task).tone]"
+              >
+                {{ badgeOf(task).label }}
+              </span>
+            </div>
           </div>
 
           <dl class="mt-3 grid grid-cols-1 gap-2 text-xs sm:grid-cols-3">
