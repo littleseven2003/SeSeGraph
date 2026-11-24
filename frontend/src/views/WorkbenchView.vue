@@ -1020,10 +1020,13 @@ function onRemove(id: string): void {
   }
 }
 
-async function refreshServerProgress(): Promise<void> {
-  if (postId.value === 0) return
+async function refreshServerProgress(target = postId.value, round = initSeq): Promise<void> {
+  if (target === 0) return
   try {
-    applyServerProgress(await fetchProgress(postId.value))
+    const progress = await fetchProgress(target)
+    // 响应回来时可能已经切到别的任务：编号或轮次不一致就不写入。
+    if (round !== initSeq || postId.value !== target) return
+    applyServerProgress(progress)
   } catch {
     // 刷新失败保留当前展示，下一次轮询会再试。
   }
@@ -1043,7 +1046,7 @@ async function runControl(action: 'pause' | 'resume' | 'stop'): Promise<void> {
     else if (action === 'resume') await resumeTask(target)
     else await stopTask(target)
     if (round !== initSeq || postId.value !== target) return
-    await refreshServerProgress()
+    await refreshServerProgress(target, round)
     if (round !== initSeq || postId.value !== target) return
     if (action === 'stop') {
       phase.value = 'idle'
@@ -1431,7 +1434,10 @@ async function runUpload(intent: 'auto' | 'manual', routeRound = initSeq): Promi
         // 小图失败不影响存图与发布：服务端缺这份时抽屉会按需补。生成与回存走串行队列。
         queueThumbQuietly(id, item.sortOrder, item.tile, uploaded.media_version)
       } catch (error) {
-        statuses.value = { ...statuses.value, [item.sortOrder]: 'failed' }
+        // 切换任务后旧的失败结果不能写到新任务的状态上。
+        if (routeRound === initSeq && postId.value === id) {
+          statuses.value = { ...statuses.value, [item.sortOrder]: 'failed' }
+        }
         throw error
       }
     })
@@ -1440,8 +1446,11 @@ async function runUpload(intent: 'auto' | 'manual', routeRound = initSeq): Promi
       const item = queue[failure.index]
       if (uploadAbort?.signal.aborted === true) {
         // 用户主动暂停或停止：清掉本轮控制器，按服务端状态恢复全部图片项。
-        uploadAbort = null
-        await refreshServerProgress()
+        // 但如果这一轮已经被切走，恢复动作属于新任务，旧任务不再写状态。
+        if (uploadAbort !== null) uploadAbort = null
+        if (routeRound !== initSeq || postId.value !== id) return
+        await refreshServerProgress(id, routeRound)
+        if (routeRound !== initSeq || postId.value !== id) return
         const restored: Record<number, UploadStatus> = {}
         for (const tile of tiles.value) restored[tile.sortOrder] = 'pending'
         for (const image of serverProgress.value?.images ?? []) {

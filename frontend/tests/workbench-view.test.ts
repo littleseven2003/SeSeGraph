@@ -192,3 +192,14 @@ test('切换任务后隔离在途请求', () => {
   assert.ok(publish.indexOf('const routeRound = initSeq') < publish.indexOf('compressForSubmit('), '轮次在等待压缩之前固定')
   assert.ok(source.includes('updateSnapshotStrategy(storage, id, mode.value, autoCompress.value)'), '收尾按任务编号写快照')
 })
+
+test('迟到的刷新与上传分支在写入前校验发起时的任务', () => {
+  const refresh = source.slice(source.indexOf('async function refreshServerProgress'), source.indexOf('const controlBusy'))
+  assert.ok(refresh.includes('round = initSeq'), '刷新带发起时的轮次')
+  assert.ok(refresh.indexOf('round !== initSeq || postId.value !== target') < refresh.indexOf('applyServerProgress(progress)'), '应用进度前校验')
+  const upload = source.slice(source.indexOf('async function runUpload'), source.indexOf('onBeforeUnmount', source.indexOf('async function runUpload')))
+  assert.ok(upload.includes('if (routeRound === initSeq && postId.value === id)'), '失败分支写入前校验')
+  assert.ok(upload.includes("await refreshServerProgress(id, routeRound)"), '取消分支按本轮编号刷新')
+  const cancel = upload.slice(upload.indexOf('signal.aborted === true'), upload.indexOf('statuses.value = restored'))
+  assert.ok(cancel.includes('if (routeRound !== initSeq || postId.value !== id) return'), '取消分支写状态前校验')
+})
