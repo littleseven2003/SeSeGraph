@@ -32,6 +32,8 @@ const (
 	KeyBackupEnabled = "backup.enabled"
 	KeyBackupTime    = "backup.time"
 	KeyBackupKeep    = "backup.keep"
+	// KeyMediaThumbLimit 是逐图缩略图缓存上限（字节）。
+	KeyMediaThumbLimit = "media_thumbs.limit_bytes"
 )
 
 // Store 基于 settings 表读写键值配置。

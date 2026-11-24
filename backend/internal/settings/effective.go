@@ -107,6 +107,8 @@ type Env struct {
 	BackupEnabled     string
 	BackupTime        string
 	BackupKeep        string
+	// MediaThumbLimit 是逐图缩略图缓存上限（字节）。
+	MediaThumbLimit string
 }
 
 // Value 是一项生效配置及其来源。敏感项只通过 Value 在校验与自检内部使用，不对外输出。
@@ -144,6 +146,8 @@ type Effective struct {
 	BackupEnabled Value
 	BackupTime    Value
 	BackupKeep    Value
+	// MediaThumbLimit 是逐图缩略图缓存上限，超出后按最近最少使用淘汰。
+	MediaThumbLimit Value
 	// MetaFilenames 是压缩包内说明文件的候选名（逗号分隔）。
 	MetaFilenames Value
 	// MetaParseMode 是说明文件的默认解析方式。
@@ -231,6 +235,7 @@ func (r *Resolver) effectiveFrom(stored map[string]string) Effective {
 		BackupEnabled:     resolveFlag(r.env.BackupEnabled, stored[KeyBackupEnabled]),
 		BackupTime:        resolveBackupTime(r.env.BackupTime, stored[KeyBackupTime]),
 		BackupKeep:        resolveNumber(r.env.BackupKeep, stored[KeyBackupKeep], "7"),
+		MediaThumbLimit:   resolveNumber(r.env.MediaThumbLimit, stored[KeyMediaThumbLimit], DefaultMediaThumbLimit),
 		MetaFilenames:     resolve("", stored, KeyMetaFilenames, DefaultMetaFilenames),
 		MetaParseMode:     resolveMetaParseMode(stored[KeyMetaParseMode]),
 	}
@@ -420,6 +425,8 @@ type Patch struct {
 	BackupEnabled     *bool
 	BackupTime        *string
 	BackupKeep        *int64
+	// MediaThumbLimit 是逐图缩略图缓存上限（字节）。
+	MediaThumbLimit *int64
 }
 
 // Empty 报告补丁是否没有任何字段。
@@ -429,7 +436,8 @@ func (p Patch) Empty() bool {
 		p.MetaFilenames == nil && p.MetaParseMode == nil &&
 		p.UploadMode == nil && p.TelegraphPathMode == nil &&
 		p.TrafficAlertBytes == nil && p.TrafficLimitBytes == nil &&
-		p.BackupEnabled == nil && p.BackupTime == nil && p.BackupKeep == nil
+		p.BackupEnabled == nil && p.BackupTime == nil && p.BackupKeep == nil &&
+		p.MediaThumbLimit == nil
 }
 
 // Prepare 校验补丁并返回应用后的生效配置，不写入数据库。
@@ -710,6 +718,13 @@ func validateAuthor(value string) error {
 	return nil
 }
 
+// 逐图缩略图缓存的默认与可调范围：默认 2 GiB，允许 64 MiB 到 50 GiB。
+const (
+	DefaultMediaThumbLimit = "2147483648"
+	MinMediaThumbLimit     = 64 << 20
+	MaxMediaThumbLimit     = 50 << 30
+)
+
 // DefaultBackupTime 是自动备份的默认每日时刻。
 const DefaultBackupTime = "03:00"
 
@@ -775,6 +790,20 @@ func applyBackup(patch Patch, current Effective, values map[string]string, delet
 				*conflicts = append(*conflicts, "backup.keep")
 			} else {
 				values[KeyBackupKeep] = value
+			}
+		}
+	}
+	if patch.MediaThumbLimit != nil {
+		if *patch.MediaThumbLimit < MinMediaThumbLimit || *patch.MediaThumbLimit > MaxMediaThumbLimit {
+			*invalid = append(*invalid, "media_thumbs.limit_bytes")
+			return
+		}
+		value := strconv.FormatInt(*patch.MediaThumbLimit, 10)
+		if value != current.MediaThumbLimit.Value {
+			if current.MediaThumbLimit.Source == SourceEnv {
+				*conflicts = append(*conflicts, "media_thumbs.limit_bytes")
+			} else {
+				values[KeyMediaThumbLimit] = value
 			}
 		}
 	}
