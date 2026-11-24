@@ -235,8 +235,12 @@ func TestMediaThumbResetRotatesVersion(t *testing.T) {
 	if body.Removed != 1 || body.FreedBytes != 512 {
 		t.Fatalf("重置结果不符: %+v", body)
 	}
-	if _, err := os.Stat(filepath.Join(env.dataDir, media.Dir, itoa(postID))); !os.IsNotExist(err) {
-		t.Fatalf("重置后目录应清空: %v", err)
+	left, readErr := os.ReadDir(filepath.Join(env.dataDir, media.Dir, itoa(postID)))
+	if readErr != nil && !os.IsNotExist(readErr) {
+		t.Fatalf("读取目录失败: %v", readErr)
+	}
+	if len(left) != 0 {
+		t.Fatalf("重置后目录应为空，实际 %d 个文件", len(left))
 	}
 
 	fresh := detailImages(t, env, cookie, postID)
@@ -249,5 +253,35 @@ func TestMediaThumbResetRotatesVersion(t *testing.T) {
 	stale := env.do(t, http.MethodPut, "/api/posts/"+itoa(postID)+"/media/1/thumb?v="+version, string(thumbBytes(512)), cookie)
 	if stale.Code != http.StatusConflict {
 		t.Fatalf("旧版本迟到写入应 409，实际 %d", stale.Code)
+	}
+}
+
+// TestMediaThumbClearRotatesVersions 验证全局清理会换新内容版本，
+// 在途回存拿旧版本重试时被拒，不会把文件重新写回来。
+func TestMediaThumbClearRotatesVersions(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	cookie := env.setup(t)
+	postID := mediaPost(t, env, []string{"image/jpeg", "image/jpeg"}, false)
+
+	images := detailImages(t, env, cookie, postID)
+	version := images[0].MediaVersion
+	if up := env.do(t, http.MethodPut, "/api/posts/"+itoa(postID)+"/media/1/thumb?v="+version, string(thumbBytes(512)), cookie); up.Code != http.StatusOK {
+		t.Fatalf("写入小图失败: %d %s", up.Code, up.Body.String())
+	}
+	if cleared := env.do(t, http.MethodPost, "/api/settings/media-thumbs/clear", "", cookie); cleared.Code != http.StatusOK {
+		t.Fatalf("清理失败: %d %s", cleared.Code, cleared.Body.String())
+	}
+	after := detailImages(t, env, cookie, postID)
+	for _, image := range after {
+		if image.MediaVersion == version {
+			t.Fatalf("序号 %d 的版本没有换新", image.SortOrder)
+		}
+		if image.ThumbURL != "" {
+			t.Fatalf("清理后 thumb_url 应为空，实际 %q", image.ThumbURL)
+		}
+	}
+	late := env.do(t, http.MethodPut, "/api/posts/"+itoa(postID)+"/media/1/thumb?v="+version, string(thumbBytes(512)), cookie)
+	if late.Code != http.StatusConflict {
+		t.Fatalf("旧版本迟到写入应 409，实际 %d", late.Code)
 	}
 }

@@ -137,3 +137,46 @@ func osReadDirAll(root string) ([]string, error) {
 	})
 	return found, err
 }
+
+// TestRemovePostVersionsKeepsCurrent 验证按帖清理只删旧版本，保留新落盘的文件。
+func TestRemovePostVersionsKeepsCurrent(t *testing.T) {
+	dir := t.TempDir()
+	oldRel, _, err := Store(dir, 6, 1, "0123456789ab", sampleWebP(128), 0)
+	if err != nil {
+		t.Fatalf("写入旧版本失败: %v", err)
+	}
+	newRel, _, err := Store(dir, 6, 1, "ffffff012345", sampleWebP(256), 0)
+	if err != nil {
+		t.Fatalf("写入新版本失败: %v", err)
+	}
+	removed, freed, err := RemovePostVersions(dir, 6, map[string]bool{"ffffff012345": true})
+	if err != nil {
+		t.Fatalf("清理失败: %v", err)
+	}
+	if removed != 1 || freed != 128 {
+		t.Fatalf("应只删旧版本：%d 项 / %d 字节", removed, freed)
+	}
+	if _, _, err := Open(dir, oldRel); err == nil {
+		t.Fatal("旧版本文件应已删除")
+	}
+	if _, _, err := Open(dir, newRel); err != nil {
+		t.Fatalf("新版本文件应保留: %v", err)
+	}
+	// 保留集合覆盖全部文件时不删任何东西。
+	if removed, _, err := RemovePostVersions(dir, 6, map[string]bool{"ffffff012345": true}); err != nil || removed != 0 {
+		t.Fatalf("保留集合覆盖时应无删除：%d（%v）", removed, err)
+	}
+	if used, count := Usage(dir); used != 256 || count != 1 {
+		t.Fatalf("清理后占用不符: %d / %d", used, count)
+	}
+}
+
+// TestVersionFromName 验证文件名能取回内容版本。
+func TestVersionFromName(t *testing.T) {
+	if got := versionFromName("3-s1-0123456789ab.webp"); got != "0123456789ab" {
+		t.Fatalf("版本 = %q", got)
+	}
+	if got := versionFromName("broken.webp"); got != "" {
+		t.Fatalf("非法文件名应返回空，实际 %q", got)
+	}
+}

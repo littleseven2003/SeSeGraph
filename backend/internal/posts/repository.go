@@ -991,14 +991,39 @@ func (r *Repository) ClearThumb(ctx context.Context, postID int64, sortOrder int
 	return nil
 }
 
-// ClearAllThumbRecords 清掉全部缩略图记录，用于设置页的整体清理。
+// ClearAllThumbRecords 清掉全部缩略图记录并换新内容版本，
+// 用于设置页的整体清理：在途回存会因版本不符被拒，不会把文件重新写回来。
 func (r *Repository) ClearAllThumbRecords(ctx context.Context) error {
 	if _, err := r.handle.ExecContext(ctx,
-		`UPDATE post_images SET thumb_path = '', thumb_bytes = 0, thumb_at = NULL
-		  WHERE COALESCE(thumb_path, '') <> ''`); err != nil {
+		`UPDATE post_images SET thumb_path = '', thumb_bytes = 0, thumb_at = NULL,
+		        media_version = lower(substr(hex(randomblob(6)), 1, 12))`); err != nil {
 		return errors.New("清理缩略图记录失败")
 	}
 	return nil
+}
+
+// MediaVersions 返回某帖当前的内容版本集合，清理时据此保留刚落盘的新文件。
+func (r *Repository) MediaVersions(ctx context.Context, postID int64) (map[string]bool, error) {
+	rows, err := r.handle.QueryContext(ctx,
+		`SELECT COALESCE(media_version, '') FROM post_images WHERE post_id = ?`, postID)
+	if err != nil {
+		return nil, errors.New("读取媒体版本失败")
+	}
+	defer func() { _ = rows.Close() }()
+	versions := map[string]bool{}
+	for rows.Next() {
+		var version string
+		if err := rows.Scan(&version); err != nil {
+			return nil, errors.New("读取媒体版本失败")
+		}
+		if version != "" {
+			versions[version] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.New("读取媒体版本失败")
+	}
+	return versions, nil
 }
 
 // ResetPostThumbs 清掉某帖全部缩略图记录并换新内容版本，

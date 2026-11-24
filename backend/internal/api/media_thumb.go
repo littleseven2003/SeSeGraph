@@ -163,12 +163,18 @@ func mediaThumbResetHandler(deps Deps) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "重置缩略图记录失败"})
 			return
 		}
-		bytesBefore, count := media.PostUsage(deps.DataDir, postID)
-		if err := media.RemovePost(deps.DataDir, postID); err != nil {
+		// 只删旧版本文件：重置期间刚落盘的新版本保留，迟到的旧版本写入会被版本校验拒绝。
+		keep, err := deps.Posts.MediaVersions(c.Request.Context(), postID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取媒体版本失败"})
+			return
+		}
+		removed, freed, err := media.RemovePostVersions(deps.DataDir, postID, keep)
+		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "清理缩略图文件失败"})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"removed": count, "freed_bytes": bytesBefore})
+		c.JSON(http.StatusOK, gin.H{"removed": removed, "freed_bytes": freed})
 	}
 }
 

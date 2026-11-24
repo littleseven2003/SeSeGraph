@@ -9,7 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -154,8 +156,10 @@ func reserve(dataDir string, incoming, limit int64) error {
 		total += item.size
 	}
 	if limit > 0 && total+incoming > limit {
+		// 淘汰到上限的九成，留出余量：满额后不必每次写入都重扫整个目录。
+		target := limit - limit/10
 		for _, item := range list {
-			if total+incoming <= limit {
+			if total+incoming <= target {
 				break
 			}
 			if err := os.Remove(item.path); err != nil {
@@ -253,27 +257,52 @@ func Remove(dataDir, rel string) error {
 	return nil
 }
 
-// PostUsage 统计某帖缩略图的占用字节数与条目数，重建前用于汇报。
-func PostUsage(dataDir string, postID int64) (int64, int) {
+// RemovePostVersions 删除某帖中内容版本不在保留集合里的缩略图，
+// 用于按图集重建：重建期间刚落盘的新版本文件不会被误删。
+func RemovePostVersions(dataDir string, postID int64, keep map[string]bool) (int, int64, error) {
+	if postID <= 0 {
+		return 0, 0, nil
+	}
 	dir := filepath.Join(dataDir, Dir, strconv.FormatInt(postID, 10))
-	var total int64
-	count := 0
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return 0, 0
+		if errors.Is(err, fs.ErrNotExist) {
+			resetUsage(dataDir)
+			return 0, 0, nil
+		}
+		return 0, 0, err
 	}
+	removed := 0
+	var freed int64
 	for _, item := range entries {
 		if item.IsDir() || filepath.Ext(item.Name()) != ".webp" {
+			continue
+		}
+		if keep[versionFromName(item.Name())] {
 			continue
 		}
 		info, infoErr := item.Info()
 		if infoErr != nil {
 			continue
 		}
-		total += info.Size()
-		count++
+		if err := os.Remove(filepath.Join(dir, item.Name())); err != nil {
+			continue
+		}
+		removed++
+		freed += info.Size()
 	}
-	return total, count
+	resetUsage(dataDir)
+	return removed, freed, nil
+}
+
+// versionFromName 从文件名取回内容版本：序号-规格版本-内容版本.webp。
+func versionFromName(name string) string {
+	base := strings.TrimSuffix(name, ".webp")
+	index := strings.LastIndexByte(base, '-')
+	if index < 0 || index == len(base)-1 {
+		return ""
+	}
+	return base[index+1:]
 }
 
 // RemovePost 删除某帖的全部缩略图，永久删帖或按图集重建时调用。
@@ -327,32 +356,45 @@ func scan(dataDir string) ([]entry, error) {
 }
 
 // sortByMtime 按访问时间升序，最早使用的排在前面。
+// 用标准排序：满额缓存可达数万项，插入排序在这种规模下会退化成平方级。
 func sortByMtime(list []entry) {
-	for i := 1; i < len(list); i++ {
-		item := list[i]
-		j := i - 1
-		for j >= 0 && list[j].mtime.After(item.mtime) {
-			list[j+1] = list[j]
-			j--
-		}
-		list[j+1] = item
-	}
+	sort.SliceStable(list, func(i, j int) bool {
+		return list[i].mtime.Before(list[j].mtime)
+	})
 }
 
 // Usage 汇总当前占用的字节数与条目数，同时刷新占用缓存。
+// 只统计不排序：查看占用时没必要为几万个文件付出排序开销。
 func Usage(dataDir string) (int64, int) {
-	list, err := scan(dataDir)
-	if err != nil {
+	var (
+		total int64
+		count int
+	)
+	err := filepath.WalkDir(filepath.Join(dataDir, Dir), func(path string, item fs.DirEntry, err error) error {
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+		if item.IsDir() || filepath.Ext(path) != ".webp" {
+			return nil
+		}
+		info, infoErr := item.Info()
+		if infoErr != nil {
+			return nil
+		}
+		total += info.Size()
+		count++
+		return nil
+	})
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return 0, 0
 	}
-	var total int64
-	for _, item := range list {
-		total += item.size
-	}
 	usageMu.Lock()
-	usageByDir[dataDir] = usageState{total: total, count: len(list), at: time.Now()}
+	usageByDir[dataDir] = usageState{total: total, count: count, at: time.Now()}
 	usageMu.Unlock()
-	return total, len(list)
+	return total, count
 }
 
 // Evict 按最近最少使用淘汰，直到占用不超过 limit；返回删除数与释放字节数。
