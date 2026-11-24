@@ -69,28 +69,36 @@ function formatSize(bytes: number): string {
   return `${Math.floor(bytes / (1024 * 1024))}MB`
 }
 
-// unpackZip 分两遍处理压缩包：
-// 第一遍只遍历中央目录（filter 一律返回 false，不展开数据），据此执行数量、单张与总量限制；
-// 第二遍只展开白名单内的条目。
-export function unpackZip(data: Uint8Array, options: ArchiveOptions = {}): UnpackResult {
+// ArchivePlan 是中央目录扫描的结果：只登记条目与限制结论，不展开数据。
+export interface ArchivePlan {
+  images: { name: string; size: number }[]
+  /** 命中的说明文件条目名，未命中时为空串 */
+  metaEntry: string
+  metaName: string
+  /** 说明文件展开后的体积，用于第二遍核对 */
+  metaSize: number
+  skipped: number
+  metaError: string
+}
+
+export type ScanResult = { ok: true; plan: ArchivePlan } | { ok: false; error: string }
+
+// scanArchive 只遍历中央目录并执行数量、单项与总量限制，不展开任何数据。
+// 第一遍一律让 filter 返回 false，ZIP 的条目信息已经够做全部判断。
+export function scanArchive(data: Uint8Array, options: ArchiveOptions = {}): ScanResult {
   const limits: ArchiveLimits = { ...DEFAULT_ARCHIVE_LIMITS, ...options.limits }
   const wantedMeta = new Set((options.metaNames ?? DEFAULT_META_FILENAMES).map((name) => name.toLowerCase()))
 
   const images: { name: string; size: number }[] = []
-  // 白名单同时记录第一遍看到的原始大小，第二遍据此只展开登记过的那一份。
-  const wanted = new Map<string, number>()
   let metaEntry = ''
   let metaName = ''
+  let metaSize = 0
   let metaError = ''
   let skipped = 0
   let totalBytes = 0
   let overCount = 0
-  let oversizeName = ''
-  let oversizeLimit = limits.maxImageBytes
-  let oversizeCount = 0
   let overTotal = false
 
-  // 第一遍：只登记条目，不展开任何数据。
   unzipSync(data, {
     filter: (file) => {
       if (isDirectoryEntry(file.name) || isJunkPath(file.name)) return false
@@ -105,11 +113,6 @@ export function unpackZip(data: Uint8Array, options: ArchiveOptions = {}): Unpac
         if (size >= limit) {
           // 单项超限只跳过该项，不因一个文件拒掉整个压缩包。
           skipped += 1
-          if (oversizeName === '') {
-            oversizeName = baseName(file.name)
-            oversizeLimit = limit
-          }
-          oversizeCount += 1
           return false
         }
         if (totalBytes + size > limits.maxTotalBytes) {
@@ -118,7 +121,6 @@ export function unpackZip(data: Uint8Array, options: ArchiveOptions = {}): Unpac
         }
         totalBytes += size
         images.push({ name: file.name, size })
-        wanted.set(file.name, size)
         return false
       }
       if (metaEntry === '' && wantedMeta.has(baseName(file.name).toLowerCase())) {
@@ -130,7 +132,7 @@ export function unpackZip(data: Uint8Array, options: ArchiveOptions = {}): Unpac
         }
         metaEntry = file.name
         metaName = baseName(file.name)
-        wanted.set(file.name, file.originalSize)
+        metaSize = file.originalSize
         return false
       }
       skipped += 1
@@ -141,7 +143,6 @@ export function unpackZip(data: Uint8Array, options: ArchiveOptions = {}): Unpac
   if (overCount > 0) {
     return { ok: false, error: `压缩包内图片超过 ${limits.maxImages} 张，请先精选后再上传` }
   }
-
   if (overTotal) {
     return {
       ok: false,
@@ -151,26 +152,49 @@ export function unpackZip(data: Uint8Array, options: ArchiveOptions = {}): Unpac
   if (images.length === 0) {
     return { ok: false, error: '压缩包里没有找到受支持的图片' }
   }
+  return { ok: true, plan: { images, metaEntry, metaName, metaSize, skipped, metaError } }
+}
 
-  // 第二遍：只展开白名单条目。ZIP 允许同名条目重复出现，
-  // 因此除了名字还要比对第一遍登记的原始大小，同名只展开一次，
-  // 避免用同名副本绕过说明文件与单图上限。
-  const expanded = new Set<string>()
+// expandEntry 只展开白名单里的一项，把峰值压在单张体积上。
+// ZIP 允许同名条目重复出现，因此除了名字还要比对扫描时登记的原始大小。
+export function expandEntry(data: Uint8Array, name: string, size: number): Uint8Array | null {
+  // 同名条目只展开第一份，避免用同名副本绕过说明文件与单图上限。
+  let taken = false
   const files = unzipSync(data, {
     filter: (file) => {
-      const expected = wanted.get(file.name)
-      if (expected === undefined || expanded.has(file.name)) return false
-      if (file.originalSize !== expected) return false
-      expanded.add(file.name)
+      if (taken) return false
+      if (file.name !== name || file.originalSize !== size) return false
+      taken = true
       return true
     },
   })
+  return files[name] ?? null
+}
 
-  const unpacked: ArchiveImage[] = []
+// ProgressiveResult 是逐项展开的说明文件信息；图片通过回调边展开边交给调用方。
+export interface ProgressiveMeta {
+  metaText: string
+  metaName: string
+  skipped: number
+  metaError: string
+}
+
+// unpackZipProgressive 逐项展开压缩包：每次只解开一项，展开后立刻交给 onImage，
+// 不在内存里攒整包。Worker 里用它，主线程不会因为解压大包而卡住。
+export function unpackZipProgressive(
+  data: Uint8Array,
+  options: ArchiveOptions,
+  onImage: (image: ArchiveImage) => void,
+): ({ ok: true } & ProgressiveMeta) | { ok: false; error: string } {
+  const limits: ArchiveLimits = { ...DEFAULT_ARCHIVE_LIMITS, ...options.limits }
+  const scan = scanArchive(data, options)
+  if (!scan.ok) return scan
+  const plan = scan.plan
+
   let actualBytes = 0
-  for (const image of images) {
-    const bytes = files[image.name]
-    if (!bytes) continue
+  for (const image of sortByNaturalName(plan.images, (entry) => entry.name)) {
+    const bytes = expandEntry(data, image.name, image.size)
+    if (bytes === null) continue
     actualBytes += bytes.length
     if (actualBytes > limits.maxTotalBytes) {
       return {
@@ -178,16 +202,41 @@ export function unpackZip(data: Uint8Array, options: ArchiveOptions = {}): Unpac
         error: `压缩包展开后超过 ${formatSize(limits.maxTotalBytes)}，请分批上传`,
       }
     }
-    unpacked.push({ name: image.name, data: bytes })
+    onImage({ name: image.name, data: bytes })
   }
 
-  const metaBytes = metaEntry !== '' ? files[metaEntry] : undefined
+  const metaBytes = plan.metaEntry !== '' ? expandEntry(data, plan.metaEntry, plan.metaSize) : null
   return {
     ok: true,
-    images: sortByNaturalName(unpacked, (image) => image.name),
     metaText: metaBytes ? new TextDecoder('utf-8').decode(metaBytes) : '',
-    metaName,
-    skipped,
-    metaError,
+    metaName: plan.metaName,
+    skipped: plan.skipped,
+    metaError: plan.metaError,
+  }
+}
+
+// unpackZip 同步展开整包，供不支持 Worker 的环境与单元测试使用。
+export function unpackZip(data: Uint8Array, options: ArchiveOptions = {}): UnpackResult {
+  const limits: ArchiveLimits = { ...DEFAULT_ARCHIVE_LIMITS, ...options.limits }
+  const images: ArchiveImage[] = []
+  let actualBytes = 0
+  const result = unpackZipProgressive(data, options, (image) => {
+    actualBytes += image.data.length
+    images.push(image)
+  })
+  if (!result.ok) return result
+  if (actualBytes > limits.maxTotalBytes) {
+    return {
+      ok: false,
+      error: `压缩包展开后超过 ${formatSize(limits.maxTotalBytes)}，请分批上传`,
+    }
+  }
+  return {
+    ok: true,
+    images,
+    metaText: result.metaText,
+    metaName: result.metaName,
+    skipped: result.skipped,
+    metaError: result.metaError,
   }
 }

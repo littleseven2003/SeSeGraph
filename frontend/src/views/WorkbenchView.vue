@@ -73,7 +73,8 @@ import {
 } from '../utils/task-store.ts'
 import { acceptedCount, initialStatuses, planUploads, type UploadStatus, runUploadPool } from '../utils/upload.ts'
 import { effectiveUploadConcurrency, readUploadConcurrency } from '../utils/upload-pref.ts'
-import { DEFAULT_META_FILENAMES, unpackZip } from '../utils/zip.ts'
+import { DEFAULT_META_FILENAMES } from '../utils/zip.ts'
+import { imageBlob, unpackArchive } from '../utils/zip-client.ts'
 import { fetchSettings } from '../api/settings.ts'
 import {
   canLeaveResume,
@@ -674,63 +675,57 @@ function announceStatus(): void {
   }
 }
 
-function onZip(file: File): void {
+async function onZip(file: File): Promise<void> {
   working.value = true
-  message.value = ''
-  const reader = new FileReader()
-  reader.onload = async () => {
-    try {
-      const result = unpackZip(new Uint8Array(reader.result as ArrayBuffer), {
-        metaNames: metaNames.value,
-        // photo 模式下允许更大的静态图进入压缩流程；视频始终按 20,000,000 字节。
-        limits: {
-          maxImageBytes: 50000000,
-        },
-      })
-      if (!result.ok) {
-        pushError(result.error)
-        return
-      }
-      if (result.images.length > MAX_IMAGE_COUNT) {
-        pushError(`单个帖子最多 ${MAX_IMAGE_COUNT} 张图片，请先精简压缩包`)
-        return
-      }
-      releaseTiles(tiles.value)
-      // 压缩包内同样统一预处理：视频读首帧、photo 模式超大静态图先压缩。
-      const problems: string[] = []
-      const next = await prepareTiles(
-        result.images.map((image) => ({
-          name: image.name,
-          blob: new Blob([image.data.slice()], { type: mimeForName(image.name) || 'application/octet-stream' }),
-        })),
-        problems,
-      )
-      if (problems.length > 0) pushError(problems.join('；'))
-      metaText.value = result.metaText
-      metaSource.value = result.metaText === '' ? '' : result.metaName
-      applyTiles(next)
-      restoreOrder()
-      if (result.metaText !== '') {
-        // 包内存在说明文件时自动预填，解析方式与手动重读一致，缺失字段仍可手动补充。
-        draft.value = prefillFromMeta(result.metaText, metaParseMode.value)
-      }
-      if (result.metaError !== '') {
-        message.value = result.metaError
-      } else if (result.skipped > 0 && message.value === '') {
-        message.value = `已忽略 ${result.skipped} 个非媒体文件`
-      }
-      void refreshCover()
-    } catch {
-      pushError('压缩包读取失败，请确认文件完整且没有加密')
-    } finally {
-      working.value = false
+  message.value = '正在解压压缩包…'
+  try {
+    // 解压放到 Worker 里逐项展开：大包不会占住主线程，内存峰值只有单张体积。
+    const result = await unpackArchive(file, {
+      metaNames: metaNames.value,
+      // photo 模式下允许更大的静态图进入压缩流程；视频始终按 20,000,000 字节。
+      limits: {
+        maxImageBytes: 50000000,
+      },
+    })
+    message.value = ''
+    if (!result.ok) {
+      pushError(result.error)
+      return
     }
-  }
-  reader.onerror = () => {
+    if (result.images.length > MAX_IMAGE_COUNT) {
+      pushError(`单个帖子最多 ${MAX_IMAGE_COUNT} 张图片，请先精简压缩包`)
+      return
+    }
+    releaseTiles(tiles.value)
+    // 压缩包内同样统一预处理：视频读首帧、photo 模式超大静态图先压缩。
+    const problems: string[] = []
+    const next = await prepareTiles(
+      result.images.map((image) => ({
+        name: image.name,
+        blob: imageBlob(image, mimeForName(image.name) || 'application/octet-stream'),
+      })),
+      problems,
+    )
+    if (problems.length > 0) pushError(problems.join('；'))
+    metaText.value = result.metaText
+    metaSource.value = result.metaText === '' ? '' : result.metaName
+    applyTiles(next)
+    restoreOrder()
+    if (result.metaText !== '') {
+      // 包内存在说明文件时自动预填，解析方式与手动重读一致，缺失字段仍可手动补充。
+      draft.value = prefillFromMeta(result.metaText, metaParseMode.value)
+    }
+    if (result.metaError !== '') {
+      message.value = result.metaError
+    } else if (result.skipped > 0 && message.value === '') {
+      message.value = `已忽略 ${result.skipped} 个非媒体文件`
+    }
+    void refreshCover()
+  } catch {
+    pushError('压缩包读取失败，请确认文件完整且没有加密')
+  } finally {
     working.value = false
-    pushError('压缩包读取失败，请重新选择文件')
   }
-  reader.readAsArrayBuffer(file)
 }
 
 async function onImages(files: File[], unread: string[] = []): Promise<void> {

@@ -2,7 +2,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { zipSync, strToU8 } from 'fflate'
 import { unpackZip } from '../src/utils/zip.ts'
+import { File } from 'node:buffer'
 import { coverSize, toDataUrl } from '../src/utils/cover.ts'
+import { unpackArchive } from '../src/utils/zip-client.ts'
 
 function buildArchive(entries: Record<string, Uint8Array | string>): Uint8Array {
   const payload: Record<string, Uint8Array> = {}
@@ -230,4 +232,33 @@ test('同名条目不能绕过说明文件大小上限', () => {
   const limited = expectOk(unpackZip(archive, { limits: { maxMetaBytes: 12 } }))
   assert.deepEqual(limited.images.map((image) => image.name), ['a.jpg'])
   assert.equal(limited.metaText, '标题：小')
+})
+
+test('解压入口在没有 Worker 的环境回落逐项展开', async () => {
+  const archive = buildArchive({
+    'pack/10.jpg': new Uint8Array([10]),
+    'pack/2.jpg': new Uint8Array([2]),
+    'info.txt': '标题：回落路径',
+  })
+  const result = await unpackArchive(new File([archive], 'pack.zip'))
+  assert.ok(result.ok)
+  assert.deepEqual(result.images.map((image) => image.name), ['pack/2.jpg', 'pack/10.jpg'])
+  assert.equal(result.metaText, '标题：回落路径')
+  assert.equal(result.metaName, 'info.txt')
+})
+
+test('解压入口沿用同一套数量与单项限制', async () => {
+  const entries: Record<string, Uint8Array> = {}
+  for (let index = 1; index <= 4; index += 1) entries[`${index}.jpg`] = new Uint8Array([index])
+  const overCount = await unpackArchive(new File([buildArchive(entries)], 'many.zip'), { limits: { maxImages: 3 } })
+  assert.ok(!overCount.ok)
+  assert.match(overCount.error, /超过 3 张/)
+
+  const oversize = await unpackArchive(
+    new File([buildArchive({ 'big.jpg': new Uint8Array(500), 'small.jpg': new Uint8Array(1) })], 'size.zip'),
+    { limits: { maxImageBytes: 100 } },
+  )
+  assert.ok(oversize.ok)
+  assert.deepEqual(oversize.images.map((image) => image.name), ['small.jpg'])
+  assert.equal(oversize.skipped, 1)
 })
