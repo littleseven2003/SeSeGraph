@@ -315,6 +315,18 @@ async function webpSize(blob: Blob): Promise<ImageSize | null> {
   return null
 }
 
+// compressionGate 在解码前判断这张图该怎么处理：尺寸读不到时不盲目解码，
+// 原图合规就保留，已超上限则按无法压缩处理，交给提交前统一拦截。
+export function compressionGate(
+  originalSize: number,
+  limit: number,
+  header: ImageSize | null,
+): 'compress' | 'keep' | 'block' {
+  if (header === null) return originalSize <= limit ? 'keep' : 'block'
+  if (header.width * header.height > COMPRESS_MAX_INPUT_PIXELS) return originalSize <= limit ? 'keep' : 'block'
+  return 'compress'
+}
+
 // compressImage 把静态图压到上限内：按体积逐档降质并缩放，产物满足宽高与长宽比约束。
 export async function compressImage(blob: Blob, target = COMPRESS_TARGET_BYTES): Promise<CompressResult> {
   if (blob.size > COMPRESS_MAX_INPUT_BYTES) {

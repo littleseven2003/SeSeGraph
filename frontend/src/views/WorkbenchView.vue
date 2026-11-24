@@ -48,12 +48,14 @@ import {
   checkImportFile,
   compressFallback,
   compressImage,
+  compressionGate,
   compressionSummary,
   evaluateMedia,
   extractVideoMeta,
   isAnimatedImage,
   keepOriginalAfterCompress,
   readAutoCompress,
+  readImageSize,
   saveAutoCompress,
   selectionSummary,
   type CompressResult,
@@ -524,6 +526,7 @@ async function prepareTiles(
 
 // resetToSource 回到原始文件：切换模式或开关后重新判定，不留不可逆降质。
 function resetToSource(): void {
+  bumpStrategy()
   tiles.value = tiles.value.map((tile) => ({
     ...tile,
     blob: tile.sourceBlob ?? tile.blob,
@@ -700,11 +703,22 @@ const localCompress = new LocalCompressScheduler(thumbQueue, {
   },
 })
 
+// strategyVersion 记录画质与自动压缩开头的版本：压缩结果只回写给发起时的那一版策略。
+let strategyVersion = 0
+
+function bumpStrategy(): void {
+  strategyVersion += 1
+}
+
 // compressTile 压缩一项并写回结果：无收益或失败但原图合规时保留原图。
+// 发起时取定策略快照，回写前版本变了就丢弃，避免旧结果覆盖已还原的原图。
 async function compressTile(id: string): Promise<void> {
   const find = (): WorkbenchTile | undefined => tiles.value.find((tile) => tile.id === id)
   const tile = find()
   if (tile === undefined) return
+  const version = strategyVersion
+  const strategyMode = mode.value
+  const strategyCompress = autoCompress.value
   const verdict = evaluateMedia(
     {
       kind: tile.kind ?? 'image',
@@ -715,17 +729,28 @@ async function compressTile(id: string): Promise<void> {
       failed: tile.compressFailed,
       keptOriginal: tile.keptOriginal,
     },
-    mode.value,
-    autoCompress.value,
+    strategyMode,
+    strategyCompress,
   )
   if (verdict.state !== 'pending') return
-  const limit = mode.value === 'document' ? DOCUMENT_LIMIT_BYTES : PHOTO_LIMIT_BYTES
-  const target = mode.value === 'document' ? COMPRESS_TARGET_DOCUMENT : COMPRESS_TARGET_BYTES
-  try {
-    const result = await compressImage(tile.sourceBlob ?? tile.blob, target)
-    // 压缩期间可能切了模式或清空，回写前再确认一次。
+  const limit = strategyMode === 'document' ? DOCUMENT_LIMIT_BYTES : PHOTO_LIMIT_BYTES
+  const target = strategyMode === 'document' ? COMPRESS_TARGET_DOCUMENT : COMPRESS_TARGET_BYTES
+  const source = tile.sourceBlob ?? tile.blob
+  // 尺寸读不到就不解码：原图合规时保留，超上限留给提交前拦截。
+  const gate = compressionGate(tile.sourceSize ?? tile.size, limit, await readImageSize(source).catch(() => null))
+  if (version !== strategyVersion) return
+  if (gate !== 'compress') {
     const current = find()
     if (current === undefined) return
+    current.keptOriginal = gate === 'keep' ? true : undefined
+    current.compressFailed = gate === 'block' ? true : undefined
+    return
+  }
+  try {
+    const result = await compressImage(source, target)
+    // 压缩期间可能切了模式、关了开关或清空，回写前再确认策略版本与该项是否还在。
+    const current = find()
+    if (current === undefined || version !== strategyVersion) return
     if (keepOriginalAfterCompress(current.sourceSize ?? current.size, result.toSize, limit)) {
       current.keptOriginal = true
       current.compressFailed = undefined
@@ -739,7 +764,7 @@ async function compressTile(id: string): Promise<void> {
     current.compressFailed = undefined
   } catch {
     const current = find()
-    if (current === undefined) return
+    if (current === undefined || version !== strategyVersion) return
     if (compressFallback(current.sourceSize ?? current.size, limit) === 'keep') {
       current.keptOriginal = true
       current.compressFailed = undefined
@@ -1190,6 +1215,7 @@ function clearAll(): void {
   if (!ready.value) return
   // 换一批文件：作废在途生成与压缩，迟到的结果不再挂回空网格。
   if (working.value) cancelArchive()
+  bumpStrategy()
   localThumbs.reset()
   localCompress.reset()
   releaseTiles(tiles.value)
@@ -1210,7 +1236,7 @@ function clearAll(): void {
 }
 
 // 建任务：已存在任务或上次未完成任务时复用，避免重复建帖。
-async function ensureTask(): Promise<number | null> {
+async function ensureTask(intent: 'auto' | 'manual'): Promise<number | null> {
   if (postId.value > 0) {
     const current = snapshot.value
     if (current) {

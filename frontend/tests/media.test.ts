@@ -10,6 +10,7 @@ import {
   MAX_VIDEO_BYTES,
   checkImportFile,
   checkMediaFile,
+  compressionGate,
   compressionSummary,
   fitScale,
   formatDuration,
@@ -295,4 +296,16 @@ test('JPEG 段头里的尺寸可直接读取，用于解码前拦截', async () 
   jpeg.set([0xff, 0xe0, 0x00, 0x02], 2)
   jpeg.set([0xff, 0xc0, 0x00, 0x11, 0x08, 0x0b, 0xb8, 0x0f, 0xa0], 6)
   assert.deepEqual(await readImageSize(new Blob([jpeg])), { width: 4000, height: 3000 })
+})
+
+test('压缩门禁在解码前决定：尺寸读不到就保留原图或拦截', () => {
+  const limit = 10_000
+  // 尺寸确认不了：原图合规就保留，超上限按无法压缩处理。
+  assert.equal(compressionGate(8_000, limit, null), 'keep')
+  assert.equal(compressionGate(12_000, limit, null), 'block')
+  // 像素超过上限同样不解码。
+  assert.equal(compressionGate(8_000, limit, { width: 20_000, height: 10_000 }), 'keep')
+  assert.equal(compressionGate(12_000, limit, { width: 20_000, height: 10_000 }), 'block')
+  // 正常尺寸才进入压缩。
+  assert.equal(compressionGate(12_000, limit, { width: 1920, height: 1080 }), 'compress')
 })
