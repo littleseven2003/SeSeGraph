@@ -81,6 +81,12 @@ function view(overrides: Partial<SettingsView> = {}): SettingsView {
       default_mode: 'photo',
       mode_source: 'default',
     },
+    media_thumbs: {
+      limit_bytes: 2 * 1024 * 1024 * 1024,
+      limit_source: 'default',
+      used_bytes: 0,
+      count: 0,
+    },
     meta: {
       filenames: ['info.txt', 'meta.txt', 'readme.txt'],
       parse_mode: 'first-line',
@@ -92,6 +98,7 @@ function view(overrides: Partial<SettingsView> = {}): SettingsView {
 }
 
 const baseForm = {
+  thumbGB: '2',
   alertGB: '',
   limitGB: '',
   backupEnabled: false,
@@ -109,6 +116,22 @@ const baseForm = {
   proxyTelegram: false,
   proxyTelegraph: false,
 }
+
+test('缩略图缓存上限按 GB 换算并校验区间', () => {
+  const current = view()
+  // 未改动时不提交。
+  assert.equal(changedPatch(current, { ...baseForm }).media_thumbs, undefined)
+  // 调到 1 GiB。
+  assert.deepEqual(changedPatch(current, { ...baseForm, thumbGB: '1' }).media_thumbs, {
+    limit_bytes: 1024 * 1024 * 1024,
+  })
+  // 低于 64 MiB 与高于 50 GiB 不接受。
+  assert.equal(changedPatch(current, { ...baseForm, thumbGB: '0.05' }).media_thumbs, undefined)
+  assert.equal(changedPatch(current, { ...baseForm, thumbGB: '60' }).media_thumbs, undefined)
+  // 由环境变量托管时界面改动被忽略。
+  const managed = view({ env_managed: ['media_thumbs.limit_bytes'] })
+  assert.equal(changedPatch(managed, { ...baseForm, thumbGB: '1' }).media_thumbs, undefined)
+})
 
 test('令牌占位文案区分已设置与未设置', () => {
   assert.equal(tokenPlaceholder(true), '已设置，留空不修改')

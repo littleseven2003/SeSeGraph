@@ -220,6 +220,15 @@ export async function clearMediaThumbs(): Promise<{ removed: number; freed_bytes
   return (await response.json()) as { removed: number; freed_bytes: number }
 }
 
+// resetPostThumbs 清掉某帖的逐图小图并换新内容版本，供按图集重建使用。
+export async function resetPostThumbs(
+  postId: number,
+): Promise<{ removed: number; freed_bytes: number }> {
+  const response = await apiRequest(`/api/posts/${postId}/media-thumbs/reset`, { method: 'POST' })
+  if (!response.ok) throw new Error('重置缩略图失败')
+  return (await response.json()) as { removed: number; freed_bytes: number }
+}
+
 // triggerBackup 立即生成一份备份。
 export async function triggerBackup(): Promise<BackupResult> {
   const response = await apiRequest('/api/backup/trigger', { method: 'POST' })

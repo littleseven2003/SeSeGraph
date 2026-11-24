@@ -3,10 +3,12 @@ import { nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ApiError } from '../api/client.ts'
 import {
+  clearMediaThumbs,
   createTelegraphAccount,
   fetchBackupStatus,
   fetchSettings,
   fetchTraffic,
+  resetPostThumbs,
   saveSettings,
   testConnection,
   triggerBackup,
@@ -17,6 +19,9 @@ import {
   type SettingsView,
   type TrafficStats,
 } from '../api/settings.ts'
+import { fetchGallery, fetchPostDetail, type GalleryItem } from '../api/gallery.ts'
+import { fetchMediaBlob, uploadThumb } from '../api/posts.ts'
+import { renderThumb, THUMB_MAX_PIXELS } from '../utils/thumbs.ts'
 import {
   channelInvalid,
   changedPatch,
@@ -41,6 +46,7 @@ import {
   FIELD_BACKUP_ENABLED,
   FIELD_BACKUP_TIME,
   FIELD_BACKUP_KEEP,
+  FIELD_MEDIA_THUMBS_LIMIT,
   backupTimeInvalid,
   bytesToGB,
   gbToBytes,
@@ -98,6 +104,17 @@ const credentialForm = reactive<CredentialForm>({
 })
 const credentialFieldErrors = ref<CredentialErrors>({})
 const credentialSubmitting = ref(false)
+// 逐图缩略图缓存的在线管理：清理与按图集重建都在浏览器内单路执行。
+const thumbBusy = ref(false)
+const thumbError = ref('')
+const thumbNote = ref('')
+const rebuildPosts = ref<GalleryItem[]>([])
+const rebuildPostId = ref<number | null>(null)
+const rebuildRunning = ref(false)
+const rebuildCancel = ref(false)
+const rebuildNote = ref('')
+const rebuildError = ref('')
+const rebuildProgress = reactive({ done: 0, total: 0, failed: 0 })
 const credentialError = ref('')
 const credentialNote = ref('')
 const router = useRouter()
@@ -289,6 +306,85 @@ async function runBackup(): Promise<void> {
   }
 }
 
+// refreshThumbUsage 只刷新占用与条目数，避免冲掉表单里还没保存的改动。
+async function refreshThumbUsage(): Promise<void> {
+  if (view.value === null) return
+  try {
+    const next = await fetchSettings()
+    if (view.value !== null) view.value = { ...view.value, media_thumbs: next.media_thumbs }
+  } catch {
+    // 占用只是展示，读取失败不打断其他操作
+  }
+}
+
+// loadRebuildPosts 读取可重建的图集列表，供按图集重建选择。
+async function loadRebuildPosts(): Promise<void> {
+  try {
+    const page = await fetchGallery({ q: '', tags: [], page: 1, pageSize: 100 })
+    rebuildPosts.value = page.items.filter((item) => item.image_count > 0)
+  } catch {
+    // 列表只是辅助，失败时保留原样
+  }
+}
+
+// clearThumbs 清空全部逐图小图；原图不受影响，下次打开会重新生成。
+async function clearThumbs(): Promise<void> {
+  if (thumbBusy.value) return
+  if (!window.confirm('确定清空全部逐图缩略图缓存？已发布的原图不受影响，下次打开时会重新生成。')) return
+  thumbBusy.value = true
+  thumbError.value = ''
+  thumbNote.value = ''
+  try {
+    const result = await clearMediaThumbs()
+    thumbNote.value = '已清理 ' + String(result.removed) + ' 项，释放 ' + formatTrafficBytes(result.freed_bytes) + '。'
+    await refreshThumbUsage()
+  } catch (cause) {
+    thumbError.value = cause instanceof Error ? cause.message : '清理失败，请稍后重试'
+  } finally {
+    thumbBusy.value = false
+  }
+}
+
+// startRebuild 先清该帖小图并换新内容版本，再在浏览器内串行回源生成并回存，
+// 与抽屉共用同一份 512px 规格，迟到写入会因版本不符被服务端拒绝。
+async function startRebuild(): Promise<void> {
+  if (rebuildRunning.value || rebuildPostId.value === null) return
+  const postId = rebuildPostId.value
+  rebuildRunning.value = true
+  rebuildCancel.value = false
+  rebuildError.value = ''
+  rebuildNote.value = ''
+  rebuildProgress.done = 0
+  rebuildProgress.total = 0
+  rebuildProgress.failed = 0
+  try {
+    await resetPostThumbs(postId)
+    const detail = await fetchPostDetail(postId)
+    const targets = detail.images.filter((image) => image.status === 'stored')
+    rebuildProgress.total = targets.length
+    for (const image of targets) {
+      if (rebuildCancel.value) break
+      try {
+        const source = await fetchMediaBlob(postId, image.sort_order)
+        const thumb = await renderThumb(source, THUMB_MAX_PIXELS)
+        await uploadThumb(postId, image.sort_order, image.media_version, thumb)
+      } catch {
+        rebuildProgress.failed += 1
+      }
+      rebuildProgress.done += 1
+    }
+    const okCount = rebuildProgress.done - rebuildProgress.failed
+    rebuildNote.value = rebuildCancel.value
+      ? '已取消重建，已完成的项保留小图。'
+      : '重建完成：' + String(okCount) + '/' + String(rebuildProgress.total) + ' 项成功。'
+    await refreshThumbUsage()
+  } catch (cause) {
+    rebuildError.value = cause instanceof Error ? cause.message : '重建失败，请稍后重试'
+  } finally {
+    rebuildRunning.value = false
+  }
+}
+
 async function load(): Promise<void> {
   loading.value = true
   loadError.value = ''
@@ -296,6 +392,7 @@ async function load(): Promise<void> {
     applyView(await fetchSettings())
     await loadTraffic()
     await loadBackup()
+    await loadRebuildPosts()
   } catch (cause) {
     loadError.value = cause instanceof ApiError && cause.status === 401
       ? '登录已失效，请重新登录后再打开设置'
@@ -1098,6 +1195,99 @@ onBeforeUnmount(() => {
                       <p class="mt-1 text-sm">{{ backupLatestText(backup) }}</p>
                     </template>
                     <p v-else class="text-xs text-muted">尚未读取备份状态。</p>
+                  </div>
+                </div>
+
+                <div class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+                  <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3.5">
+                    <h3 class="text-sm font-semibold">媒体缩略图缓存</h3>
+                    <button
+                      type="button"
+                      class="h-11 shrink-0 rounded-full border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
+                      @click="refreshThumbUsage"
+                    >
+                      刷新占用
+                    </button>
+                  </div>
+                  <div class="space-y-3 px-5 py-4">
+                    <label class="block">
+                      <span class="text-xs font-medium text-muted">缓存上限（GB）</span>
+                      <input
+                        v-model="form.thumbGB"
+                        type="number"
+                        min="0.0625"
+                        max="50"
+                        step="0.5"
+                        :disabled="saving || managed(FIELD_MEDIA_THUMBS_LIMIT)"
+                        class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface disabled:opacity-60 sm:w-56"
+                      />
+                      <p v-if="managed(FIELD_MEDIA_THUMBS_LIMIT)" class="mt-1 text-xs text-muted">{{ ENV_MANAGED_HINT }}</p>
+                    </label>
+                    <p class="text-xs text-muted">每项媒体保存一份最长边 512px 的 WebP，行内小图与放大气泡共用；保存后按最近最少使用淘汰到新上限，磁盘余量不足时暂停写入新的小图。</p>
+
+                    <div class="grid grid-cols-2 gap-3 rounded-xl bg-canvas px-3 py-3 sm:max-w-md">
+                      <div>
+                        <p class="text-xs text-muted">已占用</p>
+                        <p class="mt-0.5 text-sm font-medium tnum">{{ formatTrafficBytes(view?.media_thumbs.used_bytes ?? 0) }}</p>
+                      </div>
+                      <div>
+                        <p class="text-xs text-muted">条目数</p>
+                        <p class="mt-0.5 text-sm font-medium tnum">{{ view?.media_thumbs.count ?? 0 }}</p>
+                      </div>
+                    </div>
+
+                    <div class="flex flex-wrap items-center gap-3">
+                      <button
+                        type="button"
+                        class="h-11 rounded-full border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
+                        :disabled="thumbBusy || saving"
+                        @click="clearThumbs"
+                      >
+                        清空缓存
+                      </button>
+                      <span class="text-xs text-muted">只删小图，原图与已发布内容不受影响。</span>
+                    </div>
+
+                    <div class="space-y-2 rounded-xl bg-canvas px-3 py-3">
+                      <p class="text-xs font-medium text-muted">按图集重建</p>
+                      <div class="flex flex-wrap items-center gap-2">
+                        <select
+                          v-model.number="rebuildPostId"
+                          :disabled="rebuildRunning"
+                          class="h-11 min-w-0 flex-1 rounded-xl border border-line bg-surface px-3 text-sm outline-none transition focus:border-ink/40 disabled:opacity-60"
+                        >
+                          <option :value="null">选择图集</option>
+                          <option v-for="item in rebuildPosts" :key="item.id" :value="item.id">
+                            {{ item.title }}（{{ item.image_count }} 项）
+                          </option>
+                        </select>
+                        <button
+                          type="button"
+                          class="h-11 shrink-0 rounded-full bg-ink px-3.5 text-sm font-medium text-surface transition hover:opacity-90 disabled:opacity-60"
+                          :disabled="rebuildRunning || rebuildPostId === null"
+                          @click="startRebuild"
+                        >
+                          开始重建
+                        </button>
+                        <button
+                          v-if="rebuildRunning"
+                          type="button"
+                          class="h-11 shrink-0 rounded-full border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-surface hover:text-ink"
+                          @click="rebuildCancel = true"
+                        >
+                          取消
+                        </button>
+                      </div>
+                      <p v-if="rebuildProgress.total > 0" class="text-xs text-muted tnum">
+                        已处理 {{ rebuildProgress.done }} / {{ rebuildProgress.total }}，失败 {{ rebuildProgress.failed }}
+                      </p>
+                      <p v-if="rebuildNote !== ''" class="text-xs text-accent">{{ rebuildNote }}</p>
+                      <p v-if="rebuildError !== ''" class="text-xs text-danger">{{ rebuildError }}</p>
+                      <p v-else class="text-xs text-muted">重建会清掉该图集的小图并换新内容版本，再在浏览器内逐项回源生成，避免同时展开多张大图。</p>
+                    </div>
+
+                    <p v-if="thumbError !== ''" class="text-xs text-danger">{{ thumbError }}</p>
+                    <p v-else-if="thumbNote !== ''" class="text-xs text-accent">{{ thumbNote }}</p>
                   </div>
                 </div>
               </div>
