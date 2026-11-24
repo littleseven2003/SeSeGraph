@@ -231,7 +231,10 @@ const channelCount = computed(() => {
 const stages = computed(() =>
   taskStages({
     imageCount: imageCount.value,
-    compressedCount: serverProgress.value?.compressed_count ?? compressDone.value,
+    // 草稿还没压缩时给 0（显示「等待」）；只有旧任务缺记录才给 null（显示「未记录」）。
+    compressedCount: serverProgress.value
+      ? serverProgress.value.compressed_count ?? null
+      : compressDone.value ?? 0,
     receivedCount: receivedCount.value,
     channelCount: channelCount.value,
     publishState: serverProgress.value?.publish_state ?? 'idle',
