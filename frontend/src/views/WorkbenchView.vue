@@ -1492,7 +1492,7 @@ onBeforeUnmount(() => {
           v-if="resumableHint && snapshot === null && postId === 0"
           class="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-surface px-3.5 py-2.5 text-sm"
         >
-          <span class="min-w-0 truncate text-muted">
+          <span class="min-w-0 flex-1 text-muted">
             有未完成任务 <span class="tnum font-medium text-ink">#{{ resumableHint.postId }}</span>（{{ resumableHint.files.length }} 个文件），不影响直接拖入新素材。
           </span>
           <router-link

@@ -1,31 +1,69 @@
 // 压缩包解压 Worker：逐项展开并立刻把结果交给主线程，主线程不会因为大包卡住。
-import { unpackZipProgressive, type ArchiveImage, type ArchiveLimits } from './zip.ts'
+// 每交一项都等主线程确认后再展开下一张，任何时刻只有一张解压结果在两边之间流转。
+import { DEFAULT_ARCHIVE_LIMITS, expandEntry, scanArchive, type ArchiveLimits, type ScanResult } from './zip.ts'
+import { sortByNaturalName } from './natural.ts'
 
 interface ZipRequest {
+  type?: 'unpack'
   id: number
   file: File
   metaNames?: string[]
   limits?: Partial<ArchiveLimits>
 }
 
+interface ZipAck {
+  type: 'ack'
+  id: number
+}
+
 interface ZipScope {
   postMessage: (message: unknown, transfer?: Transferable[]) => void
-  onmessage: ((event: MessageEvent<ZipRequest>) => void) | null
+  onmessage: ((event: MessageEvent<ZipRequest | ZipAck>) => void) | null
 }
 
 const scope = self as unknown as ZipScope
 
-scope.onmessage = (event: MessageEvent<ZipRequest>) => {
-  const { id, file, metaNames, limits } = event.data
-  try {
-    void unpackInWorker(id, file, metaNames, limits)
-  } catch {
-    scope.postMessage({ id, type: 'error', error: '压缩包读取失败，请确认文件完整且没有加密' })
+// 等待主线程确认的待决项：按 id 保存一次 resolve，确认后继续展开。
+const acks = new Map<number, () => void>()
+let active = 0
+
+scope.onmessage = (event: MessageEvent<ZipRequest | ZipAck>) => {
+  const message = event.data
+  if ('type' in message && message.type === 'ack') {
+    const release = acks.get(message.id)
+    if (release !== undefined) {
+      acks.delete(message.id)
+      release()
+    }
+    return
   }
+  const request = message as ZipRequest
+  active = request.id
+  void unpackInWorker(request.id, request.file, request.metaNames, request.limits)
+}
+
+// waitAck 让下一项等到主线程处理完上一项再开始，避免整批字节同时压进主线程。
+function waitAck(id: number, deadlineMs = 10000): Promise<void> {
+  return new Promise((resolve) => {
+    if (active !== id) {
+      resolve()
+      return
+    }
+    let settled = false
+    const finish = (): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      acks.delete(id)
+      resolve()
+    }
+    acks.set(id, finish)
+    // 主线程长时间不确认时继续展开，宁可短时占用高一些也不能卡住整批导入。
+    const timer = setTimeout(finish, deadlineMs)
+  })
 }
 
 // unpackInWorker 在线程内读取整包并逐项展开：主线程只传文件句柄，不占整包字节。
-// 展开一项就转移一项，线程内不攒整包，峰值只有单张体积。
 async function unpackInWorker(
   id: number,
   file: File,
@@ -40,21 +78,36 @@ async function unpackInWorker(
     return
   }
   try {
-    const result = unpackZipProgressive(new Uint8Array(buffer), { metaNames, limits }, (image: ArchiveImage) => {
-      const data = image.data
-      scope.postMessage({ id, type: 'image', name: image.name, data }, [data.buffer])
-    })
-    if (!result.ok) {
-      scope.postMessage({ id, type: 'error', error: result.error })
+    const bytes = new Uint8Array(buffer)
+    const scan: ScanResult = scanArchive(bytes, { metaNames, limits })
+    if (!scan.ok) {
+      scope.postMessage({ id, type: 'error', error: scan.error })
       return
     }
+    const plan = scan.plan
+    const ordered = sortByNaturalName(plan.images, (entry) => entry.name)
+    let actualBytes = 0
+    const maxTotal = limits?.maxTotalBytes ?? DEFAULT_ARCHIVE_LIMITS.maxTotalBytes
+    for (const image of ordered) {
+      if (active !== id) return
+      const data = expandEntry(bytes, image.name, image.size)
+      if (data === null) continue
+      actualBytes += data.length
+      if (actualBytes > maxTotal) {
+        scope.postMessage({ id, type: 'error', error: '压缩包展开后超过上限，请分批上传' })
+        return
+      }
+      scope.postMessage({ id, type: 'image', name: image.name, data }, [data.buffer])
+      await waitAck(id)
+    }
+    const metaBytes = plan.metaEntry !== '' ? expandEntry(bytes, plan.metaEntry, plan.metaSize) : null
     scope.postMessage({
       id,
       type: 'done',
-      metaText: result.metaText,
-      metaName: result.metaName,
-      skipped: result.skipped,
-      metaError: result.metaError,
+      metaText: metaBytes === null ? '' : new TextDecoder('utf-8').decode(metaBytes),
+      metaName: plan.metaName,
+      skipped: plan.skipped,
+      metaError: plan.metaError,
     })
   } catch {
     scope.postMessage({ id, type: 'error', error: '压缩包读取失败，请确认文件完整且没有加密' })

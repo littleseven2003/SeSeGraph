@@ -65,10 +65,16 @@ function ensureWorker(): Worker | null {
         // 有逐项回调就立刻交接，主线程只短暂持有单张字节。
         if (task.onImage !== undefined) task.onImage(image)
         else task.images.push(image)
+        // 交接完再放行下一张：线程不会一次把整包字节推过来。
+        worker?.postMessage({ type: 'ack', id: reply.id })
       }
       return
     }
     pending.delete(reply.id)
+    if (pending.size === 0) {
+      // 一批解压结束后立即收起线程：低配机器不必为空闲线程保留隔夜占用。
+      disposeArchiveWorker()
+    }
     if (reply.type === 'error') {
       task.resolve({ ok: false, error: reply.error ?? '压缩包读取失败，请确认文件完整且没有加密' })
       return
