@@ -4,7 +4,7 @@
 
 <p align="center">
   基于 Telegram 私有频道存图、Telegraph 发布图集页的自托管私人图册管理程序<br />
-  单文件约 15MB · 空闲常驻内存约 24MB · 内置 SQLite，无需外部数据库
+  单文件约 15MB · 内置 SQLite，无需外部数据库
 </p>
 
 <p align="center">
@@ -39,15 +39,15 @@ SeSeGraph 是一个自托管的私人图册发布与管理程序。你把本地�
 
 1. 一台可访问 Telegram 与 Telegraph 接口（或可配置 HTTP/SOCKS5 代理）的 Linux 服务器。
 2. 一个已解析到该服务器的 HTTPS 域名（用于拼接外链、分享文案与 RSS）。
-3. 通过 [@BotFather](https://t.me/BotFather) 创建的 Telegram Bot Token，以及一个**私有频道**（需将该 Bot 设为频道管理员并授予发消息权限）。
+3. 通过 [@BotFather](https://t.me/BotFather) 创建的 Telegram Bot Token，以及一个**私有频道**（需将该 Bot 设为频道管理员并授予发消息权限）。频道数字编号形如 `-1001234567890`，可把频道里的任意一条消息转发给 [@JsonDumpBot](https://t.me/JsonDumpBot)，在返回内容的 `forward_from_chat.id` 中取得。
 
 ## 核心特点
 
 ### 1. 媒体导入与存图
 
-- **多种素材直传**：支持静态图（导入上限 50MB）、动图（GIF / APNG / 动态 WebP，保留动画）、20MB 以内的 MP4 短视频，以及文件夹和 ZIP 压缩包。
-- **浏览器端解包与预填**：ZIP 压缩包（上限 500 项、展开总量 512 MiB）直接在浏览器内解压、自然排序与拖拽调序，可读取包内 `info.txt` / `meta.txt` / `readme.txt` 自动预填标题与标签。
-- **静态图自动压缩**：`photo` 模式单图超过 `2.5MB`、`document` 模式超过 `8MB` 时在提交前自动缩放重编码；压缩后体积没有变小或编码失败、且原图未超当前模式上限时保留原图，动图不进入压缩。
+- **多种素材直传**：支持静态图、动图（GIF / APNG / 动态 WebP，保留动画）、MP4 短视频（单段上限 `20MB`），以及文件夹和 ZIP 压缩包。静态图选择阶段上限 `50MB`，提交时按画质模式判定：`photo` 省流量上限 `10MB`，`document` 原图上限 `20MB`。
+- **浏览器端解包与预填**：ZIP 压缩包（上限 500 项、展开总量 512 MiB，包内单个媒体须小于对应模式上限）直接在浏览器内解压、自然排序与拖拽调序，可读取包内 `info.txt` / `meta.txt` / `readme.txt` 自动预填标题与标签。
+- **静态图自动压缩**：在工作台开启「自动压缩」后生效。`photo` 模式单图超过 `2.5MB`、`document` 模式超过 `8MB` 时在提交前自动缩放重编码；压缩后体积没有变小或编码失败、且原图未超当前模式上限时保留原图，动图不进入压缩。
 - **短码流式转发**：图片与视频对外使用 `/i/{short_code}` 转发，不暴露 Bot Token、频道 ID 或原始 `file_id`；MP4 支持 HTTP `Range` 拖动播放。网关默认 25 路并发、满额最多 100 请求排队（单请求最长等 15 秒），减少多图页面裂图。
 
 ### 2. 任务控制与 Telegraph 发布
@@ -63,7 +63,7 @@ SeSeGraph 是一个自托管的私人图册发布与管理程序。你把本地�
 
 ### 4. 轻量部署与运维保障
 
-- **单文件零外部依赖**：前端通过 `go:embed` 打包进单个 Go 二进制（`linux/amd64` 约 15MB，零 CGO），内置 SQLite（WAL 模式），空闲常驻内存约 24MB。
+- **单文件零外部依赖**：前端通过 `go:embed` 打包进单个 Go 二进制（`linux/amd64` 约 15MB，零 CGO），内置 SQLite（WAL 模式），运行时不需要额外的数据库或缓存服务。
 - **流量看护与自动备份**：按自然月统计图片网关出站流量，支持达到预警阈值时经 Bot 通知、达到硬上限后返回 503 熔断；支持每日定时热备 SQLite（可选含封面缩略图）并推送到私有频道，参数均可在设置页修改并立即生效。
 
 ## 界面预览
@@ -71,7 +71,7 @@ SeSeGraph 是一个自托管的私人图册发布与管理程序。你把本地�
 | 图集详情（含浏览量与行内换封面） | 发布工作台 |
 | :---: | :---: |
 | ![图集详情](docs/screenshots/gallery-detail.webp) | ![发布工作台](docs/screenshots/workbench.webp) |
-| 缩略图预览、行内设封面、浏览量刷新与分享模板 | 拖入图片/ZIP/MP4 即可排序、自动压缩并预填元信息 |
+| 浏览量、分享文案与媒体清单（行内缩略图与设封面见上手指南） | 拖入图片/ZIP/MP4 即可排序、自动压缩并预填元信息 |
 
 | 设置与流量看护 | 移动端画廊 |
 | :---: | :---: |
@@ -98,6 +98,8 @@ docker compose up -d
 ```
 
 镜像默认从 `ghcr.io/littleseven2003/sesegraph` 拉取，`SESEGRAPH_VERSION` 默认固定为 `v1.4.2`（如需跟随后续版本可改为 `latest`，也可用 `SESEGRAPH_IMAGE` 指定自定义地址）。宿主机数据位于 `/opt/sesegraph/data`，Caddy 证书保存在命名卷中。
+
+`.env.example` 里代理、画质、Telegraph 链接方式、流量阈值与备份计划默认都是注释状态，这些项留空即由设置页维护；一旦在 `.env` 中填写，该字段就以环境变量为准，设置页对应项会置灰只读。
 
 ### 方式二：单容器 Docker（接入已有反向代理）
 
@@ -139,7 +141,21 @@ systemctl daemon-reload && systemctl enable --now sesegraph
 curl -fsS http://127.0.0.1:8080/api/health
 ```
 
-systemd 单元通过 `StateDirectory` 自动创建并授权 `/var/lib/sesegraph`。Linux（amd64/arm64）、macOS（arm64）与 Windows（amd64）产物及 `SHA256SUMS` 均在 Release 页面提供。
+上面的单元只监听 `127.0.0.1:8080`，还需要一层 HTTPS 反向代理才能用域名访问：
+
+```bash
+# Caddy：把 deploy/Caddyfile.example 里的域名改成自己的，然后加载
+install -d /etc/caddy
+curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.4.2/deploy/Caddyfile.example -o /etc/caddy/Caddyfile
+$EDITOR /etc/caddy/Caddyfile
+systemctl reload caddy
+
+# 或 Nginx：参考 deploy/nginx.conf.example，注意关闭响应缓冲并放开请求体上限
+curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.4.2/deploy/nginx.conf.example -o /etc/nginx/conf.d/sesegraph.conf
+nginx -t && systemctl reload nginx
+```
+
+反代生效后用 `https://你的域名/api/health` 确认可以访问，再回填 `.env` 里的 `PUBLIC_URL` 并重启服务。systemd 单元通过 `StateDirectory` 自动创建并授权 `/var/lib/sesegraph`。Linux（amd64/arm64）、macOS（arm64）与 Windows（amd64）产物及 `SHA256SUMS` 均在 Release 页面提供。
 
 ## 上手指南
 
@@ -152,19 +168,19 @@ systemd 单元通过 `StateDirectory` 自动创建并授权 `/var/lib/sesegraph`
    - 进入 **设置 → Telegram 图床**，填写 Bot Token 与私有频道标识（如 `-100…` 或 `@channel`）并保存。
    - 若服务器无法直连 Telegram/Telegraph，可在同页 **网络代理** 中切换系统代理或自定义代理（支持 `http`/`https`/`socks5` 及账密），并分别控制是否对两处上游生效。
 3. **申请 Telegraph 账户并自检**
-   - 在 **设置 → Telegraph 发布** 中填写默认作者名，点击 **「申请账户」** 自动生成匿名令牌（保存在服务端、不回显），也可通过环境变量 `TELEGRAPH_ACCESS_TOKEN` 手工提供；如需纯英文短码链接，可在此开启「无中文链接」。
-   - 点击 **连通性自检**，确认 Telegram Bot 权限与 Telegraph 令牌均检测通过。
+   - 在 **设置 → Telegraph 发布** 中填写默认作者名，点击 **「申请账户」** 自动生成匿名令牌（保存在服务端、不回显），也可通过环境变量 `TELEGRAPH_ACCESS_TOKEN` 手工提供；链接生成方式可选「按标题生成」或「自动生成无中文链接」。
+   - 先点 **「保存设置」**，再点 **连通性自检**，确认 Telegram Bot 权限与 Telegraph 令牌均检测通过（自检读取已保存的配置）。
 4. **上传素材并发布图集**
    - 进入 **工作台**，拖入图片、MP4、文件夹或 ZIP 压缩包，选择画质（`photo 省流量` / `document 原图`）与是否开启自动压缩，拖拽调序、点选封面并填写标题、说明与标签。
    - 点击 **「提交存图」** 上传至私有频道，存图完成后点击 **「发布到 Telegraph」** 生成图集页。过程随时可在顶栏 **「任务」** 中查看三阶段进度、暂停/继续/停止或重试失败项。
 5. **画廊管理、对外分享与 RSS 订阅**
    - 回到 **画廊** 可按卡片或列表浏览、按标签筛选；点击某篇图集打开详情抽屉，可悬停缩略图预览、在列表内直接切换封面、编辑元信息、刷新浏览量、复制外链或按自定义模板复制分享文案。
    - **对外分享**：复制的 Telegraph 链接与 `/i/{short_code}` 媒体外链无需登录即可访问；在详情抽屉禁用或永久删除图集后，短码外链会立即失效。
-   - **RSS 订阅**：在环境变量设置 `RSS_ENABLED=true` 且 `PUBLIC_URL` 为有效 HTTPS 地址后重启，即可通过 `https://你的域名/rss.xml` 订阅所有已发布且未撤回的图集。
+   - **RSS 订阅**：在环境变量设置 `RSS_ENABLED=true` 且 `PUBLIC_URL` 为有效 HTTPS 地址后重启，即可通过 `https://你的域名/rss.xml` 订阅最近最多 50 篇公开、已发布且未撤回的图集。
 
 ## 配置说明
 
-以下配置通过环境变量提供。其中 Bot Token、频道标识、Telegraph 作者名、代理、画质、流量阈值与定时备份计划均可在 **设置** 页面在线维护并热生效；已被环境变量托管的字段在界面上显示来源并置灰。
+以下配置通过环境变量提供。其中 Bot Token、频道标识、Telegraph 作者名与链接方式、代理、画质、流量阈值与定时备份计划均可在 **设置** 页面在线维护并热生效；某项留空时由设置页接管，填写后该字段以环境变量为准并在界面上显示来源、置灰只读。两份 Compose 文件已透传这些变量，`.env` 留空即可在网页里修改。
 
 | 变量 | 必填 | 说明 |
 | --- | :---: | --- |
