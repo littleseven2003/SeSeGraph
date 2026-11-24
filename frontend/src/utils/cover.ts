@@ -1,5 +1,6 @@
 // 浏览器端生成封面缩略图：宽度 400px、WebP 质量 0.82，约 20–40KB。
 import { COVER_WIDTH } from './image.ts'
+import { captureVideoFrame, isVideoBlob } from './video-frame.ts'
 
 // 封面生成结果，dataUrl 直接放进建任务请求体。
 export interface CoverResult {
@@ -95,54 +96,9 @@ export async function makeCover(blob: Blob): Promise<CoverResult> {
   }
 }
 
-// captureVideoFrame 从视频里截取一帧，供封面缩略图使用。
-async function captureVideoFrame(blob: Blob): Promise<Blob> {
-  const url = URL.createObjectURL(blob)
-  const video = document.createElement('video')
-  video.preload = 'auto'
-  video.muted = true
-  video.playsInline = true
-  try {
-    await new Promise<void>((resolve, reject) => {
-      video.onloadedmetadata = () => resolve()
-      video.onerror = () => reject(new Error('视频读取失败'))
-      video.src = url
-    })
-    const duration = Number.isFinite(video.duration) ? video.duration : 0
-    const seekTo = duration > 0 ? Math.min(duration * 0.1, 1) : 0
-    if (seekTo > 0) {
-      await new Promise<void>((resolve, reject) => {
-        const done = () => resolve()
-        video.onseeked = done
-        video.onerror = () => reject(new Error('视频定位失败'))
-        video.currentTime = seekTo
-      })
-    }
-    const width = video.videoWidth
-    const height = video.videoHeight
-    if (width <= 0 || height <= 0) throw new Error('视频尺寸不可用')
-    const canvas = document.createElement('canvas')
-    canvas.width = width
-    canvas.height = height
-    const context = canvas.getContext('2d')
-    if (context === null) throw new Error('画布不可用')
-    context.drawImage(video, 0, 0, width, height)
-    return await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob((result) => {
-        if (result === null) reject(new Error('视频封面生成失败'))
-        else resolve(result)
-      }, 'image/webp', 0.9)
-    })
-  } finally {
-    video.removeAttribute('src')
-    video.load()
-    URL.revokeObjectURL(url)
-  }
-}
-
 // makeCoverFromMedia 按媒体类型生成封面：视频取首帧，图片直接缩放。
 export async function makeCoverFromMedia(blob: Blob): Promise<CoverResult> {
-  if (blob.type === 'video/mp4' || blob.type.startsWith('video/')) {
+  if (isVideoBlob(blob)) {
     return makeCover(await captureVideoFrame(blob))
   }
   return makeCover(blob)
