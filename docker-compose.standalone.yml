@@ -1,6 +1,6 @@
 # 只用 Compose 启动应用本体，接入宿主机已有的 Nginx / Caddy / 宝塔面板
 # 用法：docker compose -f docker-compose.standalone.yml up -d
-# 默认拉取已发布镜像，版本固定为当前发布版 v1.4.0；跟随后续更新时把 SESEGRAPH_VERSION 改为 latest。
+# 默认拉取已发布镜像，版本固定为当前发布版 v1.4.1；跟随后续更新时把 SESEGRAPH_VERSION 改为 latest。
 # 也可用 SESEGRAPH_IMAGE 指定完整镜像地址。
 # 反向代理指向 http://127.0.0.1:8080，并保持流式响应不缓冲。
 services:
@@ -14,7 +14,7 @@ services:
       - ./data:/app/data
 
   sesegraph:
-    image: ${SESEGRAPH_IMAGE:-ghcr.io/littleseven2003/sesegraph:${SESEGRAPH_VERSION:-v1.4.0}}
+    image: ${SESEGRAPH_IMAGE:-ghcr.io/littleseven2003/sesegraph:${SESEGRAPH_VERSION:-v1.4.1}}
     restart: unless-stopped
     environment:
       LISTEN_ADDR: ":8080"

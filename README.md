@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/littleseven2003/SeSeGraph/releases/tag/v1.4.0"><img src="https://img.shields.io/badge/Release-v1.4.0-D04223?style=flat-square" alt="Release" /></a>
+  <a href="https://github.com/littleseven2003/SeSeGraph/releases/tag/v1.4.1"><img src="https://img.shields.io/badge/Release-v1.4.1-D04223?style=flat-square" alt="Release" /></a>
   <a href="https://github.com/littleseven2003/SeSeGraph/pkgs/container/sesegraph"><img src="https://img.shields.io/badge/Docker-ghcr.io-0D7A72?style=flat-square" alt="Docker" /></a>
   <img src="https://img.shields.io/badge/Go-1.22%2B-1B1A17?style=flat-square" alt="Go 1.22+" />
   <img src="https://img.shields.io/badge/Vue-3-1B1A17?style=flat-square" alt="Vue 3" />
@@ -61,7 +61,7 @@ SeSeGraph 是一个自托管的私人图册管理程序。你把本地图片或�
 
 ## 快速开始
 
-下面命令与镜像标签按 `v1.4.0` 编写；该版本的 Release 资产与镜像随正式发版提供，若尚未发布请把命令中的版本号换成当前已发布版本（如 `v1.1.1`）。
+下面命令与镜像标签按 `v1.4.1` 编写；该版本的 Release 资产与镜像随正式发版提供，若尚未发布请把命令中的版本号换成当前已发布版本（如 `v1.1.1`）。
 
 提供三种部署方式。程序数据目录内只有 `sesegraph.db` 及其 WAL 附属文件、`thumbs/` 封面缩略图、`tmp/` 待上传临时文件和 `backups/` 备份包，迁移或备份直接复制该目录即可。
 
@@ -69,23 +69,23 @@ SeSeGraph 是一个自托管的私人图册管理程序。你把本地图片或�
 
 ```bash
 mkdir -p /opt/sesegraph && cd /opt/sesegraph
-curl -fsSLO https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.4.0/docker-compose.yml
-mkdir -p deploy && curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.4.0/deploy/Caddyfile -o deploy/Caddyfile
-curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.4.0/.env.example -o .env
+curl -fsSLO https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.4.1/docker-compose.yml
+mkdir -p deploy && curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.4.1/deploy/Caddyfile -o deploy/Caddyfile
+curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.4.1/.env.example -o .env
 # 至少填写 DOMAIN、ADMIN_USERNAME、ADMIN_PASSWORD
 chmod 600 .env
 $EDITOR .env
 docker compose up -d
 ```
 
-镜像从 `ghcr.io/littleseven2003/sesegraph` 拉取。`SESEGRAPH_VERSION` 默认固定为当前版本 `v1.4.0`（需要跟随后续发布时可改为 `latest`），也可用 `SESEGRAPH_IMAGE` 指定自定义镜像地址。宿主机数据保存在 `/opt/sesegraph/data`，Caddy 证书与配置保存在命名卷中。
+镜像从 `ghcr.io/littleseven2003/sesegraph` 拉取。`SESEGRAPH_VERSION` 默认固定为当前版本 `v1.4.1`（需要跟随后续发布时可改为 `latest`），也可用 `SESEGRAPH_IMAGE` 指定自定义镜像地址。宿主机数据保存在 `/opt/sesegraph/data`，Caddy 证书与配置保存在命名卷中。
 
 ### 单容器 Docker
 
 ```bash
 install -d -m 700 /opt/sesegraph
 install -d -o 1000 -g 1000 /opt/sesegraph/data
-curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.4.0/.env.example \
+curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.4.1/.env.example \
   -o /opt/sesegraph/sesegraph.env
 chmod 600 /opt/sesegraph/sesegraph.env
 # 容器内数据目录固定为 /app/data；PUBLIC_URL、管理员账号与上游凭据也在该文件中填写
@@ -95,7 +95,7 @@ docker run -d --name sesegraph --restart unless-stopped \
   -p 127.0.0.1:8080:8080 \
   -v /opt/sesegraph/data:/app/data \
   --env-file /opt/sesegraph/sesegraph.env \
-  ghcr.io/littleseven2003/sesegraph:v1.4.0
+  ghcr.io/littleseven2003/sesegraph:v1.4.1
 ```
 
 凭据通过权限 `0600` 的 `--env-file` 传入，避免密码留在 shell 历史与进程列表中。已有 Nginx 或 Caddy 时，把流量反代到 `http://127.0.0.1:8080` 并关闭响应缓冲（图片网关为流式输出），配置示例见 `deploy/nginx.conf.example` 与 `deploy/Caddyfile.example`。
@@ -106,12 +106,12 @@ docker run -d --name sesegraph --restart unless-stopped \
 install -d /opt/sesegraph
 useradd --system --home /opt/sesegraph --shell /usr/sbin/nologin sesegraph || true
 curl -fsSL -o /opt/sesegraph/sesegraph \
-  https://github.com/littleseven2003/SeSeGraph/releases/download/v1.4.0/sesegraph-v1.4.0-linux-amd64
+  https://github.com/littleseven2003/SeSeGraph/releases/download/v1.4.1/sesegraph-v1.4.1-linux-amd64
 chmod +x /opt/sesegraph/sesegraph
-curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.4.0/deploy/sesegraph.service \
+curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.4.1/deploy/sesegraph.service \
   -o /etc/systemd/system/sesegraph.service
 install -d -m 750 /etc/sesegraph
-curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.4.0/.env.example \
+curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.4.1/.env.example \
   -o /etc/sesegraph/sesegraph.env
 chmod 600 /etc/sesegraph/sesegraph.env
 # 填写 PUBLIC_URL 与上游凭据；监听地址与数据目录由单元文件里的 --addr / --data 指定
@@ -133,7 +133,9 @@ systemd 单元通过 `StateDirectory` 自动创建并授权 `/var/lib/sesegraph`
 
 发布后的 Telegraph 页面与短码图片都可以直接分享给他人访问；在画廊里撤回图集后，本站的图片短码链接会立即停用。
 
-> `v1.4.0` 起工作台支持 20,000,000 字节以内的 MP4，并对超限静态图自动压缩（默认开启）；静态图导入上限 50,000,000 字节，ZIP 展开总量上限 512 MiB。上传改为每轮两路并发，单次最多三路；图片网关满额时先短暂排队，减少多图页面的裂图。
+> `v1.4.1` 把自动压缩门槛下调为 photo 模式超过 2,500,000 字节、document 模式超过 8,000,000 字节，编码目标仍是 9,800,000 与 19,800,000 字节；压缩没有变小或编码失败时按原图提交，动图始终保留动画。
+>
+> `v1.4.0` 起工作台支持 20,000,000 字节以内的 MP4；静态图导入上限 50,000,000 字节，ZIP 展开总量上限 512 MiB。上传改为每轮两路并发，单次最多三路；图片网关满额时先短暂排队，减少多图页面的裂图。
 
 ## 配置说明
 
@@ -198,7 +200,7 @@ make cross                   # 交叉编译四个平台二进制
 
 ## 升级与备份
 
-- **自动迁移**：从 `v1.0.0` 起升级到 `v1.4.0` 时，数据库会在启动时自动迁移到结构版本 11（新增封面来源序号、发布链接冻结字段、任务控制状态与上传轮次，并清理历史孤立标签），无需手工执行 SQL；旧图集保持原有顺序与链接。
+- **自动迁移**：从 `v1.0.0` 起升级到 `v1.4.1` 时，数据库会在启动时自动迁移到结构版本 11（新增封面来源序号、发布链接冻结字段、任务控制状态与上传轮次，并清理历史孤立标签），无需手工执行 SQL；旧图集保持原有顺序与链接。
 - **升级前备份**：建议先停止服务并复制整个数据目录，或在设置页点击「立即备份」生成快照。
 - **Compose 更新**：先确认 `.env` 中的 `SESEGRAPH_VERSION` 已改成目标版本（或用 `SESEGRAPH_IMAGE` 指定镜像），再执行 `docker compose pull sesegraph && docker compose up -d sesegraph`；`/opt/sesegraph/data` 与 Caddy 证书卷都会保留。
 
