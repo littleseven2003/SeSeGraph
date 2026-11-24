@@ -118,3 +118,15 @@ test('同页切换续传会重新初始化，旧响应不覆盖新页面', () =>
   assert.ok(source.includes("message.value = '网络异常，未能读取任务进度；续传信息已保留，可稍后刷新重试'"), '网络失败保留快照')
   assert.ok(source.includes('clearTask(storage, saved.postId)'), '只有确认不存在才清快照')
 })
+
+test('路由重置只清页面状态，最近任务提示不丢', () => {
+  const reset = source.slice(source.indexOf('function resetForRoute()'), source.indexOf('async function applyRoute'))
+  assert.equal(reset.includes('resetProgress()'), false, '切路由不能删本机快照')
+  assert.ok(reset.includes('resetProgressView()'), '只清页面状态')
+  const view = source.slice(source.indexOf('function resetProgressView()'), source.indexOf('function resetProgress()'))
+  assert.equal(view.includes('clearTask'), false, '页面重置不碰本机存储')
+  assert.ok(view.includes('stopPolling()'), '展示清掉时轮询一并停止')
+  // 只有服务端明确 404 才清快照，网络失败仍保留。
+  assert.ok(source.includes('init.progressMissing'), '按明确的 404 分支处理')
+  assert.ok(source.includes('已不存在，本机续传记录已清除'), '清掉后给出说明')
+})

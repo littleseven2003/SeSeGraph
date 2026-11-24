@@ -5,8 +5,14 @@ import type { UploadMode } from './image.ts'
 import type { SettingsView } from '../api/settings.ts'
 import type { ServerProgress } from '../api/posts.ts'
 import type { TaskSnapshot } from './task-store.ts'
+import { ApiError } from '../api/client.ts'
 import { discardBlocked, type WorkbenchPhase } from './workbench.ts'
 import { UPLOAD_CONCURRENCY_DEFAULT, serverUploadConcurrency } from './upload-pref.ts'
+
+/** isTaskMissing 只把服务端明确的 404 当成任务不存在，其余错误一律按可重试处理。 */
+export function isTaskMissing(cause: unknown): boolean {
+  return cause instanceof ApiError && cause.status === 404
+}
 
 /** WorkbenchDefaults 是导入与校验前必须确定的规则。 */
 export interface WorkbenchDefaults {
@@ -56,6 +62,8 @@ export interface InitializationResult {
   resumeMode: UploadMode | null
   /** progressError 是读取进度失败的原因；null 表示读取成功或不需要读取 */
   progressError: unknown
+  /** progressMissing 只在服务端明确回答「任务不存在」时为 true，网络失败不算 */
+  progressMissing: boolean
 }
 
 /**
@@ -73,17 +81,23 @@ export async function loadWorkbenchInitialization(input: InitializationInput): P
   const defaults = defaultsFromSettings(view)
 
   if (input.snapshot === null) {
-    return { defaults, progress: null, resumeMode: null, progressError: null }
+    return { defaults, progress: null, resumeMode: null, progressError: null, progressMissing: false }
   }
 
   try {
     const progress = await input.loadProgress(input.snapshot.postId)
     const resumeMode: UploadMode | null =
       progress.upload_mode === 'document' || progress.upload_mode === 'photo' ? progress.upload_mode : null
-    return { defaults, progress, resumeMode, progressError: null }
+    return { defaults, progress, resumeMode, progressError: null, progressMissing: false }
   } catch (cause) {
     // 网络失败与「任务确实不存在」要分开：前者保留快照，只有后者才清除。
-    return { defaults, progress: null, resumeMode: null, progressError: cause }
+    return {
+      defaults,
+      progress: null,
+      resumeMode: null,
+      progressError: cause,
+      progressMissing: isTaskMissing(cause),
+    }
   }
 }
 

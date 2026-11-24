@@ -6,6 +6,7 @@ import {
   fallbackDefaults,
   loadWorkbenchInitialization,
 } from '../src/utils/workbench-init.ts'
+import { ApiError } from '../src/api/client.ts'
 import type { SettingsView } from '../src/api/settings.ts'
 import type { ServerProgress } from '../src/api/posts.ts'
 
@@ -152,6 +153,7 @@ test('进度读取失败与任务不存在分开上报', async () => {
   })
   assert.equal(offline.progress, null)
   assert.ok(offline.progressError instanceof Error, '网络失败要能区分')
+  assert.equal(offline.progressMissing, false, '网络失败不能当成任务不存在')
 
   const online = await loadWorkbenchInitialization({
     loadSettings: async () => settings(),
@@ -159,4 +161,24 @@ test('进度读取失败与任务不存在分开上报', async () => {
     snapshot,
   })
   assert.equal(online.progressError, null)
+  assert.equal(online.progressMissing, false)
+
+  // 只有服务端明确的 404 才算任务不存在，其余状态码仍按可重试处理。
+  const missing = await loadWorkbenchInitialization({
+    loadSettings: async () => settings(),
+    loadProgress: async () => {
+      throw new ApiError(404, '任务不存在')
+    },
+    snapshot,
+  })
+  assert.equal(missing.progressMissing, true)
+
+  const rejected = await loadWorkbenchInitialization({
+    loadSettings: async () => settings(),
+    loadProgress: async () => {
+      throw new ApiError(500, '读取失败')
+    },
+    snapshot,
+  })
+  assert.equal(rejected.progressMissing, false)
 })

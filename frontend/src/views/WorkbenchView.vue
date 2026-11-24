@@ -354,7 +354,8 @@ function resetForRoute(): void {
   draft.value = { title: '', description: '', tags: [], author: '' }
   message.value = ''
   modeTouched = false
-  resetProgress()
+  // 只清本页展示，不动本机快照：离开或重新进入续传时提示还能回来。
+  resetProgressView()
 }
 
 // applyRoute 先把设置与续传进度读完再开放文件入口，
@@ -386,15 +387,17 @@ async function applyRoute(targetID: number): Promise<void> {
   }
   if (saved && init.progress !== null) {
     hydrate(saved, init.progress)
-  } else if (saved && init.progressError !== null) {
-    // 网络失败不能清快照：保留续传信息，稍后重试仍可继续。
-    snapshot.value = saved
-    message.value = '网络异常，未能读取任务进度；续传信息已保留，可稍后刷新重试'
-  } else if (saved) {
-    // 任务确实已不存在（服务端返回 404）时才丢弃快照。
+  } else if (saved && init.progressMissing) {
+    // 服务端明确回答该任务不存在时才丢弃快照，并保留其余可续传任务的提示。
     clearTask(storage, saved.postId)
     snapshot.value = null
     resetToDefaultMode()
+    message.value = `任务 #${saved.postId} 已不存在，本机续传记录已清除`
+    resumableHint.value = targetID > 0 ? null : loadTask(storage)
+  } else if (saved) {
+    // 网络失败不能清快照：保留续传信息，稍后重试仍可继续。
+    snapshot.value = saved
+    message.value = '网络异常，未能读取任务进度；续传信息已保留，可稍后刷新重试'
   }
 
   // 从任务列表直达但本机没有该任务清单：只查看进度与控制，禁止补传。
@@ -408,8 +411,11 @@ async function applyRoute(targetID: number): Promise<void> {
       phase.value = progress.status === 'uploading' ? 'idle' : progress.status === 'failed' ? 'failed' : 'queued'
       resumeUnsafe.value = true
       message.value = `任务 #${progress.id} 已载入。此设备没有该任务的文件清单，只能查看进度和控制；请在原设备续传，或放弃该任务后重新建任务。`
-    } catch {
-      message.value = '未能读取该任务，请回任务列表重试'
+    } catch (cause) {
+      message.value =
+        cause instanceof ApiError && cause.status === 404
+          ? `任务 #${targetID} 已不存在，可能已被删除`
+          : '未能读取该任务，请回任务列表重试'
     }
   }
   ready.value = true
@@ -1163,14 +1169,22 @@ async function retryFailed(): Promise<void> {
   }
 }
 
-function resetProgress(): void {
+// resetProgressView 只清本页的任务展示与轮询，不碰本机快照。
+// 切路由与重新初始化都走这里，避免离开续传时把最近任务的提示一并删掉。
+function resetProgressView(): void {
   postId.value = 0
   phase.value = 'idle'
   statuses.value = {}
   serverProgress.value = null
   message.value = ''
   stopPolling()
-  clearTask(storage, snapshot.value?.postId)
+}
+
+// resetProgress 清展示并删除本机快照，只用于「放弃此任务」这类明确放弃的入口。
+function resetProgress(): void {
+  const abandoned = snapshot.value?.postId
+  resetProgressView()
+  clearTask(storage, abandoned)
 }
 
 // discardSnapshot 放弃上次任务的续传入口，允许直接开新任务。
@@ -1207,9 +1221,11 @@ function clearAll(): void {
   metaText.value = ''
   metaSource.value = ''
   draft.value = { title: '', description: '', tags: [], author: '' }
-  snapshot.value = null
   compressDone.value = null
+  // 先按当前快照编号清掉两个槽位，再放开引用。
   resetProgress()
+  snapshot.value = null
+  resumableHint.value = loadTask(storage)
   resetToDefaultMode()
 }
 
