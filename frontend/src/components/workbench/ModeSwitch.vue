@@ -55,7 +55,7 @@ const compressLabel = computed(() => (props.autoCompress ? '自动压缩：开' 
             class="inline-flex h-9 items-center rounded-lg px-3 text-xs font-medium transition"
             :class="
               props.mode === option.value
-                ? 'bg-accent text-white'
+                ? 'bg-accent-fill text-white'
                 : 'text-muted hover:bg-surface hover:text-ink'
             "
           >
@@ -83,7 +83,7 @@ const compressLabel = computed(() => (props.autoCompress ? '自动压缩：开' 
               class="inline-flex h-9 items-center rounded-lg px-3 text-xs font-medium transition"
               :class="
                 props.mode === option.value
-                  ? 'bg-accent text-white'
+                  ? 'bg-accent-fill text-white'
                   : 'text-muted hover:bg-surface hover:text-ink'
               "
             >

@@ -4,9 +4,13 @@
   /* 日光画纸底与暖沙细线：图片之外只留一层清透的底。 */
   --color-canvas: #faf8f5;
   --color-surface: #ffffff;
+  /* 浮层与分段激活态用更高一层，深色下才有层次差。 */
+  --color-surface-raised: #ffffff;
   --color-ink: #1b1a17;
   --color-muted: #5e5b53;
   --color-line: #e8e4da;
+  /* 输入框与描边按钮的必要边界，浅色下与分隔线同值。 */
+  --color-line-control: #d9d3c6;
   /* 日落珊瑚主操作，配白字 4.68:1；深一档用于浅底上的文字与链接。 */
   --color-brand: #d04223;
   --color-brand-strong: #b83519;
@@ -14,6 +18,8 @@
   --color-brand-soft: #fff0eb;
   /* 晴空松石青做选中态与完成态，配白字 5.19:1。 */
   --color-accent: #0d7a72;
+  --color-accent-fill: #0d7a72;
+  --color-accent-ink: #ffffff;
   --color-accent-soft: #e6f6f4;
   --color-warn-soft: #fef3c7;
   --color-warn: #92400e;
@@ -28,6 +34,40 @@
   --font-sans: "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei", system-ui, sans-serif;
 
   --radius-card: 0.5rem;
+
+  /* 画布微点阵的颜色，深色下压到几乎看不见。 */
+  --canvas-dot: rgba(140, 122, 102, 0.14);
+}
+
+/* 暗房暖炭：深色主题沿用实体工作台气质，图片仍是唯一主角。
+   只覆盖语义令牌，组件不用改类名。 */
+html[data-theme="dark"] {
+  --color-canvas: #161513;
+  --color-surface: #1f1d1a;
+  --color-surface-raised: #25221e;
+  --color-ink: #efece6;
+  --color-muted: #a8a197;
+  --color-line: #322e29;
+  --color-line-control: #756d62;
+  --color-brand: #d04223;
+  --color-brand-strong: #f27960;
+  --color-brand-ink: #ffffff;
+  --color-brand-soft: rgba(208, 66, 35, 0.18);
+  --color-accent: #52c1b5;
+  --color-accent-fill: #0d7a72;
+  --color-accent-ink: #ffffff;
+  --color-accent-soft: rgba(82, 193, 181, 0.16);
+  --color-warn: #e8b466;
+  --color-warn-soft: rgba(232, 180, 102, 0.16);
+  --color-danger: #ef6461;
+  --color-danger-soft: rgba(239, 100, 97, 0.16);
+  /* 暗底四阶段提亮一档，避免轨道沉进卡片。 */
+  --color-stage-compress: #f27960;
+  --color-stage-upload: #e8b466;
+  --color-stage-sync: #52c1b5;
+  --color-stage-publish: #ee76ab;
+  --canvas-dot: rgba(239, 236, 230, 0.05);
+  color-scheme: dark;
 }
 
 /* 不适用或未记录的四阶段槽位用斜纹占位，和「尚未完成」的空槽区分开。 */
@@ -44,11 +84,15 @@
     color-scheme: light;
   }
 
+  html[data-theme="dark"] {
+    color-scheme: dark;
+  }
+
   body {
     margin: 0;
     background-color: var(--color-canvas);
     /* 画布微点阵：极淡的暖沙点位，让画布像一张实体工作台。 */
-    background-image: radial-gradient(rgba(140, 122, 102, 0.14) 1px, transparent 1px);
+    background-image: radial-gradient(var(--canvas-dot) 1px, transparent 1px);
     background-size: 20px 20px;
     color: var(--color-ink);
     font-family: var(--font-sans);

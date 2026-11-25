@@ -47,9 +47,9 @@ const chipClass = computed(() => {
     case 'progress':
       return 'border-warn/40 bg-warn-soft text-warn'
     case 'error':
-      return 'border-danger/30 bg-white text-danger'
+      return 'border-danger/30 bg-surface text-danger'
     default:
-      return 'border-accent/30 bg-white text-accent'
+      return 'border-accent/30 bg-surface text-accent'
   }
 })
 const published = computed(() => formatPublishedAt(props.item.published_at))
@@ -104,7 +104,7 @@ const copyLabel = computed(() => {
         {{ status.label }}
       </span>
       <span
-        class="absolute bottom-2 right-2 rounded-md bg-white/90 px-2 py-1 text-xs font-medium leading-none text-ink tnum"
+        class="absolute bottom-2 right-2 rounded-md bg-surface/90 px-2 py-1 text-xs font-medium leading-none text-ink tnum"
         >{{ item.image_count }}P</span
       >
 
@@ -167,7 +167,7 @@ const copyLabel = computed(() => {
                 ? 'border-brand/25 bg-brand-soft text-brand-strong'
                 : copyState === 'copied'
                   ? 'border-accent/30 bg-accent-soft text-accent'
-                  : 'border-danger/30 bg-white text-danger'
+                  : 'border-danger/30 bg-surface text-danger'
             "
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4" aria-hidden="true">

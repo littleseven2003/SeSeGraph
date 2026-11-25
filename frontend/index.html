@@ -3,10 +3,24 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="light" />
+    <meta name="color-scheme" content="light dark" />
     <meta name="description" content="SeSeGraph 图册管理后台" />
     <link rel="icon" type="image/svg+xml" href="/sesegraph-mark.svg" />
     <title>SeSeGraph · SeSe图册</title>
+    <script>
+      // 首帧定色：在样式表之前把外观写到根节点，刷新时不会先闪一下浅色。
+      ;(function () {
+        try {
+          var stored = window.localStorage.getItem('sesegraph.theme')
+          var dark = window.matchMedia('(prefers-color-scheme: dark)').matches
+          var theme = stored === 'dark' || (stored !== 'light' && dark) ? 'dark' : 'light'
+          document.documentElement.dataset.theme = theme
+          document.documentElement.style.colorScheme = theme
+        } catch (error) {
+          document.documentElement.dataset.theme = 'light'
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="app"></div>

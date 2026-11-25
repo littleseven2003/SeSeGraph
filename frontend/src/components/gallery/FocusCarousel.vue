@@ -179,16 +179,16 @@ onBeforeUnmount(() => {
               class="absolute left-3 top-3 inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border px-2.5 py-1 text-xs font-medium leading-none"
               :class="
                 status.tone === 'error'
-                  ? 'border-danger/30 bg-white text-danger'
+                  ? 'border-danger/30 bg-surface text-danger'
                   : status.tone === 'ok'
-                    ? 'border-accent/30 bg-white text-accent'
+                    ? 'border-accent/30 bg-surface text-accent'
                     : 'border-warn/40 bg-warn-soft text-warn'
               "
             >
               {{ status.label }}
             </span>
             <span
-              class="absolute bottom-3 right-3 rounded-md bg-white/90 px-2 py-1 text-xs font-medium leading-none text-ink tnum"
+              class="absolute bottom-3 right-3 rounded-md bg-surface/90 px-2 py-1 text-xs font-medium leading-none text-ink tnum"
               >{{ current.image_count }}P</span
             >
 

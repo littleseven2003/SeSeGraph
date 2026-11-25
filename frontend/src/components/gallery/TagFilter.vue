@@ -110,7 +110,7 @@ onBeforeUnmount(() => {
         :aria-label="'移除标签 ' + name"
         @click="toggle(name)"
       >
-        <span class="inline-flex h-9 min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-accent bg-accent px-2.5 text-xs font-medium text-white transition motion-safe:active:scale-[0.97] [overflow-wrap:anywhere]">
+        <span class="inline-flex h-9 min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-accent bg-accent-fill px-2.5 text-xs font-medium text-white transition motion-safe:active:scale-[0.97] [overflow-wrap:anywhere]">
           #{{ name }}
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-3 w-3 shrink-0" aria-hidden="true">
             <path d="M6 6l12 12M18 6L6 18" stroke-linecap="round" />
@@ -217,7 +217,7 @@ onBeforeUnmount(() => {
           class="inline-flex h-9 min-w-0 max-w-full items-center gap-1 rounded-lg border px-3 text-xs font-medium transition [overflow-wrap:anywhere]"
           :class="
             selectedTags.includes(tag.name)
-              ? 'border-accent bg-accent text-white'
+              ? 'border-accent bg-accent-fill text-white'
               : 'border-line bg-canvas text-muted hover:border-brand/40 hover:text-ink'
           "
           :aria-pressed="selectedTags.includes(tag.name)"

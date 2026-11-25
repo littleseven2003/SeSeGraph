@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { logout } from '../api/client.ts'
 import BrandMark from './BrandMark.vue'
 import { blurEnabled, toggleBlur } from '../utils/blur.ts'
+import { resolvedTheme, toggleTheme } from '../utils/theme.ts'
 
 // 全站统一顶栏：左侧品牌，右侧防社死开关与三个入口；窄屏折成两行避免拥挤。
 const router = useRouter()
@@ -57,6 +58,25 @@ async function signOut(): Promise<void> {
         </router-link>
 
         <div class="flex min-w-0 items-center gap-0.5 sm:gap-1">
+          <!-- 主题切换：外层 44px 触控区，内层 32px 图标块，与防社死芯片同高。 -->
+          <button
+            type="button"
+            class="inline-flex h-11 shrink-0 items-center"
+            :aria-label="resolvedTheme === 'dark' ? '切换到浅色主题' : '切换到深色主题'"
+            :title="resolvedTheme === 'dark' ? '当前深色，点击切到浅色' : '当前浅色，点击切到深色'"
+            @click="toggleTheme"
+          >
+            <span class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-line bg-canvas/60 text-muted transition hover:border-brand/40 hover:text-ink">
+              <svg v-if="resolvedTheme === 'dark'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4" aria-hidden="true">
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6L17 7M7 17l-1.4 1.4" stroke-linecap="round" />
+              </svg>
+              <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4" aria-hidden="true">
+                <path d="M20 14.5A8 8 0 0 1 9.5 4a8.2 8.2 0 1 0 10.5 10.5Z" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </span>
+          </button>
+
           <!-- 外层保留 44px 触控区，内层描边芯片固定 32px 视觉高度。 -->
           <button
             type="button"

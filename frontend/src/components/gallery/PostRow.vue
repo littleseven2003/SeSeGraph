@@ -56,9 +56,9 @@ const chipClass = computed(() => {
     case 'progress':
       return 'border-warn/40 bg-warn-soft text-warn'
     case 'error':
-      return 'border-danger/30 bg-white text-danger'
+      return 'border-danger/30 bg-surface text-danger'
     default:
-      return 'border-accent/30 bg-white text-accent'
+      return 'border-accent/30 bg-surface text-accent'
   }
 })
 const published = computed(() => formatPublishedAt(props.item.published_at))
