@@ -79,3 +79,40 @@ func TestBotsEndpointsStoreAndMaskTokens(t *testing.T) {
 func containsToken(body string) bool {
 	return contains(body, strings.Repeat("a", 24)) || contains(body, strings.Repeat("b", 24))
 }
+
+// TestUpdateBotsRejectsWhenProbeFails 验证新令牌探测失败时不落库，原有配置继续可用。
+func TestUpdateBotsRejectsWhenProbeFails(t *testing.T) {
+	var pool *botpool.Pool
+	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
+		pool = botpool.New(settings.NewStore(handle))
+		deps.Bots = pool
+		deps.Settings = settings.NewResolver(settings.NewStore(handle), settings.Env{
+			TelegramToken:   "999:existing",
+			TelegramChannel: "-100777",
+		})
+	})
+	cookie := env.setup(t)
+
+	original := probeBots
+	probeBots = func(context.Context, settings.ProbeOptions) settings.ProbeResult {
+		return settings.ProbeResult{Telegram: settings.ProbeTarget{Status: settings.ProbeFailed, Detail: "Bot 不是频道管理员，无法发布"}}
+	}
+	t.Cleanup(func() { probeBots = original })
+
+	body := `{"bots":[{"bot_id":111,"alias":"主力","token":"111:` + strings.Repeat("c", 24) + `","priority":0}]}`
+	rec := env.do(t, http.MethodPut, "/api/settings/bots", body, cookie)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("探测失败状态码 = %d，期望 400，响应: %s", rec.Code, rec.Body.String())
+	}
+	if !contains(rec.Body.String(), "主力") || !contains(rec.Body.String(), "无法发布") {
+		t.Fatalf("失败原因未带别名与说明: %s", rec.Body.String())
+	}
+
+	stored, err := pool.List(context.Background())
+	if err != nil {
+		t.Fatalf("读取池失败: %v", err)
+	}
+	if len(stored) != 0 {
+		t.Fatalf("探测失败不应落库，实际 %+v", stored)
+	}
+}

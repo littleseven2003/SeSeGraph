@@ -1,13 +1,39 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/botpool"
 )
 
 // tasksHandler 返回任务列表：上传、存图与发布三段状态，供管理员统一查看与控制。
+// poolStatus 汇报 Bot 池里已冻结的条目，供任务页提示当前会自动换 Bot。
+// 池未启用时返回 enabled=false，前端据此不显示提示。
+func poolStatus(ctx context.Context, deps Deps) gin.H {
+	frozen := make([]gin.H, 0, 2)
+	if deps.Bots == nil {
+		return gin.H{"enabled": false, "frozen": frozen}
+	}
+	bots, err := deps.Bots.List(ctx)
+	if err != nil {
+		return gin.H{"enabled": false, "frozen": frozen}
+	}
+	usable := 0
+	for _, bot := range bots {
+		if bot.Status == "" || bot.Status == botpool.StatusOK {
+			usable++
+			continue
+		}
+		if bot.Status == botpool.StatusFrozen {
+			frozen = append(frozen, gin.H{"alias": bot.Alias, "note": bot.StatusNote})
+		}
+	}
+	return gin.H{"enabled": usable >= 2, "frozen": frozen}
+}
+
 func tasksHandler(deps Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
@@ -43,6 +69,7 @@ func tasksHandler(deps Deps) gin.HandlerFunc {
 		}
 		c.JSON(http.StatusOK, gin.H{
 			"items":     items,
+			"pool":      poolStatus(c.Request.Context(), deps),
 			"total":     result.Total,
 			"page":      result.Page,
 			"page_size": result.PageSize,

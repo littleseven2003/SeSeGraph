@@ -2,12 +2,15 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/botpool"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/netclient"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/settings"
 )
 
 // botsBody 是多 Bot 池的读取响应；令牌只以掩码出现。
@@ -39,6 +42,53 @@ type botsRequest struct {
 
 // botSaveTimeout 是保存 Bot 池的超时，与设置保存一致，避免请求挂住。
 const botSaveTimeout = 15 * time.Second
+
+// botProbeTimeout 是单个候选令牌探测的上限，避免保存请求被上游拖住。
+const botProbeTimeout = 10 * time.Second
+
+// probeBots 默认调用真实探测；测试替换它即可覆盖失败分支，不必接触上游。
+var probeBots = settings.Probe
+
+// verifyBotTokens 用候选令牌依次执行 getMe、getChat 与 getChatMember；
+// 只对本次提交了新令牌的条目探测，失败时返回带别名的可读原因。
+func verifyBotTokens(ctx context.Context, deps Deps, bots []botpool.Bot) error {
+	if deps.Settings == nil {
+		return nil
+	}
+	effective, err := deps.Settings.Effective(ctx)
+	if err != nil {
+		return errors.New("读取图床配置失败")
+	}
+	for _, bot := range bots {
+		token := strings.TrimSpace(bot.Token)
+		if token == "" {
+			continue
+		}
+		name := strings.TrimSpace(bot.Alias)
+		if name == "" {
+			name = "未命名 Bot"
+		}
+		client, clientErr := netclient.NewClient(effective.ProxyConfig(), netclient.ServiceTelegram)
+		if clientErr != nil {
+			return errors.New(name + "：网络客户端创建失败")
+		}
+		result := probeBots(ctx, settings.ProbeOptions{
+			TelegramToken:   token,
+			TelegramChannel: effective.TelegramChannel.Value,
+			TelegramAPIBase: effective.TelegramAPIBase.Value,
+			TelegramClient:  client,
+			Timeout:         botProbeTimeout,
+		})
+		if result.Telegram.Status != settings.ProbeOK {
+			detail := result.Telegram.Detail
+			if detail == "" {
+				detail = "连通性校验未通过"
+			}
+			return errors.New(name + "：" + detail)
+		}
+	}
+	return nil
+}
 
 // maskToken 只保留令牌尾部四位，其余用圆点代替，避免明文回显。
 func maskToken(token string) string {
@@ -104,6 +154,11 @@ func updateBotsHandler(deps Deps) gin.HandlerFunc {
 		}
 		ctx, cancel := context.WithTimeout(c.Request.Context(), botSaveTimeout)
 		defer cancel()
+		// 新提交的令牌保存前先探测身份与频道发布权限，失败时保留原有配置。
+		if err := verifyBotTokens(ctx, deps, bots); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		if err := deps.Bots.Replace(ctx, bots); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
