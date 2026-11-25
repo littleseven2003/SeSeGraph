@@ -42,12 +42,12 @@ const compressLabel = computed(() => (props.autoCompress ? '自动压缩：开' 
   >
     <div v-if="props.layout === 'stack'" class="flex flex-wrap items-center justify-center gap-2">
       <span class="text-xs text-muted">画质模式</span>
-      <div class="flex rounded-full bg-canvas p-1" role="group" aria-label="画质模式">
+      <div class="flex rounded-xl border border-line/70 bg-canvas p-1" role="group" aria-label="画质模式">
         <button
           v-for="option in options"
           :key="option.value"
           type="button"
-          class="h-11 rounded-full px-3.5 text-xs font-medium transition disabled:opacity-50"
+          class="h-10 rounded-lg px-3 text-xs font-medium transition disabled:opacity-50 sm:h-9"
           :class="
             props.mode === option.value
               ? 'bg-accent text-white'
@@ -66,12 +66,12 @@ const compressLabel = computed(() => (props.autoCompress ? '自动压缩：开' 
         <div class="min-w-0">
           <p class="text-xs font-medium text-ink">画质模式</p>
         </div>
-        <div class="flex rounded-full bg-canvas p-1" role="group" aria-label="画质模式">
+        <div class="flex rounded-xl border border-line/70 bg-canvas p-1" role="group" aria-label="画质模式">
           <button
             v-for="option in options"
             :key="option.value"
             type="button"
-            class="h-11 rounded-full px-3.5 text-xs font-medium transition disabled:opacity-50"
+            class="h-10 rounded-lg px-3 text-xs font-medium transition disabled:opacity-50 sm:h-9"
             :class="
               props.mode === option.value
                 ? 'bg-accent text-white'

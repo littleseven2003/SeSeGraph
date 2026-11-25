@@ -176,7 +176,7 @@ onBeforeUnmount(() => {
 
             <span
               v-if="status !== null"
-              class="absolute left-3 top-3 inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-medium leading-none"
+              class="absolute left-3 top-3 inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border px-2.5 py-1 text-xs font-medium leading-none"
               :class="
                 status.tone === 'error'
                   ? 'border-danger/30 bg-white text-danger'
@@ -188,7 +188,7 @@ onBeforeUnmount(() => {
               {{ status.label }}
             </span>
             <span
-              class="absolute bottom-3 right-3 rounded-full bg-white/90 px-2 py-1 text-xs font-medium leading-none text-ink tnum"
+              class="absolute bottom-3 right-3 rounded-md bg-white/90 px-2 py-1 text-xs font-medium leading-none text-ink tnum"
               >{{ current.image_count }}P</span
             >
 

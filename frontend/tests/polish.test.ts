@@ -62,11 +62,12 @@ test('圆角分三档：卡片 16px、操作 12px、紧凑动作 8px', () => {
 
   assert.ok(source('components/gallery/FocusCarousel.vue').includes('rounded-2xl bg-surface'), '卡片容器保持 16px')
   const card = source('components/gallery/PostCard.vue')
-  assert.ok(card.includes('whitespace-nowrap rounded-full border px-2 py-1'), '状态徽章保持圆形轮廓')
+  assert.ok(card.includes('whitespace-nowrap rounded-md border px-2 py-1'), '状态徽章收敛为 6px 圆角矩形')
 
   for (const file of ['views/HomeView.vue', 'views/TasksView.vue']) {
     const view = source(file)
-    assert.ok(view.includes('rounded-full bg-canvas p-1'), `${file} 分段控件保持圆形`)
+    assert.ok(view.includes('rounded-xl border border-line/70 bg-canvas p-1'), `${file} 分段外框 12px、内项 8px`)
+    assert.ok(view.includes('rounded-lg px-'), `${file} 分段内项收敛为 8px`)
   }
   assert.ok(source('utils/../components/tasks/TaskStageBar.vue').includes('overflow-hidden rounded-full bg-canvas'), '进度轨保持圆形')
   assert.ok(source('components/workbench/ModeSwitch.vue').includes('h-6 w-10 items-center rounded-full'), '开关拨片保持圆形')

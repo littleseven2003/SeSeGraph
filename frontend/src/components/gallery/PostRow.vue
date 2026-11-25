@@ -121,7 +121,7 @@ const copyLabel = computed(() => {
           {{ viewsText }}
         </span>
         <span
-          class="inline-flex shrink-0 items-center whitespace-nowrap rounded-full border px-1.5 py-0.5 text-[11px] font-medium leading-none md:hidden"
+          class="inline-flex shrink-0 items-center whitespace-nowrap rounded-md border px-1.5 py-0.5 text-[11px] font-medium leading-none md:hidden"
           :class="chipClass"
           >{{ status.label }}</span
         >
@@ -144,7 +144,7 @@ const copyLabel = computed(() => {
     <p v-else class="hidden select-none text-xs text-muted/45 md:block" aria-hidden="true">—</p>
 
     <span
-      class="hidden shrink-0 items-center gap-1.5 justify-self-start whitespace-nowrap rounded-full border px-2 py-1 text-xs font-medium leading-none md:inline-flex"
+      class="hidden shrink-0 items-center gap-1.5 justify-self-start whitespace-nowrap rounded-md border px-2 py-1 text-xs font-medium leading-none md:inline-flex"
       :class="chipClass"
     >
       {{ status.label }}
@@ -154,14 +154,17 @@ const copyLabel = computed(() => {
       <button
         v-if="shareUrl !== ''"
         type="button"
-        class="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-brand/25 bg-brand-soft text-brand-strong transition hover:border-brand/45"
-        :class="copyState === 'copied' ? 'border-accent/30 bg-accent-soft text-accent' : ''"
+        class="inline-flex h-11 w-11 shrink-0 items-center justify-center"
         :aria-label="copyLabel"
         :title="copyLabel"
         @click="copyLink"
       >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4" aria-hidden="true">
-          <template v-if="copyState === 'idle'">
+        <span
+          class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-brand/25 bg-brand-soft text-brand-strong transition hover:border-brand/45"
+          :class="copyState === 'copied' ? 'border-accent/30 bg-accent-soft text-accent' : ''"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4" aria-hidden="true">
+            <template v-if="copyState === 'idle'">
             <rect x="9" y="9" width="11" height="11" rx="2" />
             <path d="M15 5.5A2.5 2.5 0 0 0 12.5 3H6a2 2 0 0 0-2 2v7.5A2.5 2.5 0 0 0 6.5 15" stroke-linecap="round" />
           </template>
@@ -171,14 +174,17 @@ const copyLabel = computed(() => {
             <circle cx="12" cy="16.5" r="0.9" fill="currentColor" stroke="none" />
           </template>
         </svg>
+        </span>
       </button>
 
       <button
         type="button"
-        class="inline-flex h-11 items-center rounded-xl bg-ink px-3.5 text-xs font-medium text-white transition hover:bg-ink/90"
+        class="group inline-flex h-11 shrink-0 items-center justify-center"
         @click="onRowOpen"
       >
-        打开
+        <span class="inline-flex h-8 items-center rounded-lg bg-ink px-3.5 text-xs font-medium text-white transition group-hover:bg-ink/90">
+          打开
+        </span>
       </button>
     </div>
     <span role="status" aria-live="polite" class="sr-only">{{ copyState === 'idle' ? '' : copyLabel }}</span>

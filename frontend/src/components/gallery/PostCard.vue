@@ -97,14 +97,14 @@ const copyLabel = computed(() => {
       <span class="absolute inset-0 bg-ink/5" aria-hidden="true"></span>
 
       <span
-        class="absolute left-2 top-2 inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-1 text-xs font-medium leading-none"
+        class="absolute left-2 top-2 inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border px-2 py-1 text-xs font-medium leading-none"
         :class="chipClass"
       >
         <span v-if="status.tone === 'ok'" class="h-1.5 w-1.5 rounded-full bg-[#34d399]" aria-hidden="true"></span>
         {{ status.label }}
       </span>
       <span
-        class="absolute bottom-2 right-2 rounded-full bg-white/90 px-2 py-1 text-xs font-medium leading-none text-ink tnum"
+        class="absolute bottom-2 right-2 rounded-md bg-white/90 px-2 py-1 text-xs font-medium leading-none text-ink tnum"
         >{{ item.image_count }}P</span
       >
 
@@ -190,7 +190,7 @@ const copyLabel = computed(() => {
         <span
           v-for="tag in visibleTags"
           :key="tag"
-          class="min-w-0 max-w-full break-words rounded-full bg-canvas px-1.5 py-0.5 text-xs leading-relaxed text-muted [overflow-wrap:anywhere]"
+          class="min-w-0 max-w-full break-words rounded bg-canvas px-1.5 py-0.5 text-xs leading-relaxed text-muted [overflow-wrap:anywhere]"
           >#{{ tag }}</span
         >
         <span v-if="restTags > 0" class="px-1 py-0.5 text-xs leading-relaxed text-muted">+{{ restTags }}</span>

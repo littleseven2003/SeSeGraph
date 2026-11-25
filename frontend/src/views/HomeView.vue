@@ -341,10 +341,10 @@ onBeforeUnmount(() => {
 
       <div class="mt-4 flex min-w-0 items-center gap-2">
         <TagFilter class="min-w-0 flex-1" :tags="tags" :selected="selectedTags" @toggle="toggleTag" @clear="clearTags" />
-        <div class="flex shrink-0 items-center rounded-full bg-canvas p-1" role="group" aria-label="视图切换">
+        <div class="flex shrink-0 items-center rounded-xl border border-line/70 bg-canvas p-1" role="group" aria-label="视图切换">
           <button
             type="button"
-            class="inline-flex h-11 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium transition sm:px-3.5"
+            class="inline-flex h-10 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition sm:h-9 sm:px-3"
             :class="viewMode === 'gallery' ? 'bg-surface text-ink shadow-[0_1px_0_0_rgba(27,26,23,0.08)]' : 'text-muted hover:text-ink'"
             :aria-pressed="viewMode === 'gallery'"
             aria-label="画廊视图"
@@ -360,7 +360,7 @@ onBeforeUnmount(() => {
           </button>
           <button
             type="button"
-            class="inline-flex h-11 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium transition sm:px-3.5"
+            class="inline-flex h-10 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition sm:h-9 sm:px-3"
             :class="viewMode === 'list' ? 'bg-surface text-ink shadow-[0_1px_0_0_rgba(27,26,23,0.08)]' : 'text-muted hover:text-ink'"
             :aria-pressed="viewMode === 'list'"
             aria-label="列表视图"

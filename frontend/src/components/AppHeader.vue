@@ -14,15 +14,15 @@ const signingOut = ref(false)
 function navClass(name: string): string {
   const active = route.name === name
   return active
-    ? 'inline-flex h-11 shrink-0 items-center rounded-full bg-brand-soft px-2.5 text-sm font-medium text-brand-strong transition sm:px-3.5'
-    : 'inline-flex h-11 shrink-0 items-center rounded-full px-2.5 text-sm text-muted transition hover:bg-canvas hover:text-ink sm:px-3.5'
+    ? 'inline-flex h-10 shrink-0 items-center rounded-lg bg-brand-soft px-3 text-sm font-medium text-brand-strong transition sm:h-9'
+    : 'inline-flex h-10 shrink-0 items-center rounded-lg px-3 text-sm text-muted transition hover:bg-canvas hover:text-ink sm:h-9'
 }
 
 function narrowNavClass(name: string): string {
   const active = route.name === name
   return active
-    ? 'inline-flex h-10 flex-1 items-center justify-center rounded-full bg-brand-soft text-sm font-medium text-brand-strong transition'
-    : 'inline-flex h-10 flex-1 items-center justify-center rounded-full text-sm text-muted transition hover:bg-canvas hover:text-ink'
+    ? 'inline-flex h-10 flex-1 items-center justify-center rounded-lg bg-brand-soft text-sm font-medium text-brand-strong transition'
+    : 'inline-flex h-10 flex-1 items-center justify-center rounded-lg text-sm text-muted transition hover:bg-canvas hover:text-ink'
 }
 
 const NAV = [
@@ -98,7 +98,7 @@ async function signOut(): Promise<void> {
 
           <button
             type="button"
-            class="inline-flex h-11 shrink-0 items-center rounded-full px-2.5 text-sm text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60 sm:px-3.5"
+            class="inline-flex h-11 shrink-0 items-center justify-center rounded-lg px-2.5 text-sm text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60 sm:h-9 sm:px-3"
             :aria-label="signingOut ? '正在退出…' : '退出登录'"
             :disabled="signingOut"
             @click="signOut"

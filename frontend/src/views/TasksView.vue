@@ -241,7 +241,7 @@ onBeforeUnmount(() => {
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
           <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">任务</h1>
-          <p class="tnum rounded-full border border-line bg-surface px-2.5 py-0.5 text-xs text-muted">
+          <p class="tnum rounded-md border border-line bg-surface px-2.5 py-0.5 text-xs text-muted">
             共 {{ total }} 个<template v-if="filtered"> · {{ filterLabel }}</template>
           </p>
         </div>
@@ -254,12 +254,12 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="mt-3 max-w-full overflow-x-auto overscroll-x-contain">
-        <div class="flex min-w-max items-center gap-1 rounded-full bg-canvas p-1" role="group" aria-label="按状态筛选任务">
+        <div class="flex min-w-max items-center gap-1 rounded-xl border border-line/70 bg-canvas p-1" role="group" aria-label="按状态筛选任务">
           <button
             v-for="item in TASK_FILTERS"
             :key="item.value"
             type="button"
-            class="inline-flex h-11 shrink-0 items-center rounded-full px-3.5 text-xs font-medium transition"
+            class="inline-flex h-10 shrink-0 items-center rounded-lg px-3 text-xs font-medium transition sm:h-9"
             :class="filter === item.value ? 'bg-surface text-ink shadow-[0_1px_0_0_rgba(27,26,23,0.08)]' : 'text-muted hover:text-ink'"
             :aria-pressed="filter === item.value"
             @click="setFilter(item.value)"
@@ -327,7 +327,7 @@ onBeforeUnmount(() => {
                 <span class="block h-full rounded-full transition-[width] duration-300" :class="overallTone(task)" :style="{ width: overallOf(task) + '%' }"></span>
               </span>
               <span
-                class="shrink-0 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium"
+                class="shrink-0 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium"
                 :class="BADGE_CLASS[badgeOf(task).tone]"
               >
                 {{ badgeOf(task).label }}

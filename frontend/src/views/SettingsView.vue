@@ -661,7 +661,7 @@ onBeforeUnmount(() => {
           <li v-for="item in SETTING_NAV" :key="item.id">
             <a
               :href="'#' + item.id"
-              class="flex items-center gap-2 rounded-full px-3 py-2 text-sm transition hover:bg-brand-soft/70 hover:text-ink"
+              class="flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition hover:bg-brand-soft/70 hover:text-ink"
               @click="selectSection(item.id)"
               :class="activeSection === item.id ? 'bg-brand-soft text-ink' : 'text-muted'"
             >

@@ -62,7 +62,7 @@ onMounted(async () => {
           :href="rssURL"
           target="_blank"
           rel="noreferrer noopener"
-          class="inline-flex items-center gap-1 rounded-full border border-line bg-canvas/80 px-2.5 py-0.5 text-xs transition hover:border-brand/40 hover:text-brand-strong"
+          class="inline-flex items-center gap-1 rounded-md border border-line bg-canvas/80 px-2.5 py-0.5 text-xs transition hover:border-brand/40 hover:text-brand-strong"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-3.5 w-3.5" aria-hidden="true">
             <path d="M4 11a9 9 0 0 1 9 9" stroke-linecap="round" />

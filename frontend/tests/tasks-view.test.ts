@@ -72,7 +72,7 @@ test('旧轮询不会覆盖新筛选结果', () => {
 
 test('卡片结构、空态与控件热区', () => {
   assert.ok(source.includes('rounded-2xl bg-surface shadow'), '任务卡片用轻卡片')
-  assert.ok(source.includes('whitespace-nowrap rounded-full px-2.5 py-1'), '状态胶囊单行')
+  assert.ok(source.includes('whitespace-nowrap rounded-md px-2.5 py-1'), '状态徽章单行且为圆角矩形')
   assert.ok(source.includes('sm:flex-nowrap') === false, '窄屏动作区允许换行')
   // 所有操作按钮与分页控件使用 h-11（44px）热区。
   const controls = source.match(/inline-flex h-11/g) ?? []

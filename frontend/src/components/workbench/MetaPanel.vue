@@ -71,7 +71,7 @@ function applyFromPackage(): void {
       </div>
 
       <div class="flex flex-wrap items-center gap-2">
-        <div class="flex rounded-full bg-canvas p-1" role="group" aria-label="包内信息解析模式">
+        <div class="flex rounded-xl border border-line/70 bg-canvas p-1" role="group" aria-label="包内信息解析模式">
           <button
             v-for="option in [
               { value: 'first-line', label: '首行标题' },
@@ -79,7 +79,7 @@ function applyFromPackage(): void {
             ]"
             :key="option.value"
             type="button"
-            class="h-8 rounded-full px-2.5 text-xs font-medium transition"
+            class="h-8 rounded-lg px-2.5 text-xs font-medium transition"
             :class="parseMode === option.value ? 'bg-accent text-white' : 'text-muted hover:bg-canvas'"
             @click="parseMode = option.value as ParseMode"
           >
