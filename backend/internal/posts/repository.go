@@ -133,6 +133,18 @@ type Image struct {
 	ThumbBytes int64
 	// ThumbAt 是缩略图写入时间，用于判断新鲜度。
 	ThumbAt string
+	// SourceBotID 是这张图存入频道时使用的 Bot 编号，0 表示旧记录尚未确认。
+	SourceBotID int64
+	// SourceChatID 是存入时的频道编号，跨 Bot 接管时与原消息编号一起定位消息。
+	SourceChatID string
+}
+
+// ImageFileRef 是某个 Bot 为同一张图取得的可读文件引用。
+type ImageFileRef struct {
+	ImageID   int64
+	BotID     int64
+	FileID    string
+	CreatedAt string
 }
 
 // Repository 负责帖子与图片记录的读写。
@@ -1526,6 +1538,68 @@ func (r *Repository) MarkImageStored(ctx context.Context, imageID int64, fileID 
 		return errors.New("记录远端标识失败")
 	}
 	return nil
+}
+
+// MarkImageStoredWithOrigin 记录存图结果，并保存来源 Bot 与原频道，
+// 同时把这次取得的文件引用登记到该 Bot 名下，供封禁后由池内其他 Bot 接管。
+func (r *Repository) MarkImageStoredWithOrigin(ctx context.Context, imageID int64, fileID string, messageID int64, provider string, botID int64, chatID string) error {
+	if _, err := r.handle.ExecContext(ctx,
+		`UPDATE post_images
+		 SET remote_file_id = ?, remote_message_id = ?, storage_provider = ?, status = ?,
+		     temp_file_path = '', error_message = '',
+		     source_bot_id = CASE WHEN ? > 0 THEN ? ELSE source_bot_id END,
+		     source_chat_id = CASE WHEN ? <> '' THEN ? ELSE source_chat_id END
+		 WHERE id = ?`,
+		fileID, messageID, provider, ImageStatusStored,
+		botID, botID, chatID, chatID, imageID,
+	); err != nil {
+		return errors.New("记录远端标识失败")
+	}
+	if botID > 0 && fileID != "" {
+		if err := r.SetImageFileRef(ctx, imageID, botID, fileID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SetImageFileRef 登记某个 Bot 对这张图取得的文件引用；同一 Bot 重复登记时更新为新值。
+func (r *Repository) SetImageFileRef(ctx context.Context, imageID, botID int64, fileID string) error {
+	if imageID <= 0 || botID <= 0 || fileID == "" {
+		return errors.New("文件引用参数不完整")
+	}
+	if _, err := r.handle.ExecContext(ctx,
+		`INSERT INTO image_file_refs (image_id, bot_id, file_id) VALUES (?, ?, ?)
+		 ON CONFLICT(image_id, bot_id) DO UPDATE SET file_id = excluded.file_id`,
+		imageID, botID, fileID,
+	); err != nil {
+		return errors.New("登记文件引用失败")
+	}
+	return nil
+}
+
+// ImageFileRefs 读取这张图已有的全部 Bot 文件引用，按 Bot 编号排序。
+func (r *Repository) ImageFileRefs(ctx context.Context, imageID int64) ([]ImageFileRef, error) {
+	rows, err := r.handle.QueryContext(ctx,
+		`SELECT image_id, bot_id, file_id, COALESCE(created_at, '')
+		 FROM image_file_refs WHERE image_id = ? ORDER BY bot_id`, imageID)
+	if err != nil {
+		return nil, errors.New("读取文件引用失败")
+	}
+	defer func() { _ = rows.Close() }()
+
+	refs := make([]ImageFileRef, 0, 1)
+	for rows.Next() {
+		var ref ImageFileRef
+		if err := rows.Scan(&ref.ImageID, &ref.BotID, &ref.FileID, &ref.CreatedAt); err != nil {
+			return nil, errors.New("读取文件引用失败")
+		}
+		refs = append(refs, ref)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.New("读取文件引用失败")
+	}
+	return refs, nil
 }
 
 // MarkImageFailed 记录单张图片的失败原因。

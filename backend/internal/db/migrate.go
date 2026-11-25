@@ -8,7 +8,7 @@ import (
 )
 
 // SchemaVersion 是当前代码期望的数据库结构版本，写入 SQLite 的 user_version。
-const SchemaVersion = 14
+const SchemaVersion = 15
 
 // schemaStatements 是首次建库所需的语句，顺序即执行顺序。
 var schemaStatements = []string{
@@ -67,6 +67,15 @@ var schemaStatements = []string{
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		name TEXT NOT NULL UNIQUE
 	)`,
+	`CREATE TABLE IF NOT EXISTS image_file_refs (
+		image_id INTEGER NOT NULL,
+		bot_id INTEGER NOT NULL,
+		file_id TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (image_id, bot_id),
+		FOREIGN KEY (image_id) REFERENCES post_images(id) ON DELETE CASCADE
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_image_file_refs_image ON image_file_refs(image_id)`,
 	`CREATE TABLE IF NOT EXISTS post_tags (
 		post_id INTEGER NOT NULL,
 		tag_id INTEGER NOT NULL,
@@ -210,6 +219,37 @@ func Migrate(ctx context.Context, handle *sql.DB) error {
 	// 旧库升级：提交时选择的发布意图。空值表示只存图或旧任务，保持原有权限。
 	if err := ensureColumn(ctx, tx, "posts", "publish_intent", "ALTER TABLE posts ADD COLUMN publish_intent TEXT DEFAULT ''"); err != nil {
 		return errors.New("升级发布意图字段失败")
+	}
+	// 旧库升级：记录每张图的来源 Bot 与原频道，供封禁后由池内其他 Bot 接管。
+	if err := ensureColumn(ctx, tx, "post_images", "source_bot_id", "ALTER TABLE post_images ADD COLUMN source_bot_id INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return errors.New("升级图片来源 Bot 失败")
+	}
+	if err := ensureColumn(ctx, tx, "post_images", "source_chat_id", "ALTER TABLE post_images ADD COLUMN source_chat_id TEXT NOT NULL DEFAULT ''"); err != nil {
+		return errors.New("升级图片来源频道失败")
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS image_file_refs (
+		image_id INTEGER NOT NULL,
+		bot_id INTEGER NOT NULL,
+		file_id TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (image_id, bot_id),
+		FOREIGN KEY (image_id) REFERENCES post_images(id) ON DELETE CASCADE
+	)`); err != nil {
+		return errors.New("升级图片文件引用表失败")
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_image_file_refs_image ON image_file_refs(image_id)`); err != nil {
+		return errors.New("升级图片文件引用索引失败")
+	}
+	// 已存图片的来源按升级前的全局归属回填：能确认的沿用，确认不了的留空等待接管时补齐。
+	if _, err := tx.ExecContext(ctx, `UPDATE post_images
+		SET source_bot_id = COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'telegram.bot_id'), 0)
+		WHERE status = 'stored' AND source_bot_id = 0`); err != nil {
+		return errors.New("回填图片来源 Bot 失败")
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE post_images
+		SET source_chat_id = COALESCE((SELECT value FROM settings WHERE key = 'telegram.channel_id'), '')
+		WHERE status = 'stored' AND source_chat_id = ''`); err != nil {
+		return errors.New("回填图片来源频道失败")
 	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", SchemaVersion)); err != nil {
 		return errors.New("写入数据库结构版本失败")
