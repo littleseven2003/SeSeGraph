@@ -151,3 +151,15 @@ test('遮罩开启时缩略图表面提示可揭开，卡片与轮播不再提�
   assert.ok(card.includes('onCoverLeave'), '鼠标离开仍自动回遮')
   assert.ok(carousel.includes('remask()'), '轮播换项仍立即回遮')
 })
+
+test('换封面收敛为紧凑文字动作，状态与错误仍然可见', () => {
+  const cover = source.slice(source.indexOf('sm:col-start-3'), source.indexOf('sm:col-start-4'))
+  assert.ok(cover.includes('min-h-8'), '文字按钮保留点击高度')
+  assert.equal(cover.includes('rounded-full'), false, '不再使用宽胶囊')
+  assert.equal(cover.includes('min-w-[5.25rem]'), false, '不再为胶囊预留固定宽度')
+  assert.equal(cover.includes('border'), false, '当前封面与设为封面都去掉外框')
+  assert.ok(cover.includes('underline-offset-4') && cover.includes('hover:underline'), '文字按钮用下划线表示可点')
+  assert.ok(cover.includes(':disabled="coverBusy || !canLoadThumb(image) || detail.pending_delete"'), '忙碌、未入库与待删除仍禁用')
+  assert.ok(cover.includes("{{ coverBusy ? '设置中…' : '设为封面' }}"), '设置中就地反馈')
+  assert.ok(source.includes('{{ coverError }}'), '换封面失败仍就地提示')
+})

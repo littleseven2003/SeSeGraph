@@ -1163,13 +1163,13 @@ watch(
                   <div class="col-start-2 flex flex-wrap items-center gap-2 sm:contents">
                     <span
                       v-if="image.sort_order === detail.cover_sort_order"
-                      class="inline-flex h-8 min-w-[5.25rem] items-center justify-center whitespace-nowrap rounded-full bg-brand-soft px-2.5 text-xs font-medium text-brand-strong sm:col-start-3 sm:w-full"
+                      class="inline-flex min-h-8 items-center whitespace-nowrap text-xs font-medium text-brand-strong sm:col-start-3 sm:justify-end"
                       >当前封面</span
                     >
                     <button
                       v-else
                       type="button"
-                      class="inline-flex h-8 min-w-[5.25rem] items-center justify-center whitespace-nowrap rounded-full border border-line bg-surface px-2.5 text-xs font-medium text-muted transition hover:border-brand/40 hover:text-brand-strong disabled:opacity-60 sm:col-start-3 sm:w-full"
+                      class="inline-flex min-h-8 items-center whitespace-nowrap text-xs font-medium text-muted underline-offset-4 transition hover:text-brand-strong hover:underline focus-visible:underline disabled:opacity-45 sm:col-start-3 sm:justify-end"
                       :disabled="coverBusy || !canLoadThumb(image) || detail.pending_delete"
                       :aria-label="`将第 ${image.sort_order} 项设为封面`"
                       @click="setCover(image)"
