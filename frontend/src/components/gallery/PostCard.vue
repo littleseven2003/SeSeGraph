@@ -57,10 +57,7 @@ const published = computed(() => formatPublishedAt(props.item.published_at))
 const publishedDate = computed(() => published.value.split(' ')[0] ?? '')
 const visibleTags = computed(() => props.item.tags.slice(0, 2))
 const restTags = computed(() => Math.max(0, props.item.tags.length - visibleTags.value.length))
-// volume 是卡片上的卷号，用帖子编号补两位，形成归档索引感。
-const volume = computed(() => '#' + String(props.item.id).padStart(2, '0'))
-// 没有发布日期时只显示卷号，发布状态由左上角状态签负责，避免同一条信息出现两次。
-// 有日期时窄屏隐藏卷号前缀，把宽度留给日期与浏览量，避免日期被截成「2…」。
+// 卡片只用发布日期与浏览量定位条目，内部编号不出现在界面上。
 const showViews = computed(() => showsViews(props.item))
 const viewsText = computed(() => formatViews(props.item.views_count))
 const viewsTitle = computed(() => formatViewsExact(props.item.views_count) + ' 次浏览')
@@ -140,9 +137,9 @@ const copyLabel = computed(() => {
       <div class="flex items-center gap-1">
         <p class="min-w-0 flex-1 truncate text-xs text-muted tnum">
           <template v-if="publishedDate !== ''">
-            <span class="hidden sm:inline">{{ volume }} · </span>{{ publishedDate }}
+            {{ publishedDate }}
           </template>
-          <template v-else>{{ volume }}</template>
+          <template v-else>未发布</template>
         </p>
         <span
           v-if="showViews"

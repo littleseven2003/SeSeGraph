@@ -46,7 +46,7 @@ const publishLabel = computed(() => (props.progress ? publishStateLabel(props.pr
     <div class="flex items-baseline justify-between gap-2">
       <h2 class="text-sm font-semibold tracking-tight">任务进度</h2>
       <p class="tnum text-xs text-muted">
-        <template v-if="props.progress">任务 #{{ props.progress.id }}</template>
+        <template v-if="props.progress">当前任务</template>
         <template v-else>四阶段</template>
       </p>
     </div>

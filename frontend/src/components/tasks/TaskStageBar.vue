@@ -27,12 +27,12 @@ const VALUE_TEXT: Record<TaskTone, string> = {
 <template>
   <ol
     class="grid grid-cols-2 gap-2.5 sm:grid-cols-4 sm:gap-3"
-    :aria-label="`四阶段进度：${stages.map((item) => '#' + item.index + ' ' + item.label + ' ' + item.value).join('，')}`"
+    :aria-label="`四阶段进度：${stages.map((item) => item.index + '. ' + item.label + ' ' + item.value).join('，')}`"
   >
     <li v-for="item in stages" :key="item.key" class="min-w-0">
       <div class="flex items-baseline justify-between gap-2">
         <span class="truncate text-xs">
-          <span class="tnum text-muted/75">#{{ item.index }}</span>
+          <span class="tnum text-muted/75">{{ item.index }}.</span>
           <span class="ml-0.5 font-medium">{{ item.label }}</span>
         </span>
         <span class="tnum shrink-0 text-xs" :class="VALUE_TEXT[item.tone]">{{ item.value }}</span>

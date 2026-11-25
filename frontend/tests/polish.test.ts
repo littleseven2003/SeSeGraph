@@ -71,3 +71,29 @@ test('圆角分三档：卡片 16px、操作 12px、紧凑动作 8px', () => {
   assert.ok(source('utils/../components/tasks/TaskStageBar.vue').includes('overflow-hidden rounded-full bg-canvas'), '进度轨保持圆形')
   assert.ok(source('components/workbench/ModeSwitch.vue').includes('h-6 w-10 items-center rounded-full'), '开关拨片保持圆形')
 })
+
+test('面向用户的编号与卷号彻底移除，内部标识与标签保留', () => {
+  const forbidden = [
+    'views/TasksView.vue',
+    'views/WorkbenchView.vue',
+    'components/tasks/TaskProgressCard.vue',
+    'components/tasks/TaskStageBar.vue',
+    'components/gallery/PostCard.vue',
+    'components/gallery/PostRow.vue',
+  ]
+  for (const file of forbidden) {
+    const view = source(file)
+    for (const pattern of ['task.id }}', 'postId }}', 'resumableHint.postId }}', '{{ volume }}', '#ID', '任务 #']) {
+      assert.equal(view.includes(pattern), false, `${file} 不应出现面向用户的编号（${pattern}）`)
+    }
+    assert.equal(/#\$\{/.test(view), false, `${file} 文案不再拼接 # 编号`)
+  }
+  assert.ok(source('components/tasks/TaskStageBar.vue').includes('{{ item.index }}.'), '阶段显示为 1. 压缩')
+  assert.ok(source('views/TasksView.vue').includes('{{ task.title }}'), '任务行用标题区分条目')
+  assert.ok(source('components/gallery/PostCard.vue').includes('>未发布<'), '无发布日期时用文字说明')
+  // 内部 ID、深链接与列表键继续可用。
+  assert.ok(source('views/WorkbenchView.vue').includes('query: { resume:'), '续传链接仍用内部 ID')
+  assert.ok(source('views/TasksView.vue').includes(':key="task.id"') || source('views/TasksView.vue').includes('task.id'), '列表键仍用内部 ID')
+  // 内容标签的 # 语义保留。
+  assert.ok(source('components/gallery/TagFilter.vue').includes('#{{ name }}'), '标签仍带 # 前缀')
+})

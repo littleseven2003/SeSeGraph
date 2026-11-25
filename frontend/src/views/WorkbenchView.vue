@@ -400,7 +400,7 @@ async function applyRoute(targetID: number): Promise<void> {
     clearTask(storage, saved.postId)
     snapshot.value = null
     resetToDefaultMode()
-    message.value = `任务 #${saved.postId} 已不存在，本机续传记录已清除`
+    message.value = '上次任务已不存在，本机续传记录已清除'
     resumableHint.value = targetID > 0 ? null : loadTask(storage)
   } else if (saved) {
     // 网络失败不能清快照：保留续传信息，稍后重试仍可继续。
@@ -418,11 +418,11 @@ async function applyRoute(targetID: number): Promise<void> {
       applyServerProgress(progress)
       phase.value = progress.status === 'uploading' ? 'idle' : progress.status === 'failed' ? 'failed' : 'queued'
       resumeUnsafe.value = true
-      message.value = `任务 #${progress.id} 已载入。此设备没有该任务的文件清单，只能查看进度和控制；请在原设备续传，或放弃该任务后重新建任务。`
+      message.value = '已载入该任务。此设备没有它的文件清单，只能查看进度和控制；请在原设备续传，或放弃该任务后重新建任务。'
     } catch (cause) {
       message.value =
         cause instanceof ApiError && cause.status === 404
-          ? `任务 #${targetID} 已不存在，可能已被删除`
+          ? '该任务已不存在，可能已被删除'
           : '未能读取该任务，请回任务列表重试'
     }
   }
@@ -447,7 +447,7 @@ function hydrate(saved: TaskSnapshot, progress: ServerProgress): void {
     startPolling(saved.postId)
   }
   if (progress.status === 'completed') {
-    message.value = `任务 #${saved.postId} 已存入频道`
+    message.value = '任务已存入频道'
   }
 }
 
@@ -824,7 +824,7 @@ function restoreOrder(): boolean {
   const local: SnapshotFile[] = snapshotFiles()
   const matched = matchSnapshotFiles(saved.files, local)
   if ('error' in matched) {
-    pushError(`${matched.error}。如需放弃上次任务 #${saved.postId}，点「放弃此任务」`)
+    pushError(`${matched.error}。如需放弃上次任务，点「放弃此任务」`)
     return false
   }
   const byIndex = new Map(tiles.value.map((tile, index) => [index, tile]))
@@ -833,7 +833,7 @@ function restoreOrder(): boolean {
     .filter((tile): tile is WorkbenchTile => tile !== undefined)
   applyTiles(ordered)
   statuses.value = {}
-  message.value = `已按上次任务 #${saved.postId} 的顺序恢复 ${ordered.length} 张，发布时会补传缺少的序号`
+  message.value = `已按上次任务的顺序恢复 ${ordered.length} 张，发布时会补传缺少的序号`
   return true
 }
 
@@ -1268,7 +1268,7 @@ function discardSnapshot(): void {
   message.value =
     tiles.value.length === 0
       ? '已放弃上次任务，可以重新选择图片'
-      : `已放弃任务 #${abandoned}，发布会创建新的任务`
+      : '已放弃该任务，发布会创建新的任务'
 }
 
 function clearAll(): void {
@@ -1366,7 +1366,7 @@ async function publish(intent: 'auto' | 'manual' = 'manual'): Promise<void> {
   }
   if (snapshot.value && !resuming.value) {
     // 选错文件时先说明身份不符，避免被标题校验挡住真正的提示。
-    pushError(`当前选择与上次任务 #${snapshot.value.postId} 不一致，请重新选择同一批文件，或放弃此任务后重新开始`)
+    pushError(`当前选择与上次任务不一致，请重新选择同一批文件，或放弃此任务后重新开始`)
     return
   }
   const chosenTile = coverTile.value
@@ -1546,7 +1546,7 @@ onBeforeUnmount(() => {
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div class="min-w-0">
             <p class="flex items-center gap-2 text-sm font-semibold">
-              上次任务 #{{ snapshot.postId }}
+              上次任务
               <span
                 class="rounded px-1.5 py-0.5 text-[11px] font-medium"
                 :class="resuming ? 'bg-accent/10 text-accent' : 'bg-danger-soft text-danger'"
@@ -1600,7 +1600,7 @@ onBeforeUnmount(() => {
           class="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-surface px-3.5 py-2.5 text-sm"
         >
           <span class="min-w-0 flex-1 text-muted">
-            有未完成任务 <span class="tnum font-medium text-ink">#{{ resumableHint.postId }}</span>（{{ resumableHint.files.length }} 个文件），不影响直接拖入新素材。
+            有未完成任务（{{ resumableHint.files.length }} 个文件），不影响直接拖入新素材。
           </span>
           <router-link
             :to="{ name: 'workbench', query: { resume: resumableHint.postId } }"
@@ -1726,7 +1726,7 @@ onBeforeUnmount(() => {
 
                 <div class="mt-3 border-t border-line pt-3">
                   <p class="tnum text-sm font-medium">
-                    <template v-if="postId > 0">任务 #{{ postId }} · {{ uploadedCount }} / {{ imageCount }} 张已提交</template>
+                    <template v-if="postId > 0">已提交 {{ uploadedCount }} / {{ imageCount }} 张</template>
                     <template v-else>共 {{ imageCount }} 张 · {{ formatBytes(totalSize) }}</template>
                   </p>
                   <p v-if="progressText" class="mt-1 text-xs leading-relaxed text-muted">{{ progressText }}</p>
@@ -1777,7 +1777,7 @@ onBeforeUnmount(() => {
           <div class="flex items-center gap-3">
             <div class="min-w-0 flex-1">
               <p class="tnum truncate text-sm font-medium">
-                <template v-if="postId > 0">任务 #{{ postId }} · {{ uploadedCount }} / {{ imageCount }}</template>
+                <template v-if="postId > 0">已提交 {{ uploadedCount }} / {{ imageCount }}</template>
                 <template v-else>{{ imageCount }} 张 · {{ formatBytes(totalSize) }}</template>
               </p>
               <p class="truncate text-xs text-muted">{{ progressText !== '' ? progressText : '封面 ' + (coverTile?.name ?? '—') }}</p>

@@ -63,7 +63,6 @@ const chipClass = computed(() => {
 })
 const published = computed(() => formatPublishedAt(props.item.published_at))
 const publishedDate = computed(() => published.value.split(' ')[0] ?? '')
-const volume = computed(() => '#' + String(props.item.id).padStart(2, '0'))
 const copyLabel = computed(() => {
   if (copyState.value === 'copied') return '已复制链接'
   if (copyState.value === 'failed') return '复制失败'
@@ -103,7 +102,7 @@ const copyLabel = computed(() => {
     <div class="min-w-0">
       <p class="truncate text-sm font-semibold" :title="item.title">{{ item.title }}</p>
 
-      <!-- 窄屏只保留描述、浏览量与状态；卷号、日期与张数收进详情抽屉，避免挤压操作区。 -->
+      <!-- 窄屏只保留描述、浏览量与状态；日期与张数收进详情抽屉，避免挤压操作区。 -->
       <p
         v-if="excerpt !== ''"
         class="mt-0.5 line-clamp-2 break-words text-xs leading-snug text-muted md:hidden"
@@ -112,7 +111,6 @@ const copyLabel = computed(() => {
         {{ excerpt }}
       </p>
       <div class="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
-        <span class="tnum hidden shrink-0 md:inline">{{ volume }}</span>
         <span v-if="publishedDate !== ''" class="tnum shrink-0">{{ publishedDate }}</span>
         <span class="tnum hidden shrink-0 md:inline">{{ item.image_count }}P</span>
         <span v-if="showViews" class="inline-flex shrink-0 items-center gap-1 tnum" :title="viewsTitle">

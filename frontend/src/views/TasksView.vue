@@ -293,7 +293,6 @@ onBeforeUnmount(() => {
             @click="toggleExpanded(task.id)"
           >
             <span class="flex min-h-11 w-full items-center gap-2">
-              <span class="tnum shrink-0 text-xs text-muted">#{{ task.id }}</span>
               <span class="min-w-0 flex-1 truncate text-sm font-semibold" :title="task.title">{{ task.title }}</span>
               <span class="tnum hidden shrink-0 text-xs text-muted sm:inline">{{ updatedText(task.updated_at) }}</span>
               <span class="tnum shrink-0 rounded-full bg-canvas px-2 py-0.5 text-[11px] font-medium text-muted">{{ overallOf(task) }}%</span>
