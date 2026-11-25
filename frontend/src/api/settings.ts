@@ -312,3 +312,43 @@ export async function updateAdminCredentials(input: AdminCredentialInput): Promi
   }
   return (await response.json()) as AdminCredentialResult
 }
+
+/** BotEntry 是池内一个 Bot 的展示信息，令牌只以掩码出现。 */
+export interface BotEntry {
+  bot_id: number
+  alias: string
+  priority: number
+  status: string
+  status_note: string
+  masked_token: string
+  usable: boolean
+}
+
+/** BotsView 是多 Bot 池的读取结果。 */
+export interface BotsView {
+  bots: BotEntry[]
+  pool_enabled: boolean
+}
+
+/** BotInput 是保存时提交的一条 Bot，令牌留空表示沿用原值。 */
+export interface BotInput {
+  bot_id: number
+  alias: string
+  token: string
+  priority: number
+}
+
+// fetchBots 读取 Bot 池与健康状态。
+export async function fetchBots(): Promise<BotsView> {
+  return (await apiRequest('/api/settings/bots')).json() as Promise<BotsView>
+}
+
+// saveBots 覆盖保存 Bot 池；未填令牌的条目沿用服务端已有令牌。
+export async function saveBots(bots: BotInput[]): Promise<BotsView> {
+  const response = await apiRequest('/api/settings/bots', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bots }),
+  })
+  return response.json() as Promise<BotsView>
+}

@@ -7,8 +7,10 @@ import {
   clearMediaThumbs,
   createTelegraphAccount,
   fetchBackupStatus,
+  fetchBots,
   fetchSettings,
   fetchTraffic,
+  saveBots,
   resetPostThumbs,
   saveSettings,
   testConnection,
@@ -16,6 +18,7 @@ import {
   updateAdminCredentials,
   SettingsError,
   type BackupStatus,
+  type BotEntry,
   type ConnectionResult,
   type SettingsView,
   type TrafficStats,
@@ -194,6 +197,88 @@ const form = reactive({
   metaFilenames: '',
   metaParseMode: 'first-line',
 })
+
+// Bot 池：草稿与服务端条目分开保存，保存成功后整体刷新。
+const bots = ref<BotEntry[]>([])
+const botDraft = ref<{ bot_id: number; alias: string; token: string }[]>([])
+const botSaving = ref(false)
+const botError = ref('')
+const botNotice = ref('')
+
+function applyBots(list: BotEntry[]): void {
+  bots.value = list
+  botDraft.value = list.map((bot) => ({ bot_id: bot.bot_id, alias: bot.alias, token: '' }))
+}
+
+function maskedTokenOf(botID: number): string {
+  const found = bots.value.find((bot) => bot.bot_id === botID)
+  return found !== undefined && found.masked_token !== '' ? found.masked_token : 'Bot Token'
+}
+
+function statusTextOf(botID: number): string {
+  const found = bots.value.find((bot) => bot.bot_id === botID)
+  if (found === undefined) return ''
+  if (found.status === 'frozen') {
+    return found.status_note !== '' ? `已冻结：${found.status_note}` : '已冻结'
+  }
+  if (found.status === 'paused') return '已停用'
+  return '可写入'
+}
+
+async function loadBots(): Promise<void> {
+  try {
+    applyBots((await fetchBots()).bots)
+  } catch {
+    // 池接口未启用时保持空列表，单 Bot 配置照常可用。
+    applyBots([])
+  }
+}
+
+function addBotDraft(): void {
+  botNotice.value = ''
+  botError.value = ''
+  if (botDraft.value.length >= 10) {
+    botError.value = '最多配置 10 个 Bot'
+    return
+  }
+  botDraft.value.push({ bot_id: 0, alias: '', token: '' })
+}
+
+function removeBotDraft(index: number): void {
+  botNotice.value = ''
+  botError.value = ''
+  botDraft.value.splice(index, 1)
+}
+
+function moveBotDraft(index: number, offset: number): void {
+  const target = index + offset
+  if (target < 0 || target >= botDraft.value.length) return
+  const list = botDraft.value
+  ;[list[index], list[target]] = [list[target], list[index]]
+}
+
+async function saveBotPool(): Promise<void> {
+  if (botSaving.value) return
+  botSaving.value = true
+  botError.value = ''
+  botNotice.value = ''
+  try {
+    const saved = await saveBots(botDraft.value.map((bot, index) => ({
+      bot_id: bot.bot_id,
+      alias: bot.alias.trim(),
+      token: bot.token.trim(),
+      priority: index,
+    })))
+    applyBots(saved.bots)
+    botNotice.value = saved.pool_enabled
+      ? '已保存，上传遇到账号受限时会自动换用池内其他 Bot'
+      : '已保存；池内至少两个可用 Bot 时才启用自动切换'
+  } catch (cause) {
+    botError.value = cause instanceof ApiError ? cause.message : '保存 Bot 池失败，请稍后重试'
+  } finally {
+    botSaving.value = false
+  }
+}
 
 function applyView(next: SettingsView): void {
   view.value = next
@@ -439,6 +524,7 @@ async function load(): Promise<void> {
   loadError.value = ''
   try {
     applyView(await fetchSettings())
+    await loadBots()
     await loadTraffic()
     await loadBackup()
     await loadRebuildPosts()
@@ -775,6 +861,86 @@ onBeforeUnmount(() => {
                       <p class="text-xs text-muted">上游地址</p>
                       <p class="mt-0.5 text-sm">{{ endpointText(view.telegram.api_base_source) }}</p>
                     </div>
+                  </div>
+                </div>
+
+                <div class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+                  <div class="border-b border-line/70 px-5 py-4">
+                    <h3 class="text-sm font-semibold">多 Bot 池</h3>
+                    <p class="mt-1 text-xs text-muted">按顺序尝试，遇到账号受限自动换下一个；令牌只以掩码显示，留空表示沿用原值。</p>
+                  </div>
+                  <div class="space-y-3 px-5 py-4">
+                    <div v-for="(bot, index) in botDraft" :key="index" class="rounded-xl bg-canvas px-3 py-2.5">
+                      <div class="flex flex-wrap items-center gap-2">
+                        <input
+                          v-model="bot.alias"
+                          type="text"
+                          autocomplete="off"
+                          placeholder="别名，如 主力"
+                          class="h-9 w-32 rounded-lg border border-line bg-surface px-2 text-xs outline-none transition focus:border-ink/40"
+                        />
+                        <input
+                          v-model="bot.token"
+                          type="password"
+                          autocomplete="off"
+                          :placeholder="bot.bot_id > 0 ? maskedTokenOf(bot.bot_id) : '粘贴新的 Bot Token'"
+                          class="h-9 min-w-0 flex-1 rounded-lg border border-line bg-surface px-2 text-xs outline-none transition focus:border-ink/40"
+                        />
+                      </div>
+                      <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
+                        <span class="tnum">{{ index + 1 }}</span>
+                        <span v-if="bot.bot_id > 0" class="tnum">编号 {{ bot.bot_id }}</span>
+                        <span v-if="bot.bot_id > 0">{{ statusTextOf(bot.bot_id) }}</span>
+                        <span v-else>保存后按令牌识别</span>
+                        <span class="ml-auto flex gap-1">
+                          <button
+                            type="button"
+                            :disabled="index === 0 || botSaving"
+                            class="h-8 rounded-lg border border-line px-2 transition hover:bg-surface disabled:opacity-40"
+                            @click="moveBotDraft(index, -1)"
+                          >
+                            上移
+                          </button>
+                          <button
+                            type="button"
+                            :disabled="index === botDraft.length - 1 || botSaving"
+                            class="h-8 rounded-lg border border-line px-2 transition hover:bg-surface disabled:opacity-40"
+                            @click="moveBotDraft(index, 1)"
+                          >
+                            下移
+                          </button>
+                          <button
+                            type="button"
+                            :disabled="botSaving"
+                            class="h-8 rounded-lg border border-line px-2 text-danger transition hover:bg-surface disabled:opacity-40"
+                            @click="removeBotDraft(index)"
+                          >
+                            移除
+                          </button>
+                        </span>
+                      </div>
+                    </div>
+                    <p v-if="botDraft.length === 0" class="text-xs text-muted">还没有配置额外 Bot，单 Bot 配置照常可用。</p>
+                    <div class="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        :disabled="botSaving"
+                        class="h-9 rounded-lg border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas disabled:opacity-60"
+                        @click="addBotDraft"
+                      >
+                        添加 Bot
+                      </button>
+                      <button
+                        type="button"
+                        :disabled="botSaving"
+                        class="h-9 rounded-lg bg-ink px-3 text-xs font-medium text-surface transition hover:opacity-90 disabled:opacity-60"
+                        @click="saveBotPool"
+                      >
+                        保存 Bot 池
+                      </button>
+                    </div>
+                    <p v-if="botError !== ''" class="text-xs text-danger">{{ botError }}</p>
+                    <p v-if="botNotice !== ''" class="text-xs text-muted">{{ botNotice }}</p>
                   </div>
                 </div>
 
