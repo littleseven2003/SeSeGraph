@@ -68,6 +68,12 @@ type Provider interface {
 	Upload(ctx context.Context, req UploadRequest) (UploadResult, error)
 }
 
+// Origin 由多 Bot 池的提供方实现，用于把每张图记到实际发送它的 Bot 名下。
+// 返回的编号为 0 表示尚未确认身份，此时按旧口径只记录提供方名称。
+type Origin interface {
+	Origin() (botID int64, chatID string)
+}
+
 // Stream 是一次流式下载的句柄。Body 由调用方负责关闭，读取不整块载入内存。
 type Stream struct {
 	Body        io.ReadCloser

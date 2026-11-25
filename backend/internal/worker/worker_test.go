@@ -907,3 +907,68 @@ func TestFinishOnlyRetrySendsNothing(t *testing.T) {
 	}
 }
 
+// originFake 是带 Bot 身份的提供方替身，用于验证逐图来源与换 Bot。
+type originFake struct {
+	*fakeProvider
+	botID  int64
+	chatID string
+}
+
+func (o *originFake) Origin() (int64, string) { return o.botID, o.chatID }
+
+// TestProcessSwitchesBotWhenAccountLimited 验证上游判为账号受限时换池内下一个 Bot 重发本张，
+// 并把这张图记到实际发送的 Bot 名下，任务顺利完成。
+func TestProcessSwitchesBotWhenAccountLimited(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+
+	primary := &originFake{fakeProvider: &fakeProvider{failures: []error{
+		&storage.UploadError{Stage: "存图", Kind: storage.KindAccount, Status: 400},
+	}}, botID: 111, chatID: "-100777"}
+	secondary := &originFake{fakeProvider: &fakeProvider{}, botID: 222, chatID: "-100777"}
+
+	e.worker.provider = primary
+	switched := 0
+	e.worker.nextProvider = func(_ context.Context, failed storage.Provider, cause error) (storage.Provider, bool) {
+		if failed != primary || !storage.IsAccountLimited(cause) {
+			t.Errorf("换 Bot 参数不符：failed=%v cause=%v", failed, cause)
+		}
+		switched++
+		return secondary, true
+	}
+
+	postID := e.queuedPost(t, 1, "photo")
+	if err := e.worker.Process(ctx, postID); err != nil {
+		t.Fatalf("处理任务失败: %v", err)
+	}
+
+	if got := primary.callCount(); got != 1 {
+		t.Errorf("原 Bot 调用 = %d，期望 1", got)
+	}
+	if got := secondary.callCount(); got != 1 {
+		t.Errorf("备用 Bot 调用 = %d，期望 1", got)
+	}
+	if switched != 1 {
+		t.Errorf("换 Bot 次数 = %d，期望 1", switched)
+	}
+
+	post, err := e.repo.Get(ctx, postID)
+	if err != nil {
+		t.Fatalf("读取帖子失败: %v", err)
+	}
+	if post.Status != posts.StatusCompleted {
+		t.Errorf("任务状态 = %q，期望 %q", post.Status, posts.StatusCompleted)
+	}
+
+	images, err := e.repo.ListImages(ctx, postID)
+	if err != nil || len(images) != 1 {
+		t.Fatalf("读取图片失败: %v", err)
+	}
+	refs, err := e.repo.ImageFileRefs(ctx, images[0].ID)
+	if err != nil {
+		t.Fatalf("读取文件引用失败: %v", err)
+	}
+	if len(refs) != 1 || refs[0].BotID != 222 {
+		t.Fatalf("文件引用 = %+v，期望记在 222 名下", refs)
+	}
+}

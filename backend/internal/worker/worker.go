@@ -38,6 +38,9 @@ type Options struct {
 	Gate *storage.UploadGate
 	// PublishReady 判断发布条件是否齐备，与手动发布共用口径；未装配时按未就绪处理。
 	PublishReady func(ctx context.Context) error
+	// NextProvider 在某个 Bot 被上游判为账号受限后返回池内下一个可写入的提供方。
+	// 未装配时保持单 Bot 行为，本张直接失败。
+	NextProvider func(ctx context.Context, failed storage.Provider, cause error) (storage.Provider, bool)
 }
 
 // Worker 串行处理待上传的帖子。
@@ -52,6 +55,7 @@ type Worker struct {
 	now          func() time.Time
 	gate         *storage.UploadGate
 	publishReady func(ctx context.Context) error
+	nextProvider func(ctx context.Context, failed storage.Provider, cause error) (storage.Provider, bool)
 
 	mu          sync.Mutex
 	nextAllowed time.Time
@@ -98,6 +102,7 @@ func New(opts Options) (*Worker, error) {
 		now:          now,
 		gate:         opts.Gate,
 		publishReady: opts.PublishReady,
+		nextProvider: opts.NextProvider,
 	}, nil
 }
 
@@ -213,7 +218,8 @@ func (w *Worker) Process(ctx context.Context, postID int64) error {
 			}
 			return nil
 		}
-		if err := w.uploadImage(ctx, provider, post, image); err != nil {
+		used, err := w.uploadImage(ctx, provider, post, image)
+		if err != nil {
 			message := err.Error()
 			if message == "" {
 				message = "存图失败，原因未知"
@@ -222,6 +228,7 @@ func (w *Worker) Process(ctx context.Context, postID int64) error {
 			w.logger.Printf("帖子上传失败：编号 %d，%s", postID, message)
 			return err
 		}
+		provider = used
 	}
 
 	// 收尾前再看一次控制状态，避免暂停或停止后把任务标成完成。
@@ -280,19 +287,21 @@ func (w *Worker) fixedProvider() (storage.Provider, bool) {
 	return snapshotter.Snapshot()
 }
 
-// uploadImage 上传单张图片。遇到限流按返回的等待时长退避重试，其余错误直接记为失败。
-func (w *Worker) uploadImage(ctx context.Context, provider storage.Provider, post *posts.Post, image posts.Image) error {
+// uploadImage 上传单张图片。遇到限流按返回的等待时长退避重试；
+// 账号被上游限制时换用池内下一个 Bot 重发本张，其余错误直接记为失败。
+func (w *Worker) uploadImage(ctx context.Context, provider storage.Provider, post *posts.Post, image posts.Image) (storage.Provider, error) {
 	path := filepath.Join(w.dataDir, filepath.FromSlash(image.TempFilePath))
+	switched := 0
 
 	for attempt := 1; ; attempt++ {
 		if err := w.acquireSlot(ctx); err != nil {
-			return err
+			return provider, err
 		}
 
 		file, openErr := os.Open(path)
 		if openErr != nil {
 			_ = w.repo.MarkImageFailed(ctx, image.ID, "读取临时文件失败")
-			return errors.New("读取临时文件失败")
+			return provider, errors.New("读取临时文件失败")
 		}
 		// 视频不看画质模式，一律走 sendVideo；静态图沿用帖子的画质选择。
 		mode := post.UploadMode
@@ -309,11 +318,11 @@ func (w *Worker) uploadImage(ctx context.Context, provider storage.Provider, pos
 		_ = file.Close()
 
 		if uploadErr == nil {
-			if err := w.repo.MarkImageStored(ctx, image.ID, result.FileID, result.MessageID, provider.Name()); err != nil {
-				return err
+			if err := w.recordStored(ctx, provider, image.ID, result); err != nil {
+				return provider, err
 			}
 			_ = os.Remove(path)
-			return nil
+			return provider, nil
 		}
 
 		var limited *storage.RateLimitError
@@ -329,12 +338,35 @@ func (w *Worker) uploadImage(ctx context.Context, provider storage.Provider, pos
 			}
 		}
 
+		// 账号被上游限制时换池内下一个 Bot 重发本张，已存的图片不受影响。
+		if storage.IsAccountLimited(uploadErr) && w.nextProvider != nil && switched < 2 {
+			next, ok := w.nextProvider(ctx, provider, uploadErr)
+			if ok && next != nil {
+				switched++
+				provider = next
+				w.logger.Printf("存图换用其他 Bot：帖子 %d 第 %d 张", post.ID, image.SortOrder)
+				continue
+			}
+		}
+
 		// 真实原因写进逐图错误与任务说明，界面据此给出可读解释。
 		message := storage.DescribeUpload(uploadErr)
 		_ = w.repo.MarkImageFailed(ctx, image.ID, message)
 		w.logger.Printf("存图失败：帖子 %d 第 %d 张，%s", post.ID, image.SortOrder, message)
-		return errors.New(message)
+		return provider, errors.New(message)
 	}
+}
+
+// recordStored 记录存图结果；提供方带身份时把这张图记到实际发送的 Bot 名下。
+func (w *Worker) recordStored(ctx context.Context, provider storage.Provider, imageID int64, result storage.UploadResult) error {
+	botID, chatID := int64(0), ""
+	if origin, ok := provider.(storage.Origin); ok {
+		botID, chatID = origin.Origin()
+	}
+	if botID > 0 {
+		return w.repo.MarkImageStoredWithOrigin(ctx, imageID, result.FileID, result.MessageID, provider.Name(), botID, chatID)
+	}
+	return w.repo.MarkImageStored(ctx, imageID, result.FileID, result.MessageID, provider.Name())
 }
 
 // acquireSlot 在每次请求前等待必要的间隔，保证整个队列共享发送节奏。

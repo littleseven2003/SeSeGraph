@@ -73,6 +73,12 @@ func KindForTelegram(status int, description string) string {
 	}
 }
 
+// IsAccountLimited 判断错误是否表示账号被上游限制（例如冻结），调用方可据此换用池内其他 Bot。
+func IsAccountLimited(err error) bool {
+	var typed *UploadError
+	return errors.As(err, &typed) && typed.Kind == KindAccount
+}
+
 // DescribeUpload 把任意上传错误翻成一句可展示的说明，绝不回显原始错误文本。
 func DescribeUpload(err error) string {
 	if err == nil {

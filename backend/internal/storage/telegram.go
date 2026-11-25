@@ -2,18 +2,19 @@ package storage
 
 import (
 	"context"
-	"net"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/textproto"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -57,6 +58,10 @@ type Telegram struct {
 	client   *http.Client
 	photoMax int64
 	docMax   int64
+
+	mu       sync.Mutex
+	botID    int64
+	botKnown bool
 	cache    *pathCache
 	now      func() time.Time
 }
@@ -128,6 +133,12 @@ func (t *Telegram) BotID(ctx context.Context) (int64, error) {
 	if t == nil {
 		return 0, ErrNotConfigured
 	}
+	t.mu.Lock()
+	cached, known := t.botID, t.botKnown
+	t.mu.Unlock()
+	if known {
+		return cached, nil
+	}
 	endpoint := t.apiBase + "/bot" + t.token + "/getMe"
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
 	if err != nil {
@@ -154,8 +165,33 @@ func (t *Telegram) BotID(ctx context.Context) (int64, error) {
 	if !payload.OK || payload.Result.ID == 0 {
 		return 0, ErrUpstream
 	}
+	t.mu.Lock()
+	t.botID = payload.Result.ID
+	t.botKnown = true
+	t.mu.Unlock()
 	return payload.Result.ID, nil
 }
+
+// BotIDValue 返回已确认的 Bot 编号，未确认时为 0；供逐图来源记录使用。
+func (t *Telegram) BotIDValue() int64 {
+	if t == nil {
+		return 0
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.botID
+}
+
+// ChatID 返回配置的目标频道编号，与原消息编号一起定位可接管的旧消息。
+func (t *Telegram) ChatID() string {
+	if t == nil {
+		return ""
+	}
+	return t.chatID
+}
+
+// Origin 让提供方满足 storage.Origin：编号与频道都不触发新请求。
+func (t *Telegram) Origin() (int64, string) { return t.BotIDValue(), t.ChatID() }
 
 // ChatInfo 是 getChat 返回的会话属性，用于确认备份目标是否为公开会话。
 type ChatInfo struct {
