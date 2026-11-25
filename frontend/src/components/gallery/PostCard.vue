@@ -155,7 +155,7 @@ const copyLabel = computed(() => {
         <button
           v-if="shareUrl !== ''"
           type="button"
-          class="-my-1.5 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg"
+          class="inline-flex h-11 w-11 shrink-0 items-center justify-center"
           :aria-label="copyLabel"
           :title="copyLabel"
           @click="copyLink"
