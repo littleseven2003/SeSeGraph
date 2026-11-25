@@ -191,6 +191,10 @@ export interface TaskRow {
   /** 提交时选择的发布意图：auto 表示同步完成后自动入队，空串表示旧任务或仅存图 */
   publish_intent: string
   updated_at: string
+  /** 任务失败的可读原因，未失败时为空串 */
+  error?: string
+  /** 发布失败的可读原因，未发布失败时为空串 */
+  publish_error?: string
 }
 
 /** 任务列表筛选值：空串表示全部，与后端 status 参数一致。 */

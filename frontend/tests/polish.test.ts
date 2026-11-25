@@ -93,7 +93,7 @@ test('面向用户的编号与卷号彻底移除，内部标识与标签保留',
   assert.ok(source('views/TasksView.vue').includes('{{ task.title }}'), '任务行用标题区分条目')
   assert.ok(source('components/gallery/PostCard.vue').includes('>未发布<'), '无发布日期时用文字说明')
   // 内部 ID、深链接与列表键继续可用。
-  assert.ok(source('views/WorkbenchView.vue').includes('query: { resume:'), '续传链接仍用内部 ID')
+  assert.ok(source('views/TasksView.vue').includes('query: { resume:'), '续传链接仍用内部 ID，入口在任务页')
   assert.ok(source('views/TasksView.vue').includes(':key="task.id"') || source('views/TasksView.vue').includes('task.id'), '列表键仍用内部 ID')
   // 内容标签的 # 语义保留。
   assert.ok(source('components/gallery/TagFilter.vue').includes('#{{ name }}'), '标签仍带 # 前缀')

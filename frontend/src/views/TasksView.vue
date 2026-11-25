@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ApiError } from '../api/client.ts'
-import { fetchTasks, pauseTask, resumeTask, stopTask, type TaskFilter, type TaskRow } from '../api/posts.ts'
+import { fetchProgress, fetchTasks, pauseTask, resumeTask, stopTask, type ServerProgress, type TaskFilter, type TaskRow } from '../api/posts.ts'
 import { formatPublishedAt } from '../utils/gallery.ts'
 import AppHeader from '../components/AppHeader.vue'
 import BackToTop from '../components/BackToTop.vue'
@@ -92,9 +92,45 @@ function slotText(task: TaskRow): string {
     .join('，')
 }
 
-function toggleExpanded(id: number): void {
-  if (expanded.value.has(id)) expanded.value.delete(id)
-  else expanded.value.add(id)
+// progressById 缓存展开后才拉取的逐图进度，避免轮询时反复请求。
+const progressById = ref(new Map<number, ServerProgress>())
+const progressError = ref('')
+
+// failureOf 汇总一条任务的可读失败原因：先看任务级，再看发布级。
+function failureOf(task: TaskRow): string {
+  const reason = (task.error ?? '').trim()
+  if (reason !== '') return reason
+  return (task.publish_error ?? '').trim()
+}
+
+// failedImages 列出展开后看到的失败图片序号与原因。
+function failedImages(task: TaskRow): { sort_order: number; error: string }[] {
+  const state = progressById.value.get(task.id)
+  if (state === undefined) return []
+  return state.images
+    .filter((image) => image.status === 'failed')
+    .map((image) => ({ sort_order: image.sort_order, error: (image.error ?? '').trim() || '原因未知' }))
+}
+
+async function loadTaskProgress(id: number): Promise<void> {
+  if (progressById.value.has(id)) return
+  try {
+    const state = await fetchProgress(id)
+    const next = new Map(progressById.value)
+    next.set(id, state)
+    progressById.value = next
+  } catch {
+    progressError.value = '读取逐图原因失败，稍后重试'
+  }
+}
+
+function toggleExpanded(id: number, status: string): void {
+  if (expanded.value.has(id)) {
+    expanded.value.delete(id)
+  } else {
+    expanded.value.add(id)
+    if (status === 'failed') void loadTaskProgress(id)
+  }
 }
 
 function isExpanded(id: number): boolean {
@@ -324,7 +360,7 @@ onBeforeUnmount(() => {
             class="flex w-full flex-col px-4 py-1 text-left transition hover:bg-canvas/60 sm:px-5"
             :aria-expanded="isExpanded(task.id)"
             :aria-controls="`task-stages-${task.id}`"
-            @click="toggleExpanded(task.id)"
+            @click="toggleExpanded(task.id, task.status)"
           >
             <span class="flex min-h-11 w-full items-center gap-2">
               <!-- 标题与时间同组占剩余宽度：短标题时间紧跟，长标题截断给时间让位。 -->
@@ -403,6 +439,19 @@ onBeforeUnmount(() => {
             <TaskStageBar :stages="stagesOf(task)" />
             <!-- 顶行已经给过更新时间，这里只留阶段概况，不重复同一时间。 -->
             <p class="mt-2 text-xs text-muted">{{ summaryOf(task) }}</p>
+            <!-- 失败时把可读原因写在这里，不再只显示笼统的「存图失败」。 -->
+            <p v-if="failureOf(task) !== ''" class="mt-1.5 rounded-md bg-danger-soft px-2 py-1.5 text-xs leading-relaxed text-danger">
+              {{ failureOf(task) }}
+            </p>
+            <div v-if="failedImages(task).length > 0" class="mt-2">
+              <p class="text-xs font-medium text-danger">失败明细</p>
+              <ul class="mt-1 space-y-0.5">
+                <li v-for="item in failedImages(task)" :key="item.sort_order" class="tnum text-xs text-muted">
+                  第 {{ item.sort_order }} 张 · {{ item.error }}
+                </li>
+              </ul>
+            </div>
+            <p v-if="progressError !== '' && isExpanded(task.id)" class="mt-1 text-xs text-muted">{{ progressError }}</p>
             <div class="mt-3 flex flex-wrap items-center gap-2">
               <button
                 v-if="canResume(task)"
