@@ -440,4 +440,3 @@ func TestRetryRejectsPausedTask(t *testing.T) {
 		t.Errorf("暂停任务状态被改动：%s", post.Status)
 	}
 }
-

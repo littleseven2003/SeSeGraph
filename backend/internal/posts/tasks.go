@@ -40,7 +40,7 @@ type TaskItem struct {
 	CompressedCount *int
 	// PublishIntent 是提交时选择的发布意图：auto 表示同步完成后自动入队，空串表示旧任务或仅存图。
 	PublishIntent string
-	UpdatedAt       string
+	UpdatedAt     string
 }
 
 // TaskPage 是任务列表的一页。
