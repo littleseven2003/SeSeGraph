@@ -274,3 +274,56 @@ func TestResumeFromPublishingReturnsToQueue(t *testing.T) {
 	}
 }
 
+// TestConcurrentClaimKeepsPostsIsolated 确认两套图集同时排队时各领各的，
+// 已存图与失败原因不会串到另一条任务上。
+func TestConcurrentClaimKeepsPostsIsolated(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+	first, err := repo.Create(ctx, Post{Title: "图集甲", ImageCount: 2, Status: StatusQueued})
+	if err != nil {
+		t.Fatalf("创建甲失败: %v", err)
+	}
+	second, err := repo.Create(ctx, Post{Title: "图集乙", ImageCount: 2, Status: StatusQueued})
+	if err != nil {
+		t.Fatalf("创建乙失败: %v", err)
+	}
+	claimed := map[int64]bool{}
+	for i := 0; i < 2; i++ {
+		id, ok, err := repo.ClaimNext(ctx)
+		if err != nil || !ok {
+			t.Fatalf("第 %d 次领取失败：ok=%v err=%v", i+1, ok, err)
+		}
+		if claimed[id] {
+			t.Fatalf("同一条任务被领了两次：%d", id)
+		}
+		claimed[id] = true
+	}
+	if !claimed[first] || !claimed[second] {
+		t.Fatalf("两条任务应各领一次：%v", claimed)
+	}
+
+	// 甲存一张、失败一张，乙的数字不受影响。
+	imagesA, err := repo.PendingImages(ctx, first)
+	if err != nil || len(imagesA) != 0 {
+		t.Fatalf("无图片时待上传应为空：%v %d", err, len(imagesA))
+	}
+	if err := repo.MarkTaskFailed(ctx, first, "存图失败：账号受限"); err != nil {
+		t.Fatalf("标记甲失败出错: %v", err)
+	}
+	postA, _ := repo.Get(ctx, first)
+	postB, _ := repo.Get(ctx, second)
+	if postA.Status != StatusFailed || postB.Status != StatusPublishing {
+		t.Errorf("失败状态串了：甲 %s，乙 %s", postA.Status, postB.Status)
+	}
+	var messageA, messageB string
+	if err := repo.handle.QueryRowContext(ctx, `SELECT COALESCE(error_message, '') FROM posts WHERE id = ?`, first).Scan(&messageA); err != nil {
+		t.Fatalf("读取甲原因失败: %v", err)
+	}
+	if err := repo.handle.QueryRowContext(ctx, `SELECT COALESCE(error_message, '') FROM posts WHERE id = ?`, second).Scan(&messageB); err != nil {
+		t.Fatalf("读取乙原因失败: %v", err)
+	}
+	if messageA == "" || messageB != "" {
+		t.Errorf("失败原因串了：甲 %q，乙 %q", messageA, messageB)
+	}
+}
+
