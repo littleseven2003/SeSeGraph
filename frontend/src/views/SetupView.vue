@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ApiError, setupAccount } from '../api/client'
 import BrandMark from '../components/BrandMark.vue'
+import PasswordVisibilityToggle from '../components/PasswordVisibilityToggle.vue'
 
 const router = useRouter()
 const username = ref('')
@@ -83,17 +84,13 @@ async function submit(): Promise<void> {
               :type="showPassword ? 'text' : 'password'"
               autocomplete="new-password"
               required
-              class="h-11 w-full rounded-xl border border-line bg-canvas pl-3 pr-14 text-sm outline-none transition focus:border-ink/40 focus:bg-surface"
+              class="h-11 w-full rounded-xl border border-line bg-canvas pl-3 pr-11 text-sm outline-none transition focus:border-ink/40 focus:bg-surface"
             />
-            <button
-              type="button"
-              class="absolute right-0.5 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
-              :aria-pressed="showPassword"
-              :aria-label="showPassword ? '隐藏密码' : '显示密码'"
-              @click="showPassword = !showPassword"
-            >
-              {{ showPassword ? '隐藏' : '显示' }}
-            </button>
+            <PasswordVisibilityToggle
+              :shown="showPassword"
+              label="密码"
+              @toggle="showPassword = !showPassword"
+            />
           </div>
           <p class="mt-1.5 text-xs text-muted">至少 8 个字符，建议使用密码管理器生成。</p>
         </div>
@@ -108,17 +105,13 @@ async function submit(): Promise<void> {
               :type="showConfirm ? 'text' : 'password'"
               autocomplete="new-password"
               required
-              class="h-11 w-full rounded-xl border border-line bg-canvas pl-3 pr-14 text-sm outline-none transition focus:border-ink/40 focus:bg-surface"
+              class="h-11 w-full rounded-xl border border-line bg-canvas pl-3 pr-11 text-sm outline-none transition focus:border-ink/40 focus:bg-surface"
             />
-            <button
-              type="button"
-              class="absolute right-0.5 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
-              :aria-pressed="showConfirm"
-              :aria-label="showConfirm ? '隐藏确认密码' : '显示确认密码'"
-              @click="showConfirm = !showConfirm"
-            >
-              {{ showConfirm ? '隐藏' : '显示' }}
-            </button>
+            <PasswordVisibilityToggle
+              :shown="showConfirm"
+              label="确认密码"
+              @toggle="showConfirm = !showConfirm"
+            />
           </div>
         </div>
 
@@ -132,17 +125,13 @@ async function submit(): Promise<void> {
               :type="showToken ? 'text' : 'password'"
               autocomplete="off"
               required
-              class="h-11 w-full rounded-xl border border-line bg-canvas pl-3 pr-14 text-sm outline-none transition focus:border-ink/40 focus:bg-surface"
+              class="h-11 w-full rounded-xl border border-line bg-canvas pl-3 pr-11 text-sm outline-none transition focus:border-ink/40 focus:bg-surface"
             />
-            <button
-              type="button"
-              class="absolute right-0.5 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
-              :aria-pressed="showToken"
-              :aria-label="showToken ? '隐藏初始化凭证' : '显示初始化凭证'"
-              @click="showToken = !showToken"
-            >
-              {{ showToken ? '隐藏' : '显示' }}
-            </button>
+            <PasswordVisibilityToggle
+              :shown="showToken"
+              label="初始化凭证"
+              @toggle="showToken = !showToken"
+            />
           </div>
           <p class="mt-1.5 text-xs text-muted">
             由部署时配置的 <code class="tnum">ADMIN_SETUP_TOKEN</code> 提供，仅用于本次初始化。

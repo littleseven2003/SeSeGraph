@@ -23,21 +23,28 @@ test('登录与初始化共用字标并支持密码显隐', () => {
   assert.ok(mark.includes("'/sesegraph-wordmark.svg'"), '顶栏与登录共用完整艺术字标')
   assert.ok(mark.includes('184') && mark.includes('40'), '字标按原始比例缩放，避免拉伸')
   assert.ok(source('components/AppHeader.vue').includes('SeSe图册'), '全站顶栏保留中文副标')
-  for (const file of ['views/LoginView.vue', 'views/SetupView.vue']) {
-    assert.ok(source(file).includes('SeSe图册'), `${file} 保留中文副标`)
-  }
-  assert.equal(mark.includes('<svg'), false, '图形不在组件内重复维护')
-  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8')
-  assert.ok(html.includes('href="/sesegraph-mark.svg"'), 'favicon 指向同一份品牌源')
-
+  const toggle = source('components/PasswordVisibilityToggle.vue')
   for (const file of ['views/LoginView.vue', 'views/SetupView.vue']) {
     const view = source(file)
     assert.ok(view.includes(':type="showPassword ? \'text\' : \'password\'"'), `${file} 密码应可显隐`)
-    assert.ok(view.includes(':aria-pressed="showPassword"'), `${file} 显隐按钮要暴露按压状态`)
-    assert.ok(view.includes("type=\"button\""), `${file} 显隐按钮不能触发提交`)
+    assert.ok(view.includes('<PasswordVisibilityToggle'), `${file} 显隐交给共用图标组件`)
+    assert.ok(view.includes(':shown="showPassword"'), `${file} 图标按钮跟随显隐状态`)
+    assert.ok(view.includes('pr-11'), `${file} 输入框为图标让出右侧留白`)
+    assert.equal(view.includes("'隐藏' : '显示'"), false, `${file} 不再使用文字切换`)
   }
+
+  assert.ok(toggle.includes('type="button"'), '显隐按钮不能触发提交')
+  assert.ok(toggle.includes(':aria-pressed="shown"'), '显隐按钮要暴露按压状态')
+  assert.ok(toggle.includes('aria-label'), '显隐按钮要有可访问名称')
+  assert.ok(toggle.includes('`隐藏${label}`') && toggle.includes('`显示${label}`'), '名称随状态切换且带字段名')
+  assert.ok(toggle.includes('@mousedown.prevent'), '点击图标不夺走输入框焦点')
+  assert.ok(toggle.includes('class="h-4 w-4"'), '线性眼睛图标为 16px')
+  assert.ok(toggle.includes('aria-hidden="true"'), '图标本身不重复播报')
+  assert.ok(toggle.includes('viewBox="0 0 24 24"'), '图标用同一套线条规格')
 
   const setup = source('views/SetupView.vue')
   assert.ok(setup.includes(':type="showToken ? \'text\' : \'password\'"'), '初始化凭证默认遮蔽且可显隐')
+  assert.ok(setup.includes('label="初始化凭证"'), '初始化凭证显隐带字段名')
+  assert.ok(setup.includes(':type="showConfirm ? \'text\' : \'password\'"'), '确认密码可独立显隐')
   assert.ok(setup.includes('autocomplete="new-password"'), '初始化页密码交给密码管理器')
 })

@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ApiError, login } from '../api/client'
 import BrandMark from '../components/BrandMark.vue'
+import PasswordVisibilityToggle from '../components/PasswordVisibilityToggle.vue'
 
 const router = useRouter()
 const username = ref('')
@@ -59,17 +60,13 @@ async function submit(): Promise<void> {
               :type="showPassword ? 'text' : 'password'"
               autocomplete="current-password"
               required
-              class="h-11 w-full rounded-xl border border-line bg-canvas pl-3 pr-14 text-sm outline-none transition focus:border-ink/40 focus:bg-surface"
+              class="h-11 w-full rounded-xl border border-line bg-canvas pl-3 pr-11 text-sm outline-none transition focus:border-ink/40 focus:bg-surface"
             />
-            <button
-              type="button"
-              class="absolute right-0.5 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
-              :aria-pressed="showPassword"
-              :aria-label="showPassword ? '隐藏密码' : '显示密码'"
-              @click="showPassword = !showPassword"
-            >
-              {{ showPassword ? '隐藏' : '显示' }}
-            </button>
+            <PasswordVisibilityToggle
+              :shown="showPassword"
+              label="密码"
+              @toggle="showPassword = !showPassword"
+            />
           </div>
         </div>
 
