@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/littleseven2003/SeSeGraph/releases/tag/v1.6.1"><img src="https://img.shields.io/badge/Release-v1.6.1-D04223?style=flat-square" alt="Release" /></a>
+  <a href="https://github.com/littleseven2003/SeSeGraph/releases/tag/v1.6.2"><img src="https://img.shields.io/badge/Release-v1.6.2-D04223?style=flat-square" alt="Release" /></a>
   <a href="https://github.com/littleseven2003/SeSeGraph/pkgs/container/sesegraph"><img src="https://img.shields.io/badge/Docker-ghcr.io-0D7A72?style=flat-square" alt="Docker" /></a>
   <img src="https://img.shields.io/badge/Go-1.22%2B-1B1A17?style=flat-square" alt="Go 1.22+" />
   <img src="https://img.shields.io/badge/Vue-3-1B1A17?style=flat-square" alt="Vue 3" />
@@ -94,22 +94,22 @@ SeSeGraph 是一个自托管的私人图册发布与管理程序。你把本地�
 
 提供三种部署方式。服务数据目录仅包含 `sesegraph.db`（含 WAL 文件）、`thumbs/`（封面缩略图）、`thumbs/media/`（逐图小图缓存，可随时清理重建）、`tmp/`（待上传临时文件）与 `backups/`（备份包），迁移时直接复制该目录即可。
 
-> 以下命令按 `v1.6.1` 编写；如需安装其他版本，替换其中的版本号即可。
+> 以下命令按 `v1.6.2` 编写；如需安装其他版本，替换其中的版本号即可。
 
 ### 方式一：Docker Compose（推荐，含 Caddy 自动 HTTPS）
 
 ```bash
 mkdir -p /opt/sesegraph && cd /opt/sesegraph
-curl -fsSLO https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.6.1/docker-compose.yml
-mkdir -p deploy && curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.6.1/deploy/Caddyfile -o deploy/Caddyfile
-curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.6.1/.env.example -o .env
+curl -fsSLO https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.6.2/docker-compose.yml
+mkdir -p deploy && curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.6.2/deploy/Caddyfile -o deploy/Caddyfile
+curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.6.2/.env.example -o .env
 # 至少填写 DOMAIN，以及 ADMIN_USERNAME/ADMIN_PASSWORD（或 ADMIN_SETUP_TOKEN）
 chmod 600 .env
 $EDITOR .env
 docker compose up -d
 ```
 
-镜像默认从 `ghcr.io/littleseven2003/sesegraph` 拉取，`SESEGRAPH_VERSION` 默认固定为 `v1.6.1`（如需跟随后续版本可改为 `latest`，也可用 `SESEGRAPH_IMAGE` 指定自定义地址）。宿主机数据位于 `/opt/sesegraph/data`，Caddy 证书保存在命名卷中。
+镜像默认从 `ghcr.io/littleseven2003/sesegraph` 拉取，`SESEGRAPH_VERSION` 默认固定为 `v1.6.2`（如需跟随后续版本可改为 `latest`，也可用 `SESEGRAPH_IMAGE` 指定自定义地址）。宿主机数据位于 `/opt/sesegraph/data`，Caddy 证书保存在命名卷中。
 
 `.env.example` 里代理、画质、Telegraph 链接方式、流量阈值与备份计划默认都是注释状态，这些项留空即由设置页维护；一旦在 `.env` 中填写，该字段就以环境变量为准，设置页对应项会置灰只读。
 
@@ -118,7 +118,7 @@ docker compose up -d
 ```bash
 install -d -m 700 /opt/sesegraph
 install -d -o 1000 -g 1000 /opt/sesegraph/data
-curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.6.1/.env.example \
+curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.6.2/.env.example \
   -o /opt/sesegraph/sesegraph.env
 chmod 600 /opt/sesegraph/sesegraph.env
 # 容器内数据目录固定为 /app/data；同时在文件中填写 PUBLIC_URL 与管理员初始化项
@@ -128,7 +128,7 @@ docker run -d --name sesegraph --restart unless-stopped \
   -p 127.0.0.1:8080:8080 \
   -v /opt/sesegraph/data:/app/data \
   --env-file /opt/sesegraph/sesegraph.env \
-  ghcr.io/littleseven2003/sesegraph:v1.6.1
+  ghcr.io/littleseven2003/sesegraph:v1.6.2
 ```
 
 通过 `0600` 权限的 `--env-file` 传入凭据，避免密码进入命令历史。若使用已有 Nginx 或 Caddy，请反代至 `http://127.0.0.1:8080` 并关闭响应缓冲，示例见 `deploy/nginx.conf.example` 与 `deploy/Caddyfile.example`。
@@ -139,12 +139,12 @@ docker run -d --name sesegraph --restart unless-stopped \
 install -d /opt/sesegraph
 useradd --system --home /opt/sesegraph --shell /usr/sbin/nologin sesegraph || true
 curl -fsSL -o /opt/sesegraph/sesegraph \
-  https://github.com/littleseven2003/SeSeGraph/releases/download/v1.6.1/sesegraph-v1.6.1-linux-amd64
+  https://github.com/littleseven2003/SeSeGraph/releases/download/v1.6.2/sesegraph-v1.6.2-linux-amd64
 chmod +x /opt/sesegraph/sesegraph
-curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.6.1/deploy/sesegraph.service \
+curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.6.2/deploy/sesegraph.service \
   -o /etc/systemd/system/sesegraph.service
 install -d -m 750 /etc/sesegraph
-curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.6.1/.env.example \
+curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.6.2/.env.example \
   -o /etc/sesegraph/sesegraph.env
 chmod 600 /etc/sesegraph/sesegraph.env
 # 填写 PUBLIC_URL 与管理员初始化项；监听地址与数据目录由单元文件的 --addr / --data 指定
@@ -159,13 +159,13 @@ curl -fsS http://127.0.0.1:8080/api/health
 # Caddy：示例里的 gallery.example.com 要换成你的域名，证书由 Caddy 自动申请；
 # 已有 Caddy 时不要覆盖整份配置，只把示例里的站点段合并进现有 Caddyfile。
 install -d /etc/caddy
-curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.6.1/deploy/Caddyfile.example -o /tmp/sesegraph.caddy
+curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.6.2/deploy/Caddyfile.example -o /tmp/sesegraph.caddy
 $EDITOR /tmp/sesegraph.caddy          # 改域名，必要时补 tls 证书路径
 cat /tmp/sesegraph.caddy >> /etc/caddy/Caddyfile
 systemctl reload caddy
 
 # 或 Nginx：文件名换成你的域名，证书路径改成实际证书；注意关闭响应缓冲并放开请求体上限
-curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.6.1/deploy/nginx.conf.example -o /etc/nginx/conf.d/sesegraph.conf
+curl -fsSL https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.6.2/deploy/nginx.conf.example -o /etc/nginx/conf.d/sesegraph.conf
 $EDITOR /etc/nginx/conf.d/sesegraph.conf
 nginx -t && systemctl reload nginx
 ```
@@ -256,7 +256,7 @@ make cross                   # 交叉编译四个平台二进制
 - **Compose 更新**：先重新下载编排文件（新版本可能新增环境变量透传，只更新 `.env` 不会生效），再确认 `.env` 中 `SESEGRAPH_VERSION` 为目标版本：
   ```bash
   cd /opt/sesegraph
-  curl -fsSLO https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.6.1/docker-compose.yml
+  curl -fsSLO https://raw.githubusercontent.com/littleseven2003/SeSeGraph/v1.6.2/docker-compose.yml
   docker compose pull sesegraph && docker compose up -d sesegraph
   ```
   宿主机数据目录与 Caddy 证书卷均会保留。
