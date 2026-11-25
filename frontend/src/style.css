@@ -19,10 +19,24 @@
   --color-warn: #92400e;
   --color-danger: #b91c1c;
   --color-danger-soft: #fbefee;
+  /* 四阶段取色对齐字标：压缩珊瑚、上传琥珀、同步松石、发布品红。 */
+  --color-stage-compress: #d04223;
+  --color-stage-upload: #d97706;
+  --color-stage-sync: #0d7a72;
+  --color-stage-publish: #c0266a;
 
   --font-sans: "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei", system-ui, sans-serif;
 
   --radius-card: 0.5rem;
+}
+
+/* 不适用或未记录的四阶段槽位用斜纹占位，和「尚未完成」的空槽区分开。 */
+.stage-slot-idle {
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--color-line) 0 4px,
+    color-mix(in srgb, var(--color-line) 45%, var(--color-canvas)) 4px 8px
+  );
 }
 
 @layer base {

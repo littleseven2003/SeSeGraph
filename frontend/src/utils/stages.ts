@@ -155,6 +155,44 @@ export function stageSummary(stages: readonly StageView[]): string {
   return '四阶段已完成'
 }
 
+/** StageSlot 是折叠行四槽里的一格：是否适用、已确认比例与斜纹占位的原因。 */
+export interface StageSlot {
+  key: StageKey
+  index: number
+  label: string
+  /** 已确认的填充比例 0–1 */
+  ratio: number
+  /** true 表示这一格对本任务不适用，用斜纹占位而不是空槽 */
+  inactive: boolean
+  /** 斜纹格的原因，读屏与悬停都用它 */
+  reason: '' | '未记录' | '不适用'
+}
+
+// stageSlots 把四阶段摊成固定四格：不适用阶段保留槽位，避免列表纵向错位。
+export function stageSlots(stages: readonly StageView[], options: OverallOptions = {}): StageSlot[] {
+  const includePublish = options.publishIntent === 'auto' || PUBLISH_STARTED.has(options.publishState ?? '')
+  return stages.map((item) => {
+    let inactive = false
+    let reason: StageSlot['reason'] = ''
+    if (item.key === 'compress' && options.hasCompressRecord === false) {
+      inactive = true
+      reason = '未记录'
+    }
+    if (item.key === 'publish' && !includePublish) {
+      inactive = true
+      reason = '不适用'
+    }
+    return {
+      key: item.key,
+      index: item.index,
+      label: item.label,
+      ratio: inactive ? 0 : item.ratio,
+      inactive,
+      reason,
+    }
+  })
+}
+
 /** OverallOptions 决定总进度的分母：只统计这条任务真正适用的阶段。 */
 export interface OverallOptions {
   /** 提交时选择的发布意图：auto 表示同步完成后会自动发布 */

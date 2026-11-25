@@ -1,18 +1,31 @@
 <script setup lang="ts">
 import type { TaskTone } from '../../utils/tasks.ts'
-import type { StageView } from '../../utils/stages.ts'
+import type { StageKey, StageView } from '../../utils/stages.ts'
 
 // 四阶段进度条：桌面四等分，390px 折成 2×2；工作台与任务页共用同一份结构与色板。
 defineProps<{
   stages: StageView[]
 }>()
 
-const FILL: Record<TaskTone, string> = {
-  run: 'bg-brand',
-  ok: 'bg-accent',
-  warn: 'bg-warn',
-  danger: 'bg-danger',
-  muted: 'bg-line',
+// 每段用自己的字标色，失败改红、暂停降透明度；未开始时用中性底色。
+const STAGE_FILL: Record<StageKey, string> = {
+  compress: 'bg-stage-compress',
+  upload: 'bg-stage-upload',
+  sync: 'bg-stage-sync',
+  publish: 'bg-stage-publish',
+}
+
+function fillClass(item: StageView): string {
+  if (item.tone === 'danger') return 'bg-danger'
+  if (item.tone === 'muted') return 'bg-line'
+  return STAGE_FILL[item.key]
+}
+
+function fillStyle(item: StageView): Record<string, string> {
+  return {
+    width: `${Math.round(item.ratio * 100)}%`,
+    opacity: item.tone === 'warn' ? '0.55' : '1',
+  }
 }
 
 const VALUE_TEXT: Record<TaskTone, string> = {
@@ -47,8 +60,8 @@ const VALUE_TEXT: Record<TaskTone, string> = {
       >
         <div
           class="h-full rounded-full transition-[width] duration-300"
-          :class="FILL[item.tone]"
-          :style="{ width: `${Math.round(item.ratio * 100)}%` }"
+          :class="fillClass(item)"
+          :style="fillStyle(item)"
         ></div>
       </div>
     </li>

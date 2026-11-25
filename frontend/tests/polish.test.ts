@@ -112,3 +112,30 @@ test('顶栏防社死开关收紧尺寸但保留状态与热区', () => {
   assert.ok(header.includes('toggleBlur'), '点击仍切换同一份全局偏好')
   assert.equal(header.includes('防社死模糊</span>'), false, '不再显示长标签')
 })
+
+test('四阶段按字标四色取色，槽位与进度条共用同一映射', () => {
+  const css = readFileSync(new URL('../src/style.css', import.meta.url), 'utf8')
+  for (const [name, hex] of [
+    ['compress', '#d04223'],
+    ['upload', '#d97706'],
+    ['sync', '#0d7a72'],
+    ['publish', '#c0266a'],
+  ]) {
+    assert.ok(css.includes(`--color-stage-${name}: ${hex}`), `${name} 取字标色 ${hex}`)
+  }
+  assert.ok(css.includes('.stage-slot-idle'), '不适用槽位有斜纹底')
+  const bar = source('components/tasks/TaskStageBar.vue')
+  for (const name of ['bg-stage-compress', 'bg-stage-upload', 'bg-stage-sync', 'bg-stage-publish']) {
+    assert.ok(bar.includes(name), `展开的四段条使用 ${name}`)
+  }
+  assert.ok(bar.includes("if (item.tone === 'danger') return 'bg-danger'"), '失败段切红')
+  assert.ok(bar.includes("item.tone === 'warn' ? '0.55' : '1'"), '暂停段降透明度')
+  const view = source('views/TasksView.vue')
+  for (const name of ['bg-stage-compress', 'bg-stage-upload', 'bg-stage-sync', 'bg-stage-publish']) {
+    assert.ok(view.includes(name), `折叠总轨使用 ${name}`)
+  }
+  assert.ok(view.includes('stage-slot-idle'), '折叠总轨给不适用槽位斜纹')
+  assert.ok(view.includes('aria-valuetext'), '总轨给读屏四段文字说明')
+  assert.ok(view.includes('gap-[3px]'), '槽间隔 3px')
+  assert.ok(view.includes('first:rounded-l-full last:rounded-r-full'), '总轨首尾圆角、中间小圆角')
+})

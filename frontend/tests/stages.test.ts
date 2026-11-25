@@ -5,6 +5,7 @@ import {
   publishStageView,
   stageInputOf,
   stageOverall,
+  stageSlots,
   stageSummary,
   syncStageView,
   taskStages,
@@ -149,4 +150,43 @@ test('总进度只按适用阶段计分母，idle 不进发布段', () => {
   // 整数百分点：三张里完成一张时给 33 以上的下取整，不四舍五入成满轨。
   const third = taskStages({ ...base, imageCount: 3, compressedCount: 3, receivedCount: 1 })
   assert.equal(stageOverall(third, { hasCompressRecord: true, publishIntent: '', publishState: 'idle' }), 44)
+})
+
+test('四槽固定：不适用的阶段保留槽位并标斜纹原因', () => {
+  // 旧任务缺压缩记录：首槽「未记录」，仅存图末槽「不适用」。
+  const legacy = stageSlots(taskStages({ ...base, compressedCount: null }), {
+    hasCompressRecord: false,
+    publishIntent: '',
+    publishState: 'idle',
+  })
+  assert.deepEqual(legacy.map((slot) => slot.key), ['compress', 'upload', 'sync', 'publish'])
+  assert.equal(legacy[0].inactive, true)
+  assert.equal(legacy[0].reason, '未记录')
+  assert.equal(legacy[3].inactive, true)
+  assert.equal(legacy[3].reason, '不适用')
+
+  // 提交并发布：末槽参与，未开始也不算不适用。
+  const auto = stageSlots(taskStages({ ...base, publishState: 'idle' }), {
+    hasCompressRecord: true,
+    publishIntent: 'auto',
+    publishState: 'idle',
+  })
+  assert.equal(auto[0].inactive, false)
+  assert.equal(auto[3].inactive, false)
+  assert.equal(auto[3].ratio, 0)
+
+  // 已发布：末槽满格。
+  const done = stageSlots(taskStages({ ...base, receivedCount: 4, channelCount: 4, publishState: 'published' }), {
+    hasCompressRecord: true,
+    publishIntent: 'auto',
+    publishState: 'published',
+  })
+  assert.equal(done[3].ratio, 1)
+
+  // 不适用槽位不贡献比例，总进度口径不变。
+  assert.equal(stageOverall(taskStages({ ...base, compressedCount: null, receivedCount: 4, channelCount: 4, publishState: 'idle' }), {
+    hasCompressRecord: false,
+    publishIntent: '',
+    publishState: 'idle',
+  }), 100)
 })

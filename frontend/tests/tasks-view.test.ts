@@ -20,7 +20,7 @@ test('任务页使用全站统一顶栏并移除手动刷新', () => {
 
 test('筛选在窄屏局部横滑且不影响整页', () => {
   assert.ok(source.includes('max-w-full overflow-x-auto'), '筛选条只局部横滑')
-  assert.ok(source.includes('min-w-max'), '筛选按钮不换行挤压')
+  assert.ok(source.includes('w-max'), '筛选条只占内容宽，不撑满整行')
   assert.ok(source.includes(':aria-pressed="filter === item.value"'), '选中态对读屏与键盘可见')
   assert.ok(source.includes('setFilter('), '切换筛选走统一入口')
   // 换筛选必须先回到第一页，再发请求。
@@ -110,14 +110,19 @@ test('任务默认只有一行，展开后才出现四阶段进度与操作', ()
   assert.ok(source.includes('<TaskStageBar'), '工作台与任务页共用同一组件')
 })
 
-test('窄屏更新时间收进可点行内，卡片圆角不被悬停背景溢出', () => {
+test('窄屏时间紧跟标题，总轨换行铺满', () => {
   assert.ok(source.includes('overflow-hidden rounded-2xl bg-surface'), '卡片裁掉悬停圆角溢出')
+  const titleRow = source.slice(source.indexOf('min-h-11 w-full items-center gap-2'), source.indexOf('sm:hidden'))
+  assert.ok(titleRow.includes('{{ updatedText(task.updated_at) }}'), '时间与标题同一行')
+  assert.ok(
+    titleRow.indexOf('{{ task.title }}') < titleRow.indexOf('{{ updatedText(task.updated_at) }}'),
+    '时间排在任务名之后',
+  )
   const narrow = source.indexOf('sm:hidden">')
-  assert.ok(narrow > 0, '窄屏次行仍在按钮内部')
   const narrowBlock = source.slice(narrow, source.indexOf('</button>', narrow))
-  assert.ok(narrowBlock.includes('更新于'), '窄屏次行保留更新时间')
-  assert.ok(narrowBlock.includes('role="progressbar"'), '窄屏进度轨与更新时间并排')
-  assert.ok(source.includes('sm:block sm:w-24'), '桌面另有一处更宽的进度轨')
+  assert.ok(narrowBlock.includes('role="progressbar"'), '窄屏次行是总进度轨')
+  assert.ok(narrowBlock.includes('w-full'), '窄屏总轨铺满整行')
+  assert.ok(source.includes('h-2 w-60'), '桌面总轨为 240×8')
   // 顶行右侧提供与画廊对称的新建入口。
-  assert.ok(source.includes('bg-brand px-4 text-sm font-medium text-brand-ink'), '新建图集主胶囊')
+  assert.ok(source.includes('bg-brand px-4 text-sm font-medium text-brand-ink'), '新建图集主按钮')
 })

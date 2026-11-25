@@ -16,7 +16,7 @@ import {
   canStop,
   type TaskTone,
 } from '../utils/tasks.ts'
-import { stageInputOf, stageOverall, stageSummary, taskStages } from '../utils/stages.ts'
+import { stageInputOf, stageOverall, stageSlots, stageSummary, taskStages } from '../utils/stages.ts'
 
 const tasks = ref<TaskRow[]>([])
 const total = ref(0)
@@ -68,20 +68,28 @@ function overallOf(task: TaskRow): number {
   })
 }
 
-// overallTone 让进度轨跟随任务主状态，完成、暂停与失败一眼区分。
-function overallTone(task: TaskRow): string {
-  switch (badgeOf(task).tone) {
-    case 'ok':
-      return 'bg-accent'
-    case 'warn':
-      return 'bg-warn'
-    case 'danger':
-      return 'bg-danger'
-    case 'run':
-      return 'bg-brand'
-    default:
-      return 'bg-ink/25'
-  }
+// SLOT_FILL 用字标四色区分阶段：压缩珊瑚、上传琥珀、同步松石、发布品红。
+const SLOT_FILL: Record<string, string> = {
+  compress: 'bg-stage-compress',
+  upload: 'bg-stage-upload',
+  sync: 'bg-stage-sync',
+  publish: 'bg-stage-publish',
+}
+
+// slotsOf 把任务摊成固定四格：不适用的阶段保留槽位并标斜纹，列表纵向仍然对齐。
+function slotsOf(task: TaskRow) {
+  return stageSlots(stagesOf(task), {
+    publishIntent: task.publish_intent,
+    publishState: task.publish_state,
+    hasCompressRecord: task.compressed_count !== null,
+  })
+}
+
+// slotText 给读屏一句话说明四段各自状态，不另造数值。
+function slotText(task: TaskRow): string {
+  return slotsOf(task)
+    .map((slot) => (slot.inactive ? `${slot.label}${slot.reason}` : `${slot.label}${Math.round(slot.ratio * 100)}%`))
+    .join('，')
 }
 
 function toggleExpanded(id: number): void {
@@ -254,7 +262,7 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="mt-3 max-w-full overflow-x-auto overscroll-x-contain">
-        <div class="flex min-w-max items-center gap-1 rounded-xl border border-line/70 bg-canvas p-1" role="group" aria-label="按状态筛选任务">
+        <div class="inline-flex w-max items-center gap-1 rounded-xl border border-line/70 bg-canvas p-1" role="group" aria-label="按状态筛选任务">
           <button
             v-for="item in TASK_FILTERS"
             :key="item.value"
@@ -315,16 +323,31 @@ onBeforeUnmount(() => {
           >
             <span class="flex min-h-11 w-full items-center gap-2">
               <span class="min-w-0 flex-1 truncate text-sm font-semibold" :title="task.title">{{ task.title }}</span>
-              <span class="tnum hidden shrink-0 text-xs text-muted sm:inline">{{ updatedText(task.updated_at) }}</span>
+              <span class="tnum shrink-0 text-xs text-muted">{{ updatedText(task.updated_at) }}</span>
               <span
-                class="hidden h-1.5 w-20 shrink-0 overflow-hidden rounded-full bg-canvas sm:block sm:w-24"
+                class="hidden h-2 w-60 shrink-0 items-center gap-[3px] sm:flex"
                 role="progressbar"
                 :aria-label="`${task.title} 总进度`"
                 :aria-valuenow="overallOf(task)"
+                :aria-valuetext="slotText(task)"
                 aria-valuemin="0"
                 aria-valuemax="100"
               >
-                <span class="block h-full rounded-full transition-[width] duration-300" :class="overallTone(task)" :style="{ width: overallOf(task) + '%' }"></span>
+                <span
+                  v-for="slot in slotsOf(task)"
+                  :key="slot.key"
+                  class="h-full flex-1 overflow-hidden rounded-[2px] bg-canvas first:rounded-l-full last:rounded-r-full"
+                  :title="slot.inactive ? `${slot.label}${slot.reason}` : `${slot.label}${Math.round(slot.ratio * 100)}%`"
+                  aria-hidden="true"
+                >
+                  <span v-if="slot.inactive" class="stage-slot-idle block h-full w-full"></span>
+                  <span
+                    v-else
+                    class="block h-full transition-[width] duration-300"
+                    :class="SLOT_FILL[slot.key]"
+                    :style="{ width: `${String(Math.round(slot.ratio * 100))}%` }"
+                  ></span>
+                </span>
               </span>
               <span
                 class="shrink-0 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium"
@@ -338,19 +361,33 @@ onBeforeUnmount(() => {
                 </svg>
               </span>
             </span>
-            <!-- 窄屏把更新时间与进度轨收进按钮内部，整行点按都能展开。 -->
-            <span class="flex items-center gap-2 pb-1.5 text-left text-xs text-muted sm:hidden">
+            <!-- 窄屏总轨换到下一行铺满，时间仍紧跟标题。 -->
+            <span class="flex w-full items-center pb-1.5 sm:hidden">
               <span
-                class="h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-canvas"
+                class="flex h-2 w-full items-center gap-[3px]"
                 role="progressbar"
                 :aria-label="`${task.title} 总进度`"
                 :aria-valuenow="overallOf(task)"
+                :aria-valuetext="slotText(task)"
                 aria-valuemin="0"
                 aria-valuemax="100"
               >
-                <span class="block h-full rounded-full transition-[width] duration-300" :class="overallTone(task)" :style="{ width: overallOf(task) + '%' }"></span>
+                <span
+                  v-for="slot in slotsOf(task)"
+                  :key="'narrow-' + slot.key"
+                  class="h-full flex-1 overflow-hidden rounded-[2px] bg-canvas first:rounded-l-full last:rounded-r-full"
+                  :title="slot.inactive ? `${slot.label}${slot.reason}` : `${slot.label}${Math.round(slot.ratio * 100)}%`"
+                  aria-hidden="true"
+                >
+                  <span v-if="slot.inactive" class="stage-slot-idle block h-full w-full"></span>
+                  <span
+                    v-else
+                    class="block h-full transition-[width] duration-300"
+                    :class="SLOT_FILL[slot.key]"
+                    :style="{ width: `${String(Math.round(slot.ratio * 100))}%` }"
+                  ></span>
+                </span>
               </span>
-              更新于 {{ updatedText(task.updated_at) }}
             </span>
           </button>
 
