@@ -19,6 +19,7 @@ import (
 	"github.com/littleseven2003/SeSeGraph/backend/internal/api"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/auth"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/backup"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/botpool"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/config"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/db"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/netclient"
@@ -270,7 +271,32 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		Views: viewsService,
 	})
 
-	stopWorker := startUploadQueue(ctx, repository, cfg.DataDir, switcher, gate, lookupEnv, publishReady(telegraphManager, cfg.PublicURL))
+	botPool := botpool.New(settingsStore)
+	enqueueProvider := storage.Provider(switcher)
+	var poolProvider *storage.Pool
+	if effective, resolveErr := resolver.Effective(ctx); resolveErr == nil {
+		if pool, buildErr := buildBotPool(ctx, botPool, effective); buildErr == nil && pool != nil {
+			poolProvider = pool
+			enqueueProvider = pool
+			log.Print("多 Bot 池已启用")
+		}
+	}
+	var nextProvider func(ctx context.Context, failed storage.Provider, cause error) (storage.Provider, bool)
+	if poolProvider != nil {
+		nextProvider = func(callCtx context.Context, _ storage.Provider, _ error) (storage.Provider, bool) {
+			failedBotID, next, ok := poolProvider.Failover(uploadFrozenNote)
+			if failedBotID > 0 {
+				if err := botPool.MarkFrozen(callCtx, failedBotID, uploadFrozenNote); err != nil {
+					log.Print("记录 Bot 冻结状态失败")
+				}
+			}
+			if !ok {
+				return nil, false
+			}
+			return next, true
+		}
+	}
+	stopWorker := startUploadQueue(ctx, repository, cfg.DataDir, enqueueProvider, gate, lookupEnv, publishReady(telegraphManager, cfg.PublicURL), nextProvider)
 	defer stopWorker()
 
 	stopPublisher := startPublisher(ctx, repository, telegraphManager, cfg.PublicURL)
@@ -312,14 +338,55 @@ func bootstrapAdmin(ctx context.Context, service *auth.Service, lookupEnv func(s
 	}
 }
 
+// uploadFrozenNote 是多 Bot 池里某个 Bot 被上游拒绝时的冻结说明，只写固定说法。
+const uploadFrozenNote = "上游拒绝，账号受限"
+
+// buildBotPool 把配置里的可写入 Bot 装配成提供方池；少于两个时返回 nil，保持单 Bot 行为。
+// 令牌只用于构建客户端，不写日志、不回显。
+func buildBotPool(ctx context.Context, pool *botpool.Pool, effective settings.Effective) (*storage.Pool, error) {
+	bots, err := pool.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	usable := botpool.Usable(bots)
+	if len(usable) < 2 {
+		return nil, nil
+	}
+	entries := make([]storage.PoolEntry, 0, len(usable))
+	for _, bot := range usable {
+		if strings.TrimSpace(bot.Token) == "" {
+			continue
+		}
+		provider, buildErr := newProviderWithToken(effective, bot.Token)
+		if buildErr != nil || provider == nil {
+			continue
+		}
+		entries = append(entries, storage.PoolEntry{
+			BotID:    bot.BotID,
+			ChatID:   effective.TelegramChannel.Value,
+			Alias:    bot.Alias,
+			Provider: provider,
+		})
+	}
+	if len(entries) < 2 {
+		return nil, nil
+	}
+	return storage.NewPool(entries)
+}
+
 // newProvider 按生效配置创建图床提供方；未配置时返回 nil，由调用方决定如何呈现。
 func newProvider(effective settings.Effective) (*storage.Telegram, error) {
+	return newProviderWithToken(effective, effective.TelegramToken.Value)
+}
+
+// newProviderWithToken 用指定令牌创建提供方，频道与代理沿用生效配置，供多 Bot 池逐条构建。
+func newProviderWithToken(effective settings.Effective, token string) (*storage.Telegram, error) {
 	client, err := netclient.NewClient(effective.ProxyConfig(), netclient.ServiceTelegram)
 	if err != nil {
 		return nil, err
 	}
 	provider, err := storage.NewTelegram(storage.TelegramConfig{
-		Token:      effective.TelegramToken.Value,
+		Token:      token,
 		ChatID:     effective.TelegramChannel.Value,
 		APIBase:    effective.TelegramAPIBase.Value,
 		HTTPClient: client,
@@ -736,7 +803,7 @@ func readImageQueueWait(lookupEnv func(string) (string, bool)) time.Duration {
 
 // startUploadQueue 启动上传队列，返回停止函数。
 // 队列始终运行：图床未配置时按提供方的就绪状态等待，配置保存后自动接手。
-func startUploadQueue(ctx context.Context, repository *posts.Repository, dataDir string, provider storage.Provider, gate *storage.UploadGate, lookupEnv func(string) (string, bool), ready func(ctx context.Context) error) func() {
+func startUploadQueue(ctx context.Context, repository *posts.Repository, dataDir string, provider storage.Provider, gate *storage.UploadGate, lookupEnv func(string) (string, bool), ready func(ctx context.Context) error, nextProvider func(ctx context.Context, failed storage.Provider, cause error) (storage.Provider, bool)) func() {
 	interval := readUploadInterval(lookupEnv)
 
 	queue, err := worker.New(worker.Options{
@@ -746,6 +813,7 @@ func startUploadQueue(ctx context.Context, repository *posts.Repository, dataDir
 		Interval:     interval,
 		Gate:         gate,
 		PublishReady: ready,
+		NextProvider: nextProvider,
 	})
 	if err != nil {
 		log.Print("上传队列初始化失败")
