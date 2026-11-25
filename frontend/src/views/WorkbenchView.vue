@@ -1564,7 +1564,6 @@ onBeforeUnmount(() => {
         <p v-if="!ready" class="mt-3 text-center text-sm text-muted">正在读取设置与续传信息…</p>
         <p v-else-if="working" class="mt-3 text-center text-sm text-muted">正在解压压缩包…</p>
       </div>
-      </div>
 
       <template v-else>
         <div class="lg:grid lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start lg:gap-5">
