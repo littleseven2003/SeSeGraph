@@ -1237,8 +1237,9 @@ watch(
                         <path d="M6.5 15H5A1.5 1.5 0 0 1 3.5 13.5v-8A1.5 1.5 0 0 1 5 4h8a1.5 1.5 0 0 1 1.5 1.5V7" />
                       </svg>
                     </button>
+                    </div>
                   </div>
-                  </div>
+                </div>
 
                 <video
                   v-if="playingCode === image.short_code && imageLink(image) !== ''"
