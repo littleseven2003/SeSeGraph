@@ -23,8 +23,12 @@ test('设置页分组锚点与就近字段错误', () => {
 
 test('登录与初始化共用字标并支持密码显隐', () => {
   const mark = source('components/BrandMark.vue')
-  assert.ok(mark.includes("'/sesegraph-wordmark.svg'"), '顶栏与登录共用完整艺术字标')
+  assert.ok(mark.includes("sesegraph-wordmark.svg?raw"), '顶栏与登录共用同一份艺术字标')
   assert.ok(mark.includes('184') && mark.includes('40'), '字标按原始比例缩放，避免拉伸')
+  assert.ok(mark.includes('.replace(\'fill="#1B1A17"\', \'fill="currentColor"\')'), 'Graph 跟随文字色，深色下不发光')
+  for (const token of ['--color-stage-compress', '--color-stage-upload', '--color-stage-sync', '--color-stage-publish']) {
+    assert.ok(mark.includes(token), `跳色字母绑定 ${token}`)
+  }
   assert.ok(source('components/AppHeader.vue').includes('SeSe图册'), '全站顶栏保留中文副标')
   const toggle = source('components/PasswordVisibilityToggle.vue')
   for (const file of ['views/LoginView.vue', 'views/SetupView.vue']) {

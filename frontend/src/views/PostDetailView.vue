@@ -14,11 +14,11 @@ import {
 import { changeCover, fetchProgress, thumbPath, type ServerProgress } from '../api/posts.ts'
 import { ApiError } from '../api/client.ts'
 import { copyText } from '../utils/clipboard.ts'
-import { imageShareUrl, postShareUrl, statusLabel } from '../utils/gallery.ts'
+import { formatPublishedAt, imageShareUrl, postShareUrl, statusLabel } from '../utils/gallery.ts'
 import { detailUploadModeLabel } from '../utils/media.ts'
 import { blurEnabled } from '../utils/blur.ts'
 import { splitTags } from '../utils/meta.ts'
-import { stageInputOf, stageOverall, stageSlots, stageSummary, taskStages } from '../utils/stages.ts'
+import { stageInputOf, stageOverall, stageSummary, taskStages } from '../utils/stages.ts'
 
 // 独立详情页：图集浏览与管理都在这里完成，工作台只保留新建与续传。
 const route = useRoute()
@@ -50,15 +50,6 @@ const shareUrl = computed(() => (detail.value === null ? '' : postShareUrl(detai
 
 // 四阶段口径复用任务页的同一份判定，动态分母也一致。
 const stages = computed(() => (progress.value === null ? [] : taskStages(stageInputOf(stageInputOfSource()))))
-const slots = computed(() =>
-  progress.value === null
-    ? []
-    : stageSlots(stages.value, {
-        publishIntent: '',
-        publishState: progress.value.publish_state,
-        hasCompressRecord: progress.value.compressed_count !== null && progress.value.compressed_count !== undefined,
-      }),
-)
 const overall = computed(() =>
   stageOverall(stages.value, {
     publishIntent: '',
@@ -355,12 +346,6 @@ onBeforeUnmount(() => {
             </div>
             <TaskStageBar v-if="stages.length > 0" class="mt-3" :stages="stages" />
             <p class="mt-2 text-xs text-muted">{{ stages.length > 0 ? stageSummary(stages) : '暂时读不到进度，稍后再看' }}</p>
-            <div class="mt-3 flex flex-wrap gap-1.5" aria-hidden="true">
-              <span v-for="slot in slots" :key="slot.key" class="h-2 w-16 overflow-hidden rounded-[2px] bg-canvas" :title="`${slot.label}${slot.inactive ? slot.reason : ''}`">
-                <span v-if="slot.inactive" class="stage-slot-idle block h-full w-full"></span>
-                <span v-else class="block h-full" :class="'bg-stage-' + slot.key" :style="{ width: `${String(Math.round(slot.ratio * 100))}%` }"></span>
-              </span>
-            </div>
           </div>
         </section>
 
@@ -374,8 +359,8 @@ onBeforeUnmount(() => {
             <dl v-if="!editing" class="mt-3 space-y-2 text-sm">
               <div class="flex items-start justify-between gap-3"><dt class="shrink-0 text-xs text-muted">张数</dt><dd class="tnum text-right">{{ detail.image_count }}</dd></div>
               <div class="flex items-start justify-between gap-3"><dt class="shrink-0 text-xs text-muted">画质</dt><dd class="text-right">{{ detailUploadModeLabel(detail.upload_mode) }}</dd></div>
-              <div class="flex items-start justify-between gap-3"><dt class="shrink-0 text-xs text-muted">发布</dt><dd class="text-right">{{ detail.published_at === '' ? '未发布' : detail.published_at }}</dd></div>
-              <div class="flex items-start justify-between gap-3"><dt class="shrink-0 text-xs text-muted">创建</dt><dd class="text-right">{{ detail.created_at }}</dd></div>
+              <div class="flex items-start justify-between gap-3"><dt class="shrink-0 text-xs text-muted">发布</dt><dd class="text-right">{{ formatPublishedAt(detail.published_at) || '未发布' }}</dd></div>
+              <div class="flex items-start justify-between gap-3"><dt class="shrink-0 text-xs text-muted">创建</dt><dd class="text-right">{{ formatPublishedAt(detail.created_at) }}</dd></div>
               <div class="flex items-start justify-between gap-3">
                 <dt class="shrink-0 text-xs text-muted">浏览量</dt>
                 <dd class="flex items-center gap-1.5 text-right"><span class="tnum">{{ detail.views_count }}</span>
