@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ApiError } from '../api/client.ts'
-import { fetchProgress, fetchTasks, pauseTask, resumeTask, retryPost, stopTask, type ServerProgress, type TaskFilter, type TaskRow } from '../api/posts.ts'
+import { fetchProgress, fetchTasks, pauseTask, resumeTask, retryPost, stopTask, type PoolStatus, type ServerProgress, type TaskFilter, type TaskRow } from '../api/posts.ts'
 import { formatPublishedAt } from '../utils/gallery.ts'
 import AppHeader from '../components/AppHeader.vue'
 import BackToTop from '../components/BackToTop.vue'
@@ -20,6 +20,8 @@ import { stageInputOf, stageOverall, stagePercent, stageSlots, stageSummary, tas
 const tasks = ref<TaskRow[]>([])
 const total = ref(0)
 const page = ref(1)
+// Bot 池状态：启用自动切换且有冻结条目时在列表上方提示。
+const pool = ref<PoolStatus>({ enabled: false, frozen: [] })
 const pageSize = 20
 const filter = ref<TaskFilter>('')
 const loading = ref(false)
@@ -184,6 +186,7 @@ async function load(silent = false): Promise<void> {
       return
     }
     tasks.value = result.items
+    pool.value = result.pool ?? { enabled: false, frozen: [] }
     total.value = result.total
     if (result.page !== page.value) page.value = result.page
     // 展开中的失败任务在轮询里对比更新时间，变了就重读逐图原因。
@@ -353,6 +356,12 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
+      <p
+        v-if="pool.enabled && pool.frozen.length > 0"
+        class="mt-3 rounded-xl bg-warn-soft px-3 py-2 text-xs leading-relaxed text-ink"
+      >
+        Bot 池已有 {{ pool.frozen.length }} 个 Bot 被标为不可写（{{ pool.frozen[0].alias || '未命名' }}{{ pool.frozen[0].note !== '' ? '：' + pool.frozen[0].note : '' }}），新上传会自动换用池内其他 Bot。
+      </p>
       <p v-if="error !== ''" class="mt-3 text-xs text-danger">{{ error }}</p>
       <p v-else-if="notice !== ''" class="mt-3 text-xs text-accent">{{ notice }}</p>
 

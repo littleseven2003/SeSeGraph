@@ -201,6 +201,21 @@ export interface TaskRow {
   publish_error?: string
 }
 
+/** PoolStatus 是 Bot 池的当前状态：是否启用自动切换与已冻结条目。 */
+export interface PoolStatus {
+  enabled: boolean
+  frozen: { alias: string; note: string }[]
+}
+
+/** TaskPage 是任务列表的一页，附带池状态供页面提示。 */
+export interface TaskPage {
+  items: TaskRow[]
+  pool?: PoolStatus
+  total: number
+  page: number
+  page_size: number
+}
+
 /** 任务列表筛选值：空串表示全部，与后端 status 参数一致。 */
 export type TaskFilter = '' | 'active' | 'paused' | 'stopped' | 'finished'
 
@@ -209,10 +224,10 @@ export async function fetchTasks(
   page: number,
   pageSize = 20,
   status: TaskFilter = '',
-): Promise<{ items: TaskRow[]; total: number; page: number; page_size: number }> {
+): Promise<TaskPage> {
   const query = `page=${page}&page_size=${pageSize}${status === '' ? '' : `&status=${status}`}`
   const response = await adminRequest(`/api/tasks?${query}`)
-  return (await response.json()) as { items: TaskRow[]; total: number; page: number; page_size: number }
+  return (await response.json()) as TaskPage
 }
 
 // thumbPath 返回某一项缩略图的地址；version 参与查询串，便于区分版本。
