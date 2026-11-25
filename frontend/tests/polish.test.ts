@@ -100,8 +100,8 @@ test('面向用户的编号与卷号彻底移除，内部标识与标签保留',
 
 test('顶栏防社死开关收紧尺寸但保留状态与热区', () => {
   const header = source('components/AppHeader.vue')
-  assert.ok(header.includes('sm:h-8'), '桌面视觉高度收敛到 32px')
-  assert.ok(header.includes('h-11 shrink-0 items-center gap-1.5'), '窄屏保留 44px 触达高度')
+  assert.ok(header.includes('inline-flex h-11 shrink-0 items-center"'), '外层保留 44px 触控高度')
+  assert.ok(header.includes('inline-flex h-8 items-center gap-1.5 rounded-lg border'), '内层描边芯片固定 32px 视觉高度')
   assert.ok(header.includes('h-3.5 w-3.5 shrink-0'), '眼睛图标为 14px')
   assert.ok(header.includes('h-3.5 w-6 shrink-0'), '拨片收窄')
   assert.ok(header.includes('h-2.5 w-2.5 rounded-full bg-white'), '拨片圆点同步缩小')
