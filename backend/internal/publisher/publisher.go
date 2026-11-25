@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -139,11 +141,42 @@ func (p *Publisher) ProcessOnce(ctx context.Context) (bool, error) {
 			_ = p.repo.ReleasePublish(ctx, postID)
 			return true, nil
 		default:
-			_ = p.repo.MarkPublishFailed(ctx, postID, publishErrText)
+			text := publishErrorText(err)
+			_ = p.repo.MarkPublishFailed(ctx, postID, text)
+			p.logger.Printf("发布失败：编号 %d，%s", postID, text)
 			return true, err
 		}
 	}
 	return true, nil
+}
+
+// publishErrorText 把建页失败翻成一句可读说明，不含令牌、原始响应与地址。
+func publishErrorText(err error) string {
+	if errors.Is(err, telegraph.ErrNotConfigured) {
+		return "发布失败：Telegraph 未配置"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "发布失败：请求超时，远端结果未确认"
+	}
+	var status *telegraph.StatusError
+	if errors.As(err, &status) {
+		switch {
+		case status.Code == 400:
+			return "发布失败：页面参数被上游拒绝，上游状态 400"
+		case status.Code == 401 || status.Code == 403:
+			return "发布失败：Telegraph 令牌或权限有误，上游状态 " + strconv.Itoa(status.Code)
+		case status.Code == 429:
+			return "发布失败：Telegraph 限流，稍后重试"
+		case status.Code >= 500:
+			return "发布失败：Telegraph 服务异常，上游状态 " + strconv.Itoa(status.Code)
+		}
+		return "发布失败：未识别的上游响应，上游状态 " + strconv.Itoa(status.Code)
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return "发布失败：请求超时，远端结果未确认"
+	}
+	return publishErrText
 }
 
 // publish 完成单帖发布：创建页面、互链、落库。

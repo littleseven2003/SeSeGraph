@@ -37,6 +37,8 @@ func tasksHandler(deps Deps) gin.HandlerFunc {
 				"uploaded_count":   item.UploadedCount,
 				"channel_count":    item.ChannelCount,
 				"updated_at":       item.UpdatedAt,
+				"error":            item.ErrorMessage,
+				"publish_error":    item.PublishError,
 			})
 		}
 		c.JSON(http.StatusOK, gin.H{

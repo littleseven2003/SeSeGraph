@@ -214,8 +214,13 @@ func (w *Worker) Process(ctx context.Context, postID int64) error {
 			return nil
 		}
 		if err := w.uploadImage(ctx, provider, post, image); err != nil {
-			w.finish(ctx, postID, posts.StatusFailed, "上传图片失败")
-			return errors.New("上传图片失败")
+			message := err.Error()
+			if message == "" {
+				message = "存图失败，原因未知"
+			}
+			w.finish(ctx, postID, posts.StatusFailed, message)
+			w.logger.Printf("帖子上传失败：编号 %d，%s", postID, message)
+			return err
 		}
 	}
 
@@ -321,8 +326,11 @@ func (w *Worker) uploadImage(ctx context.Context, provider storage.Provider, pos
 			}
 		}
 
-		_ = w.repo.MarkImageFailed(ctx, image.ID, "上传失败")
-		return errors.New("上传失败")
+		// 真实原因写进逐图错误与任务说明，界面据此给出可读解释。
+		message := storage.DescribeUpload(uploadErr)
+		_ = w.repo.MarkImageFailed(ctx, image.ID, message)
+		w.logger.Printf("存图失败：帖子 %d 第 %d 张，%s", post.ID, image.SortOrder, message)
+		return errors.New(message)
 	}
 }
 
