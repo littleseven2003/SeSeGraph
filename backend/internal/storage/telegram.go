@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"net"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -306,7 +307,14 @@ func (t *Telegram) Upload(ctx context.Context, req UploadRequest) (UploadResult,
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return UploadResult{}, ctxErr
 		}
-		return UploadResult{}, errTransport
+		if errors.Is(err, context.DeadlineExceeded) {
+			return UploadResult{}, &UploadError{Stage: "存图", Kind: KindTimeout, Note: "远端结果未确认，不自动重传"}
+		}
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			return UploadResult{}, &UploadError{Stage: "存图", Kind: KindTimeout, Note: "远端结果未确认，不自动重传"}
+		}
+		return UploadResult{}, &UploadError{Stage: "存图", Kind: KindNetwork, Note: "请求未完成"}
 	}
 	defer func() {
 		_, _ = io.Copy(io.Discard, response.Body)
@@ -445,7 +453,12 @@ func (t *Telegram) errorFor(payload apiResponse) error {
 			RetryAfter: time.Duration(payload.Parameters.RetryAfter) * time.Second,
 		}
 	}
-	return fmt.Errorf("%w：上游返回 %d", ErrUpstream, payload.ErrorCode)
+	// 只保留类别与状态码：描述里可能夹带上游细节，不进日志也不进界面。
+	return &UploadError{
+		Stage:  "存图",
+		Kind:   KindForTelegram(payload.ErrorCode, payload.Description),
+		Status: payload.ErrorCode,
+	}
 }
 
 // errTransport 是所有网络层失败的统一对外说明，不携带地址、令牌或原始错误。

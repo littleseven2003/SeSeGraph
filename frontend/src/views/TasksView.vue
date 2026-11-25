@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ApiError } from '../api/client.ts'
-import { fetchTasks, pauseTask, resumeTask, stopTask, type TaskFilter, type TaskRow } from '../api/posts.ts'
+import { fetchProgress, fetchTasks, pauseTask, resumeTask, retryPost, stopTask, type ServerProgress, type TaskFilter, type TaskRow } from '../api/posts.ts'
 import { formatPublishedAt } from '../utils/gallery.ts'
 import AppHeader from '../components/AppHeader.vue'
 import BackToTop from '../components/BackToTop.vue'
@@ -12,7 +12,6 @@ import {
   canContinueUpload,
   canPause,
   canResume,
-  canRetryStore,
   canStop,
   type TaskTone,
 } from '../utils/tasks.ts'
@@ -92,9 +91,74 @@ function slotText(task: TaskRow): string {
     .join('，')
 }
 
-function toggleExpanded(id: number): void {
-  if (expanded.value.has(id)) expanded.value.delete(id)
-  else expanded.value.add(id)
+// progressById 缓存展开后才拉取的逐图进度，避免轮询时反复请求。
+const progressById = ref(new Map<number, ServerProgress>())
+const progressError = ref('')
+// failedStamp 记录逐图原因对应的任务更新时间，轮询发现变化时重新拉取。
+const failedStamp = ref(new Map<number, string>())
+
+// failureOf 汇总一条任务的可读失败原因：先看任务级，再看发布级。
+function failureOf(task: TaskRow): string {
+  const reason = (task.error ?? '').trim()
+  if (reason !== '') return reason
+  return (task.publish_error ?? '').trim()
+}
+
+// failedImages 列出展开后看到的失败图片序号与原因。
+function failedImages(task: TaskRow): { sort_order: number; error: string }[] {
+  const state = progressById.value.get(task.id)
+  if (state === undefined) return []
+  return state.images
+    .filter((image) => image.status === 'failed')
+    .map((image) => ({ sort_order: image.sort_order, error: (image.error ?? '').trim() || '原因未知' }))
+}
+
+// retryTask 让失败任务重新排队：图片都存好时只重跑收尾，不再调用图床。
+async function retryTask(task: TaskRow): Promise<void> {
+  if (busyId.value !== 0) return
+  busyId.value = task.id
+  error.value = ''
+  notice.value = ''
+  try {
+    const result = await retryPost(task.id)
+    notice.value = result.retried === 0 ? '已重新排队，只重跑收尾' : `已重新排队 ${result.retried} 张`
+    // 重试后逐图明细会变，丢掉缓存让展开时重新拉取。
+    const next = new Map(progressById.value)
+    next.delete(task.id)
+    progressById.value = next
+    await requestLoad(false)
+    if (expanded.value.has(task.id)) {
+      progressError.value = ''
+      await loadTaskProgress(task.id)
+    }
+  } catch (cause) {
+    error.value = cause instanceof ApiError ? cause.message : '重新排队失败，请稍后重试'
+  } finally {
+    busyId.value = 0
+  }
+}
+
+async function loadTaskProgress(id: number, force = false): Promise<void> {
+  if (!force && progressById.value.has(id)) return
+  try {
+    const state = await fetchProgress(id)
+    const next = new Map(progressById.value)
+    next.set(id, state)
+    progressById.value = next
+    const task = tasks.value.find((item) => item.id === id)
+    if (task !== undefined) failedStamp.value = new Map(failedStamp.value).set(id, task.updated_at)
+  } catch {
+    progressError.value = '读取逐图原因失败，稍后重试'
+  }
+}
+
+function toggleExpanded(id: number, status: string): void {
+  if (expanded.value.has(id)) {
+    expanded.value.delete(id)
+  } else {
+    expanded.value.add(id)
+    if (status === 'failed') void loadTaskProgress(id)
+  }
 }
 
 function isExpanded(id: number): boolean {
@@ -122,6 +186,13 @@ async function load(silent = false): Promise<void> {
     tasks.value = result.items
     total.value = result.total
     if (result.page !== page.value) page.value = result.page
+    // 展开中的失败任务在轮询里对比更新时间，变了就重读逐图原因。
+    for (const task of result.items) {
+      if (!expanded.value.has(task.id) || task.status !== 'failed') continue
+      const stamp = failedStamp.value.get(task.id)
+      if (stamp === undefined) void loadTaskProgress(task.id)
+      else if (stamp !== task.updated_at) void loadTaskProgress(task.id, true)
+    }
   } catch (cause) {
     if (seq !== requestSeq) return
     error.value = cause instanceof ApiError ? cause.message : '读取任务失败，请稍后重试'
@@ -324,7 +395,7 @@ onBeforeUnmount(() => {
             class="flex w-full flex-col px-4 py-1 text-left transition hover:bg-canvas/60 sm:px-5"
             :aria-expanded="isExpanded(task.id)"
             :aria-controls="`task-stages-${task.id}`"
-            @click="toggleExpanded(task.id)"
+            @click="toggleExpanded(task.id, task.status)"
           >
             <span class="flex min-h-11 w-full items-center gap-2">
               <!-- 标题与时间同组占剩余宽度：短标题时间紧跟，长标题截断给时间让位。 -->
@@ -403,6 +474,19 @@ onBeforeUnmount(() => {
             <TaskStageBar :stages="stagesOf(task)" />
             <!-- 顶行已经给过更新时间，这里只留阶段概况，不重复同一时间。 -->
             <p class="mt-2 text-xs text-muted">{{ summaryOf(task) }}</p>
+            <!-- 失败时把可读原因写在这里，不再只显示笼统的「存图失败」。 -->
+            <p v-if="failureOf(task) !== ''" class="mt-1.5 rounded-md bg-danger-soft px-2 py-1.5 text-xs leading-relaxed text-danger">
+              {{ failureOf(task) }}
+            </p>
+            <div v-if="failedImages(task).length > 0" class="mt-2">
+              <p class="text-xs font-medium text-danger">失败明细</p>
+              <ul class="mt-1 space-y-0.5">
+                <li v-for="item in failedImages(task)" :key="item.sort_order" class="tnum text-xs text-muted">
+                  第 {{ item.sort_order }} 张 · {{ item.error }}
+                </li>
+              </ul>
+            </div>
+            <p v-if="progressError !== '' && isExpanded(task.id)" class="mt-1 text-xs text-muted">{{ progressError }}</p>
             <div class="mt-3 flex flex-wrap items-center gap-2">
               <router-link
                 v-if="task.status === 'completed'"
@@ -412,6 +496,15 @@ onBeforeUnmount(() => {
                 查看图集
               </router-link>
               <button
+                v-if="task.status === 'failed' && task.control_state === 'running'"
+                type="button"
+                class="inline-flex h-11 items-center rounded-lg border border-danger/35 bg-surface px-4 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-60 sm:h-9"
+                :disabled="busyId !== 0"
+                @click="retryTask(task)"
+              >
+                重试
+              </button>
+              <button
                 v-if="canResume(task)"
                 type="button"
                 class="inline-flex h-11 items-center rounded-lg border border-brand/30 bg-brand-soft px-4 text-xs font-medium text-brand-strong transition hover:border-brand/50 disabled:opacity-60 sm:h-9"
@@ -420,13 +513,6 @@ onBeforeUnmount(() => {
               >
                 继续
               </button>
-              <router-link
-                v-else-if="canRetryStore(task)"
-                :to="{ name: 'workbench', query: { resume: task.id } }"
-                class="inline-flex h-11 items-center rounded-lg border border-brand/30 bg-brand-soft px-4 text-xs font-medium text-brand-strong transition hover:border-brand/50 sm:h-9"
-              >
-                重试存图
-              </router-link>
               <router-link
                 v-else-if="canContinueUpload(task)"
                 :to="{ name: 'workbench', query: { resume: task.id } }"

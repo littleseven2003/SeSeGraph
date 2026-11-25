@@ -103,6 +103,10 @@ export interface ServerProgress {
   cover_sort_order: number
   /** 提交时浏览器已处理的项数；null 表示旧任务没有这项记录 */
   compressed_count?: number | null
+  /** 任务失败的可读原因，未失败时为空 */
+  error?: string
+  /** 发布失败的可读原因，未发布失败时为空 */
+  publish_error?: string
 }
 
 // uploadImage 逐张上传，请求体直接使用浏览器里的 Blob，由后端流式落盘。
@@ -191,6 +195,10 @@ export interface TaskRow {
   /** 提交时选择的发布意图：auto 表示同步完成后自动入队，空串表示旧任务或仅存图 */
   publish_intent: string
   updated_at: string
+  /** 任务失败的可读原因，未失败时为空串 */
+  error?: string
+  /** 发布失败的可读原因，未发布失败时为空串 */
+  publish_error?: string
 }
 
 /** 任务列表筛选值：空串表示全部，与后端 status 参数一致。 */

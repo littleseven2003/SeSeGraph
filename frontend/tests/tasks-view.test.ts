@@ -85,9 +85,10 @@ test('卡片结构、空态与控件热区', () => {
 test('任务页复用同一套四阶段与控制判定', () => {
   assert.ok(source.includes('from \'../utils/tasks.ts\''), '控制规则集中在 utils/tasks.ts')
   assert.ok(source.includes('from \'../utils/stages.ts\''), '四阶段口径集中在 utils/stages.ts')
-  assert.ok(source.includes('canRetryStore(task)'), '频道失败走重试入口')
-  assert.ok(source.includes('重试存图'), '重试文案与补传分开')
-  for (const name of ['badgeOf', 'canPause', 'canResume', 'canRetryStore', 'canStop']) {
+  assert.ok(source.includes('retryPost(task.id)'), '失败任务统一走重试接口')
+  assert.ok(source.includes("task.status === 'failed' && task.control_state === 'running'"), '只有运行中的失败任务露出重试')
+  assert.equal(source.includes('重试存图'), false, '不再与重试按钮重复')
+  for (const name of ['badgeOf', 'canPause', 'canResume', 'canStop']) {
     assert.ok(source.includes(name), `缺少 ${name}`)
   }
   for (const name of ['taskStages', 'stageInputOf', 'stageSummary', 'stageOverall']) {
@@ -100,10 +101,11 @@ test('任务默认只有一行，展开后才出现四阶段进度与操作', ()
   assert.ok(source.includes('<TaskStageBar :stages="stagesOf(task)" />'), '展开区复用四阶段组件')
   assert.ok(source.includes('v-if="isExpanded(task.id)"'), '默认收起')
   assert.ok(source.includes(':aria-expanded="isExpanded(task.id)"'), '展开状态对读屏可见')
-  assert.ok(source.includes('toggleExpanded(task.id)'), '整行可点开')
+  assert.ok(source.includes('toggleExpanded(task.id, task.status)'), '整行可点开，失败任务展开时补读逐图原因')
   // 操作按钮放在展开区里，收起时只留一行摘要。
-  const row = source.slice(source.indexOf('v-for="task in tasks"'), source.indexOf('</ul>'))
-  assert.ok(row.indexOf('isExpanded(task.id)') < row.indexOf('canResume(task)'), '操作区在展开之后')
+  const rowStart = source.indexOf('v-for="task in tasks"')
+  const row = source.slice(rowStart, source.indexOf('</ul>', source.indexOf('canResume(task)', rowStart)))
+  assert.ok(row.indexOf('id="`task-stages-${task.id}`"') < row.indexOf('canResume(task)'), '操作区在展开之后')
   assert.ok(row.includes('role="progressbar"'), '收起时用进度轨表达总进度')
   assert.equal(row.includes('{{ overallOf(task) }}%'), false, '进度轨不显示百分号')
   assert.ok(row.includes(':aria-valuenow="overallOf(task)"'), '读屏仍能取得整数百分比')

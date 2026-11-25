@@ -34,6 +34,18 @@ var (
 // errTransport 是所有网络层失败的统一说明，不携带地址与令牌。
 var errTransport = fmt.Errorf("%w：网络请求未完成", ErrUpstream)
 
+// StatusError 保留上游状态码，便于调用方给出可读原因而不回显原始响应。
+type StatusError struct {
+	Code int
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("%s：上游返回 %d", ErrUpstream.Error(), e.Code)
+}
+
+// Unwrap 让调用方仍可用 errors.Is(err, ErrUpstream) 判断类别。
+func (e *StatusError) Unwrap() error { return ErrUpstream }
+
 // blockRedirects 禁止跟随重定向，避免把带令牌的请求带到其他地址。
 func blockRedirects(*http.Request, []*http.Request) error {
 	return http.ErrUseLastResponse
@@ -169,7 +181,7 @@ func (c *Client) post(ctx context.Context, method string, form url.Values, out a
 	}()
 
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("%w：上游返回 %d", ErrUpstream, response.StatusCode)
+		return &StatusError{Code: response.StatusCode}
 	}
 
 	var envelope apiEnvelope

@@ -824,7 +824,7 @@ function restoreOrder(): boolean {
   const local: SnapshotFile[] = snapshotFiles()
   const matched = matchSnapshotFiles(saved.files, local)
   if ('error' in matched) {
-    pushError(`${matched.error}。如需放弃上次任务，点「放弃此任务」`)
+    pushError(`${matched.error}。可到任务页查看或结束这条任务`)
     return false
   }
   const byIndex = new Map(tiles.value.map((tile, index) => [index, tile]))
@@ -1169,11 +1169,15 @@ async function refreshProgress(id: number, round = initSeq): Promise<void> {
       if (progress.publish_state === 'published') {
         message.value = '已发布到 Telegraph，分享链接见下方'
       } else if (progress.publish_state === 'failed') {
-        message.value = 'Telegraph 发布失败，可重新发布'
+        // 发布失败也用服务端落库的脱敏原因，不再只给通用提示。
+        const publishReason = (progress.publish_error ?? '').trim()
+        message.value = publishReason !== '' ? publishReason : 'Telegraph 发布失败，可重新发布'
       } else if (progress.status === 'completed') {
         message.value = '已存入频道'
       } else if (progress.status === 'failed') {
-        message.value = '部分图片存图失败，可以点击重试'
+        // 直接用服务端落库的脱敏原因，不再只给一句笼统提示。
+        const reason = (progress.error ?? '').trim()
+        message.value = reason !== '' ? reason : '存图失败，请到任务页查看原因后重试'
       }
     }
   } catch {
@@ -1300,7 +1304,7 @@ async function ensureTask(intent: 'auto' | 'manual', routeRound = initSeq): Prom
     if (current) {
       const matched = matchSnapshotFiles(current.files, snapshotFiles())
       if ('error' in matched) {
-        pushError(`${matched.error}。如需放弃上次任务，点「放弃此任务」`)
+        pushError(`${matched.error}。可到任务页查看或结束这条任务`)
         return null
       }
     }
@@ -1366,7 +1370,7 @@ async function publish(intent: 'auto' | 'manual' = 'manual'): Promise<void> {
   }
   if (snapshot.value && !resuming.value) {
     // 选错文件时先说明身份不符，避免被标题校验挡住真正的提示。
-    pushError(`当前选择与上次任务不一致，请重新选择同一批文件，或放弃此任务后重新开始`)
+    pushError(`当前选择与该任务不一致，请重新选择同一批文件，或到任务页结束该任务后重新开始`)
     return
   }
   const chosenTile = coverTile.value
@@ -1542,37 +1546,6 @@ onBeforeUnmount(() => {
         {{ message }}
       </p>
 
-      <div v-if="snapshot" class="mb-4 rounded-2xl bg-surface p-4 shadow-[0_1px_0_0_rgba(27,26,23,0.05)]" role="status">
-        <div class="flex flex-wrap items-start justify-between gap-3">
-          <div class="min-w-0">
-            <p class="flex items-center gap-2 text-sm font-semibold">
-              上次任务
-              <span
-                class="rounded px-1.5 py-0.5 text-[11px] font-medium"
-                :class="resuming ? 'bg-accent/10 text-accent' : 'bg-danger-soft text-danger'"
-                >{{ resuming ? '已匹配' : '未匹配' }}</span
-              >
-            </p>
-            <p class="mt-1 text-xs leading-relaxed text-muted">
-              {{ snapshot.imageCount }} 张，文件：
-              {{ snapshot.files.slice(0, 2).map((file) => file.name).join('、')
-              }}{{ snapshot.files.length > 2 ? ' 等' : '' }}。
-              <template v-if="viewingTask">重新选择同一批文件会按原序号续传。</template>
-              <template v-else-if="resuming">续传沿用任务已保存的标题、说明与标签，无需重新填写，发布时只补传缺失序号。</template>
-              <template v-else>当前选择与上次任务不一致，请重新选择同一批文件，或放弃此任务后重新开始。</template>
-            </p>
-          </div>
-          <button
-            type="button"
-            class="h-11 rounded-xl px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-50"
-            :disabled="!canLeaveResume(ready, phase) || busy || working"
-            @click="discardSnapshot"
-          >
-            放弃此任务
-          </button>
-        </div>
-      </div>
-
       <div v-if="tiles.length === 0 && serverProgress" class="mx-auto mb-4 w-full max-w-[720px]">
         <TaskProgressCard
           :stages="stages"
@@ -1594,21 +1567,6 @@ onBeforeUnmount(() => {
         </DropZone>
         <p v-if="!ready" class="mt-3 text-center text-sm text-muted">正在读取设置与续传信息…</p>
         <p v-else-if="working" class="mt-3 text-center text-sm text-muted">正在解压压缩包…</p>
-        <!-- 续传入口放在拖放区下方，与 720px 容器同宽，不改变新建素材的视觉主导权。 -->
-        <div
-          v-if="resumableHint && snapshot === null && postId === 0"
-          class="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-surface px-3.5 py-2.5 text-sm"
-        >
-          <span class="min-w-0 flex-1 text-muted">
-            有未完成任务（{{ resumableHint.files.length }} 个文件），不影响直接拖入新素材。
-          </span>
-          <router-link
-            :to="{ name: 'workbench', query: { resume: resumableHint.postId } }"
-            class="shrink-0 rounded-lg px-3 py-1.5 text-sm font-medium text-brand-strong transition hover:bg-canvas"
-          >
-            前往续传 →
-          </router-link>
-        </div>
       </div>
 
       <template v-else>

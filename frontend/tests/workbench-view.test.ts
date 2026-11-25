@@ -54,8 +54,10 @@ test('小图调度按稳定 ID 去重并在生成前后确认有效性', () => {
 test('新建图集默认干净新建态，只在显式续传时加载任务', () => {
   assert.ok(source.includes("targetID > 0 ? loadTaskFor(storage, targetID) : null"), '默认不自动续传')
   assert.ok(source.includes('resumableHint.value = targetID > 0 ? null : loadTask(storage)'), '非续传时只给轻提示')
-  assert.ok(source.includes('前往续传'), '提示里提供续传入口')
-  assert.ok(source.includes('不影响直接拖入新素材'), '提示不阻断新建')
+  // 历史任务统一在任务页管理，导入页不再出现续传浮框。
+  assert.equal(source.includes('前往续传'), false, '导入页不再提供续传浮框')
+  assert.equal(source.includes('放弃此任务'), false, '导入页不再显示上次任务区块')
+  assert.ok(readFileSync(new URL('../src/views/TasksView.vue', import.meta.url), 'utf8').includes('query: { resume:'), '续传入口集中在任务页')
   assert.ok(source.includes('readUploadConcurrency(window.localStorage)'), '每轮读取同时上传数')
   assert.ok(
     source.includes('effectiveUploadConcurrency(') && source.includes('rules.value.uploadConcurrency'),
@@ -63,14 +65,11 @@ test('新建图集默认干净新建态，只在显式续传时加载任务', ()
   )
 })
 
-test('空态不显示数量与清空，续传提示放在拖放区下方', () => {
+test('空态不显示数量与清空，续传提示已移到任务页', () => {
   assert.equal(source.includes('mb-3 flex items-center justify-end gap-2'), false, '空态顶部不再留孤立工具栏')
+  assert.equal(source.includes('前往续传'), false, '续传入口集中在任务页，导入页不再提示')
   const empty = source.indexOf('v-if="tiles.length === 0" class="mx-auto w-full max-w-[720px]"')
-  const hint = source.indexOf('前往续传')
-  assert.ok(empty > 0 && hint > empty, '续传提示在空态容器内')
-  const dropzone = source.indexOf('<DropZone :disabled="!ready || working || locked"', empty)
-  assert.ok(dropzone > empty && dropzone < hint, '提示排在拖放区下方')
-  assert.ok(source.includes('与 720px 容器同宽'), '说明同宽口径')
+  assert.ok(empty > 0, '空态仍有拖放区')
   // 数量与清空收进「已选媒体」标题行，清空是紧凑动作。
   const media = source.indexOf('已选媒体')
   const count = source.indexOf('{{ imageCount }} 项 · {{ formatBytes(totalSize) }}', media)

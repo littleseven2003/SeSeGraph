@@ -32,6 +32,10 @@ type TaskItem struct {
 	UploadedCount int
 	// ChannelCount 只统计已存入 Telegram 频道的图片。
 	ChannelCount int
+	// ErrorMessage 是任务失败的可读原因，未失败时为空。
+	ErrorMessage string
+	// PublishError 是发布失败的可读原因，未失败时为空。
+	PublishError string
 	// CompressedCount 是提交时浏览器已处理的项数；nil 表示旧任务没有这项记录。
 	CompressedCount *int
 	// PublishIntent 是提交时选择的发布意图：auto 表示同步完成后自动入队，空串表示旧任务或仅存图。
@@ -109,7 +113,8 @@ func (r *Repository) ListTasks(ctx context.Context, page, pageSize int, filter s
 		        (SELECT COUNT(*) FROM post_images pi
 		          WHERE pi.post_id = p.id AND pi.status = ?),
 		        strftime('%Y-%m-%dT%H:%M:%SZ', p.updated_at),
-		        p.compressed_count, COALESCE(p.publish_intent, '')
+		        p.compressed_count, COALESCE(p.publish_intent, ''),
+		        COALESCE(p.error_message, ''), COALESCE(p.publish_error, '')
 		 FROM posts p WHERE `+where+`
 		 ORDER BY p.updated_at DESC, p.id DESC LIMIT ? OFFSET ?`,
 		ImageStatusUploaded, ImageStatusStored, ImageStatusFailed,
@@ -128,7 +133,8 @@ func (r *Repository) ListTasks(ctx context.Context, page, pageSize int, filter s
 		if err := rows.Scan(&item.ID, &item.Title, &item.Status, &item.PublishState,
 			&item.ControlState, &item.UploadRound, &item.ImageCount,
 			&item.ReceivedCount, &item.StoredCount, &item.UploadedCount, &item.ChannelCount,
-			&item.UpdatedAt, &compressed, &item.PublishIntent); err != nil {
+			&item.UpdatedAt, &compressed, &item.PublishIntent,
+			&item.ErrorMessage, &item.PublishError); err != nil {
 			return nil, errors.New("读取任务失败")
 		}
 		if compressed.Valid {

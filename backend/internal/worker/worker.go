@@ -214,8 +214,13 @@ func (w *Worker) Process(ctx context.Context, postID int64) error {
 			return nil
 		}
 		if err := w.uploadImage(ctx, provider, post, image); err != nil {
-			w.finish(ctx, postID, posts.StatusFailed, "上传图片失败")
-			return errors.New("上传图片失败")
+			message := err.Error()
+			if message == "" {
+				message = "存图失败，原因未知"
+			}
+			w.finish(ctx, postID, posts.StatusFailed, message)
+			w.logger.Printf("帖子上传失败：编号 %d，%s", postID, message)
+			return err
 		}
 	}
 
@@ -241,6 +246,9 @@ func (w *Worker) Process(ctx context.Context, postID int64) error {
 	readyErr := w.checkPublishReady(ctx)
 	enqueued, err := w.repo.FinishSync(ctx, postID, readyErr == nil, publishNotReadyNote)
 	if err != nil {
+		// 收尾写库失败会让任务停在处理中，这里立刻标失败并留下原因。
+		w.finish(ctx, postID, posts.StatusFailed, "同步收尾写库失败，请到任务页重试")
+		w.logger.Printf("同步收尾失败：编号 %d，%v", postID, err)
 		return err
 	}
 	if enqueued {
@@ -321,8 +329,11 @@ func (w *Worker) uploadImage(ctx context.Context, provider storage.Provider, pos
 			}
 		}
 
-		_ = w.repo.MarkImageFailed(ctx, image.ID, "上传失败")
-		return errors.New("上传失败")
+		// 真实原因写进逐图错误与任务说明，界面据此给出可读解释。
+		message := storage.DescribeUpload(uploadErr)
+		_ = w.repo.MarkImageFailed(ctx, image.ID, message)
+		w.logger.Printf("存图失败：帖子 %d 第 %d 张，%s", post.ID, image.SortOrder, message)
+		return errors.New(message)
 	}
 }
 
@@ -354,7 +365,15 @@ func (w *Worker) holdUntil(deadline time.Time) {
 }
 
 func (w *Worker) finish(ctx context.Context, postID int64, status, message string) {
-	_ = w.repo.MarkPostFinished(ctx, postID, status, message)
+	if err := w.repo.MarkPostFinished(ctx, postID, status, message); err == nil {
+		return
+	}
+	// 暂停或停止时 finish 的条件更新不命中，失败原因改走无条件落库。
+	if status == posts.StatusFailed {
+		if err := w.repo.MarkTaskFailed(ctx, postID, message); err != nil {
+			w.logger.Printf("记录失败状态失败：编号 %d，%v", postID, err)
+		}
+	}
 }
 
 func defaultSleep(ctx context.Context, d time.Duration) error {

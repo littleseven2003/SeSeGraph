@@ -82,7 +82,11 @@ type Post struct {
 	// PublishPathMode 与 PublishSlug 是提交时冻结的链接口径，与意图同事务写入。
 	PublishPathMode string
 	PublishSlug     string
-	Tags            []string
+	// ErrorMessage 是任务失败的可读原因，未失败时为空。
+	ErrorMessage string
+	// PublishError 是发布失败的可读原因，未发布失败时为空。
+	PublishError string
+	Tags         []string
 }
 
 // PublishInfo 是发布一帖所需的元数据与已存图列表。
@@ -431,11 +435,11 @@ func (r *Repository) Get(ctx context.Context, id int64) (*Post, error) {
 	err := r.handle.QueryRowContext(ctx,
 		`SELECT title, description, author_name, cover_thumb_path, image_count, upload_mode, status,
 		        COALESCE(control_state, 'running'), COALESCE(upload_round, 0), compressed_count,
-		        COALESCE(publish_intent, '')
+		        COALESCE(publish_intent, ''), COALESCE(error_message, ''), COALESCE(publish_error, '')
 		 FROM posts WHERE id = ?`, id,
 	).Scan(&post.Title, &post.Description, &post.AuthorName, &post.CoverThumbPath,
 		&post.ImageCount, &post.UploadMode, &post.Status, &post.ControlState, &post.UploadRound, &compressed,
-		&post.PublishIntent)
+		&post.PublishIntent, &post.ErrorMessage, &post.PublishError)
 	if compressed.Valid {
 		count := int(compressed.Int64)
 		post.CompressedCount = &count
@@ -1535,6 +1539,39 @@ func (r *Repository) MarkImageFailed(ctx context.Context, imageID int64, message
 	return nil
 }
 
+// MarkTaskFailed 把处理中的任务标记为失败：不受控制状态限制，
+// 暂停或停止时在途失败也能把原因落库，避免任务停在处理中无从解释。
+func (r *Repository) MarkTaskFailed(ctx context.Context, postID int64, message string) error {
+	if _, err := r.handle.ExecContext(ctx,
+		`UPDATE posts SET status = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND status IN (?, ?, ?)`,
+		StatusFailed, message, postID, StatusUploading, StatusQueued, StatusPublishing,
+	); err != nil {
+		return errors.New("更新任务失败状态失败")
+	}
+	return nil
+}
+
+// RequeueFinish 只重跑收尾：图片都已存好、仅收尾写库失败的任务回到队列，
+// 由 Worker 直接走 FinishSync，不会再次调用图床。
+func (r *Repository) RequeueFinish(ctx context.Context, postID int64) (bool, error) {
+	result, err := r.handle.ExecContext(ctx,
+		`UPDATE posts SET status = ?, error_message = '', updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND status = ? AND COALESCE(control_state, 'running') = ?
+		   AND (SELECT COUNT(*) FROM post_images
+		        WHERE post_id = posts.id AND status = ?) >= image_count`,
+		StatusQueued, postID, StatusFailed, ControlRunning, ImageStatusStored,
+	)
+	if err != nil {
+		return false, errors.New("重新排队失败")
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, errors.New("重新排队失败")
+	}
+	return affected > 0, nil
+}
+
 // CountStored 统计已存入图床的图片数量。
 func (r *Repository) CountStored(ctx context.Context, postID int64) (int, error) {
 	var total int
@@ -1571,9 +1608,12 @@ func (r *Repository) ResetFailedImages(ctx context.Context, postID int64) (int64
 
 	var (
 		status  string
+		control string
 		pending int
 	)
-	err = tx.QueryRowContext(ctx, `SELECT status, pending_delete FROM posts WHERE id = ?`, postID).Scan(&status, &pending)
+	err = tx.QueryRowContext(ctx,
+		`SELECT status, COALESCE(control_state, ?), pending_delete FROM posts WHERE id = ?`,
+		ControlRunning, postID).Scan(&status, &control, &pending)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, ErrNotFound
 	}
@@ -1584,6 +1624,10 @@ func (r *Repository) ResetFailedImages(ctx context.Context, postID int64) (int64
 		return 0, ErrPendingDelete
 	}
 	if status == StatusQueued || status == StatusPublishing {
+		return 0, nil
+	}
+	// 暂停或停止的任务不能重排：Worker 也领不到，避免排出一个永远不跑的队列项。
+	if control != ControlRunning {
 		return 0, nil
 	}
 
@@ -1654,16 +1698,19 @@ func (r *Repository) Resume(ctx context.Context, postID int64) error {
 	result, err := r.handle.ExecContext(ctx,
 		`UPDATE posts SET control_state = ?, upload_round = upload_round + 1,
 		        status = CASE
-		            WHEN status IN (?, ?, ?) THEN
+		            WHEN status = ? THEN ?
+		            WHEN status IN (?, ?) THEN
 		                CASE WHEN (SELECT COUNT(*) FROM post_images
 		                           WHERE post_id = posts.id AND status IN (?, ?)) >= image_count
 		                     THEN ? ELSE ? END
 		            ELSE status END,
+		        error_message = CASE WHEN status = ? THEN error_message ELSE '' END,
 		        updated_at = CURRENT_TIMESTAMP
 		 WHERE id = ? AND control_state = ?`,
-		ControlRunning, StatusUploading, StatusQueued, StatusPublishing,
+		ControlRunning, StatusPublishing, StatusQueued,
+		StatusUploading, StatusQueued,
 		ImageStatusUploaded, ImageStatusStored, StatusQueued, StatusUploading,
-		postID, ControlPaused)
+		StatusFailed, postID, ControlPaused)
 	if err != nil {
 		return errors.New("恢复任务失败")
 	}
