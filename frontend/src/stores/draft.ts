@@ -5,8 +5,10 @@ export interface DraftImage {
   /** key 在同一次导入内唯一，用于列表渲染与重排。 */
   key: string
   file: File
-  /** thumbBlob 是导入时生成的 512px 小图；草稿页自己建对象地址并在离页时释放。 */
-  thumbBlob: Blob
+  /** thumbBlob 是导入时生成的 512px 小图；还没生成好时为空，草稿页给出可重试占位。 */
+  thumbBlob?: Blob
+  /** kind 区分视频与静态图：视频不进 <img>，用海报或占位代替。 */
+  kind: 'image' | 'video'
   name: string
   /** size 是原始字节数，展示与上限提示用。 */
   size: number

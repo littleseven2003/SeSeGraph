@@ -1302,15 +1302,21 @@ function clearAll(): void {
 const router = useRouter()
 
 // 继续编辑：把小图与当前元信息交给草稿页，后续补齐排序与封面再提交。
-function goDraft(): void {
+async function goDraft(): Promise<void> {
   if (tiles.value.length === 0) {
     pushError('请先选择图片或视频')
     return
   }
+  // 等本批小图生成结束再交接：没生成好的项留给草稿页做可重试占位，绝不拿原件冒充小图。
+  const deadline = Date.now() + 20_000
+  while (Date.now() < deadline && tiles.value.some((tile) => tile.thumbBlob === undefined && tile.thumbUrl === '')) {
+    await new Promise((resolve) => setTimeout(resolve, 200))
+  }
   startDraft(tiles.value.map((tile) => ({
     key: tile.id,
     file: new File([tile.blob], tile.name, { type: tile.mime !== '' ? tile.mime : tile.blob.type }),
-    thumbBlob: tile.thumbBlob ?? tile.blob,
+    thumbBlob: tile.thumbBlob,
+    kind: tile.kind === 'video' ? 'video' : 'image',
     name: tile.name,
     size: tile.size,
   })))

@@ -56,7 +56,9 @@ const revealed = ref(new Set<string>())
 function buildThumbUrls(): void {
   for (const url of Object.values(thumbUrls.value)) URL.revokeObjectURL(url)
   const next: Record<string, string> = {}
-  for (const image of draftState.images) next[image.key] = URL.createObjectURL(image.thumbBlob)
+  for (const image of draftState.images) {
+    if (image.thumbBlob !== undefined) next[image.key] = URL.createObjectURL(image.thumbBlob)
+  }
   thumbUrls.value = next
 }
 
@@ -64,6 +66,8 @@ watch(() => draftState.images.map((image) => image.key).join(','), buildThumbUrl
 onBeforeUnmount(() => {
   for (const url of Object.values(thumbUrls.value)) URL.revokeObjectURL(url)
   thumbUrls.value = {}
+  for (const timer of maskTimers.values()) window.clearTimeout(timer)
+  maskTimers.clear()
 })
 
 function thumbOf(key: string): string {
@@ -74,8 +78,36 @@ function masked(key: string): boolean {
   return blurEnabled.value && !revealed.value.has(key)
 }
 
-function reveal(key: string): void {
+const maskTimers = new Map<string, number>()
+
+// toggleMask 单张揭开；再点或超时自动回遮，离开页面时清掉所有计时器。
+function toggleMask(key: string): void {
+  const timer = maskTimers.get(key)
+  if (timer !== undefined) window.clearTimeout(timer)
+  if (revealed.value.has(key)) {
+    revealed.value = new Set([...revealed.value].filter((item) => item !== key))
+    maskTimers.delete(key)
+    return
+  }
   revealed.value = new Set(revealed.value).add(key)
+  maskTimers.set(key, window.setTimeout(() => {
+    revealed.value = new Set([...revealed.value].filter((item) => item !== key))
+    maskTimers.delete(key)
+  }, 4000))
+}
+
+// thumbOf 返回已生成的小图地址；空串表示还没生成好，渲染重试占位。
+async function retryThumb(key: string): Promise<void> {
+  const image = draftState.images.find((item) => item.key === key)
+  if (image === undefined || busy.value) return
+  try {
+    const cover = await makeCoverFromMedia(image.file)
+    const bytes = Uint8Array.from(atob(cover.dataUrl.split(',')[1] ?? ''), (char) => char.charCodeAt(0))
+    image.thumbBlob = new Blob([bytes], { type: 'image/webp' })
+    buildThumbUrls()
+  } catch {
+    error.value = '小图生成失败，可移除这一张后重试'
+  }
 }
 
 const busy = ref(false)
@@ -194,8 +226,8 @@ async function publish(): Promise<void> {
                 type="button"
                 class="relative block w-full overflow-hidden rounded-lg border border-line bg-canvas"
                 :class="coverIndex === index ? 'ring-2 ring-brand' : ''"
-                :aria-label="`第 ${index + 1} 张，点击${masked(image.key) ? '揭开' : '遮罩'}`"
-                @click="reveal(image.key)"
+                :aria-label="`第 ${index + 1} 张，点击${masked(image.key) ? '揭开' : '重新遮住'}`"
+                @click="thumbOf(image.key) === '' ? retryThumb(image.key) : toggleMask(image.key)"
               >
                 <img
                   v-if="thumbOf(image.key) !== ''"
@@ -204,6 +236,13 @@ async function publish(): Promise<void> {
                   class="aspect-square w-full object-cover transition"
                   :class="masked(image.key) ? 'scale-105 blur-xl' : 'blur-0'"
                 />
+                <span
+                  v-if="thumbOf(image.key) === ''"
+                  class="flex aspect-square w-full flex-col items-center justify-center gap-1 bg-canvas px-2 text-center text-[11px] leading-tight text-muted"
+                >
+                  <template v-if="image.kind === 'video'">视频待生成预览</template>
+                  <template v-else>小图未生成，点按重试</template>
+                </span>
                 <span v-if="masked(image.key)" class="absolute inset-0 flex items-center justify-center bg-ink/10 text-ink/70">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" class="h-6 w-6" aria-hidden="true">
                     <path d="M2.5 12S6 6.5 12 6.5 21.5 12 21.5 12 18 17.5 12 17.5 2.5 12 2.5 12Z" stroke-linecap="round" />
