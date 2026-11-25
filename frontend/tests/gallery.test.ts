@@ -299,14 +299,16 @@ test('行内「打开」直接打开详情，只有封面点按走揭示', () =>
 
 test('缩略图点按一轮只推进一步', () => {
   const base = { blurred: true, open: false, revealed: false, trigger: 'pointer' as const }
-  // 未开气泡：桌面点按直接「打开并揭开」，触屏与键盘只打开模糊气泡。
+  // 未开气泡：遮罩开启时三种输入的首次点按都是「打开并揭开当前项」。
   assert.equal(thumbClickAction(base), 'open-reveal')
-  assert.equal(thumbClickAction({ ...base, trigger: 'touch' }), 'open')
-  assert.equal(thumbClickAction({ ...base, trigger: 'key' }), 'open')
-  // 同一次手势里由 focus 打开：鼠标与键盘当作下一步，触屏维持首点模糊。
+  assert.equal(thumbClickAction({ ...base, trigger: 'touch' }), 'open-reveal')
+  assert.equal(thumbClickAction({ ...base, trigger: 'key' }), 'open-reveal')
+  // 同一次手势里由 focus 打开：三种输入都在按下这一下揭开当前项。
   assert.equal(thumbClickAction({ ...base, open: true, sameGesture: true }), 'reveal')
   assert.equal(thumbClickAction({ ...base, open: true, sameGesture: true, trigger: 'key' }), 'reveal')
-  assert.equal(thumbClickAction({ ...base, open: true, sameGesture: true, trigger: 'touch' }), 'stay')
+  assert.equal(thumbClickAction({ ...base, open: true, sameGesture: true, trigger: 'touch' }), 'reveal')
+  // 已揭开时同一次手势不再重复推进，避免一按就收起。
+  assert.equal(thumbClickAction({ ...base, open: true, revealed: true, sameGesture: true }), 'stay')
   // 独立的下一次点按：未揭开则揭开，已揭开则收起，与时间间隔无关。
   assert.equal(thumbClickAction({ ...base, open: true }), 'reveal')
   assert.equal(thumbClickAction({ ...base, open: true, revealed: true }), 'close')

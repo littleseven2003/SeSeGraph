@@ -621,7 +621,7 @@ function onThumbFocus(order: number, event: Event): void {
 }
 
 // onThumbClick 按输入来源推进一次状态：
-// 鼠标悬停已开气泡时点按只揭开；触屏与键盘首点看模糊、次点揭开、清晰后再点收起。
+// 遮罩开启时首次点按即揭开当前项，已揭开再点收起；触屏按下会先聚焦，同一手势内只走一步。
 function onThumbClick(order: number, event: MouseEvent): void {
   const trigger = resolveRevealTrigger(event)
   const action = thumbClickAction({
@@ -642,7 +642,7 @@ function onThumbClick(order: number, event: MouseEvent): void {
   }
   if (action === 'stay') return
   openPreview(order, event)
-  // 桌面点按顺手揭开；触屏首点只打开模糊气泡，避免一次操作直接露图。
+  // 遮罩开启时打开气泡同时揭开当前项，鼠标与触屏一致。
   if (action === 'open-reveal') revealThumb(order, trigger)
 }
 

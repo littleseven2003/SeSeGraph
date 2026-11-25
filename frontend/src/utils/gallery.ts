@@ -380,7 +380,7 @@ export type ThumbClickAction = 'close' | 'reveal' | 'open' | 'open-reveal' | 'st
 /**
  * thumbClickAction 决定点按推进哪一步，保证一轮点按只走一步。
  * sameGesture 表示气泡是这次按下的同一次手势里由 focus 打开的（触屏按下会先聚焦按钮）：
- * 触屏据此维持「首点只看模糊」，鼠标与键盘把它当作同一动作的下一步。
+ * 三种输入一致，按下即揭开当前项；已揭开时不再重复推进。
  */
 export function thumbClickAction(input: {
   blurred: boolean
@@ -389,12 +389,11 @@ export function thumbClickAction(input: {
   trigger: RevealTrigger
   sameGesture?: boolean
 }): ThumbClickAction {
-  if (!input.open) {
-    return input.blurred && input.trigger === 'pointer' ? 'open-reveal' : 'open'
-  }
+  // 遮罩开启时，任一输入的首次点按都是「打开气泡并揭开当前项」；清晰态只打开气泡。
+  if (!input.open) return input.blurred ? 'open-reveal' : 'open'
   // 全局关闭时沿用清晰预览：同一次手势只是把气泡打开，下一次点按才收起。
   if (!input.blurred) return input.sameGesture === true ? 'stay' : 'close'
-  if (input.sameGesture === true) return input.trigger === 'touch' ? 'stay' : 'reveal'
+  if (input.sameGesture === true) return input.revealed ? 'stay' : 'reveal'
   return input.revealed ? 'close' : 'reveal'
 }
 
