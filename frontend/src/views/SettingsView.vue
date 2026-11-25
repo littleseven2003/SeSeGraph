@@ -215,6 +215,12 @@ function maskedTokenOf(botID: number): string {
   return found !== undefined && found.masked_token !== '' ? found.masked_token : 'Bot Token'
 }
 
+function botStatusClass(botID: number): string {
+  const found = bots.value.find((bot) => bot.bot_id === botID)
+  if (found === undefined) return ''
+  return found.status === 'frozen' || found.status === 'paused' ? 'text-danger' : ''
+}
+
 function statusTextOf(botID: number): string {
   const found = bots.value.find((bot) => bot.bot_id === botID)
   if (found === undefined) return ''
@@ -870,13 +876,13 @@ onBeforeUnmount(() => {
                   </div>
                   <div class="space-y-3 px-5 py-4">
                     <div v-for="(bot, index) in botDraft" :key="index" class="rounded-xl bg-canvas px-3 py-2.5">
-                      <div class="flex flex-wrap items-center gap-2">
+                      <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
                         <input
                           v-model="bot.alias"
                           type="text"
                           autocomplete="off"
                           placeholder="别名，如 主力"
-                          class="h-9 w-32 rounded-lg border border-line bg-surface px-2 text-xs outline-none transition focus:border-ink/40"
+                          class="h-9 w-full rounded-lg border border-line bg-surface px-2 text-xs outline-none transition focus:border-ink/40 sm:w-32"
                         />
                         <input
                           v-model="bot.token"
@@ -889,7 +895,7 @@ onBeforeUnmount(() => {
                       <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
                         <span class="tnum">{{ index + 1 }}</span>
                         <span v-if="bot.bot_id > 0" class="tnum">编号 {{ bot.bot_id }}</span>
-                        <span v-if="bot.bot_id > 0">{{ statusTextOf(bot.bot_id) }}</span>
+                        <span v-if="bot.bot_id > 0" :class="botStatusClass(bot.bot_id)">{{ statusTextOf(bot.bot_id) }}</span>
                         <span v-else>保存后按令牌识别</span>
                         <span class="ml-auto flex gap-1">
                           <button
@@ -932,7 +938,7 @@ onBeforeUnmount(() => {
                       <button
                         type="button"
                         :disabled="botSaving"
-                        class="h-9 rounded-lg bg-ink px-3 text-xs font-medium text-surface transition hover:opacity-90 disabled:opacity-60"
+                        class="h-9 rounded-lg bg-brand px-3 text-xs font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
                         @click="saveBotPool"
                       >
                         保存 Bot 池

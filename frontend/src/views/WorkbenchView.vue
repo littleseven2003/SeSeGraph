@@ -1310,7 +1310,7 @@ function goDraft(): void {
   startDraft(tiles.value.map((tile) => ({
     key: tile.id,
     file: new File([tile.blob], tile.name, { type: tile.mime !== '' ? tile.mime : tile.blob.type }),
-    thumb: tile.thumbUrl,
+    thumbBlob: tile.thumbBlob ?? tile.blob,
     name: tile.name,
     size: tile.size,
   })))

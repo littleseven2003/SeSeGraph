@@ -5,8 +5,8 @@ export interface DraftImage {
   /** key 在同一次导入内唯一，用于列表渲染与重排。 */
   key: string
   file: File
-  /** thumb 是本地生成的小图 data URL，草稿页用它做低成本预览。 */
-  thumb: string
+  /** thumbBlob 是导入时生成的 512px 小图；草稿页自己建对象地址并在离页时释放。 */
+  thumbBlob: Blob
   name: string
   /** size 是原始字节数，展示与上限提示用。 */
   size: number

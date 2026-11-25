@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import AppHeader from '../components/AppHeader.vue'
 import MetaPanel from '../components/workbench/MetaPanel.vue'
 import { ApiError } from '../api/client.ts'
 import { commitPost, createPost, uploadImage } from '../api/posts.ts'
 import { splitTags, type PostMeta } from '../utils/meta.ts'
+import { makeCoverFromMedia } from '../utils/cover.ts'
+import { blurEnabled } from '../utils/blur.ts'
 import { clearDraft, draftState, hasDraft } from '../stores/draft.ts'
 
 const router = useRouter()
@@ -47,6 +49,35 @@ const coverIndex = computed(() => {
   return index >= 0 ? index : 0
 })
 
+// 缩略图对象地址按 key 建立，离开页面或替换草稿时逐个释放，避免草稿预览失效。
+const thumbUrls = ref<Record<string, string>>({})
+const revealed = ref(new Set<string>())
+
+function buildThumbUrls(): void {
+  for (const url of Object.values(thumbUrls.value)) URL.revokeObjectURL(url)
+  const next: Record<string, string> = {}
+  for (const image of draftState.images) next[image.key] = URL.createObjectURL(image.thumbBlob)
+  thumbUrls.value = next
+}
+
+watch(() => draftState.images.map((image) => image.key).join(','), buildThumbUrls, { immediate: true })
+onBeforeUnmount(() => {
+  for (const url of Object.values(thumbUrls.value)) URL.revokeObjectURL(url)
+  thumbUrls.value = {}
+})
+
+function thumbOf(key: string): string {
+  return thumbUrls.value[key] ?? ''
+}
+
+function masked(key: string): boolean {
+  return blurEnabled.value && !revealed.value.has(key)
+}
+
+function reveal(key: string): void {
+  revealed.value = new Set(revealed.value).add(key)
+}
+
 const busy = ref(false)
 const error = ref('')
 const notice = ref('')
@@ -86,13 +117,15 @@ async function publish(): Promise<void> {
   let postID = 0
   try {
     const chosen = draftState.images[coverIndex.value]
+    // 封面必须提交 Base64 data URL：这里按导入的原件重新生成一次 400px 缩略图。
+    const cover = chosen !== undefined ? await makeCoverFromMedia(chosen.file) : null
     const created = await createPost({
       title: draftState.meta.title.trim(),
       description: draftState.meta.description,
       author_name: draftState.meta.authorName.trim(),
       upload_mode: draftState.meta.uploadMode,
       image_count: draftState.images.length,
-      cover_thumbnail: chosen !== undefined ? chosen.thumb : '',
+      cover_thumbnail: cover !== null ? cover.dataUrl : '',
       cover_sort_order: chosen !== undefined ? coverIndex.value + 1 : 0,
       publish_intent: draftState.meta.publishIntent === 'auto' ? 'auto' : undefined,
       tags: splitTags(draftState.meta.tags),
@@ -136,7 +169,7 @@ async function publish(): Promise<void> {
       </div>
 
       <template v-if="hasDraft()">
-        <section class="mt-6 rounded-2xl bg-surface p-5 shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+        <section class="mt-6">
           <MetaPanel
             v-model="meta"
             meta-text=""
@@ -150,23 +183,41 @@ async function publish(): Promise<void> {
           <div class="flex flex-wrap items-center justify-between gap-2">
             <div>
               <h2 class="text-sm font-semibold">已选媒体</h2>
-              <p class="mt-1 text-xs text-muted">拖拽顺序即上传顺序，点「设为封面」决定列表展示图。</p>
+              <p class="mt-1 text-xs text-muted">调整顺序与封面；序号即上传顺序。</p>
             </div>
             <span class="tnum text-xs text-muted">{{ draftState.images.length }} 项 · {{ megabytes }} MB</span>
           </div>
 
-          <ul class="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-6">
+          <ul class="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
             <li v-for="(image, index) in draftState.images" :key="image.key" class="min-w-0">
-              <div class="group relative overflow-hidden rounded-lg border border-line bg-canvas" :class="coverIndex === index ? 'ring-2 ring-brand' : ''">
-                <img :src="image.thumb" :alt="image.name" class="aspect-square w-full object-cover" />
+              <button
+                type="button"
+                class="relative block w-full overflow-hidden rounded-lg border border-line bg-canvas"
+                :class="coverIndex === index ? 'ring-2 ring-brand' : ''"
+                :aria-label="`第 ${index + 1} 张，点击${masked(image.key) ? '揭开' : '遮罩'}`"
+                @click="reveal(image.key)"
+              >
+                <img
+                  v-if="thumbOf(image.key) !== ''"
+                  :src="thumbOf(image.key)"
+                  :alt="image.name"
+                  class="aspect-square w-full object-cover transition"
+                  :class="masked(image.key) ? 'scale-105 blur-xl' : 'blur-0'"
+                />
+                <span v-if="masked(image.key)" class="absolute inset-0 flex items-center justify-center bg-ink/10 text-ink/70">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" class="h-6 w-6" aria-hidden="true">
+                    <path d="M2.5 12S6 6.5 12 6.5 21.5 12 21.5 12 18 17.5 12 17.5 2.5 12 2.5 12Z" stroke-linecap="round" />
+                    <circle cx="12" cy="12" r="2.6" />
+                  </svg>
+                </span>
                 <span class="tnum absolute left-1.5 top-1.5 rounded bg-ink/70 px-1.5 py-0.5 text-[10px] font-medium text-surface">{{ index + 1 }}</span>
                 <span v-if="coverIndex === index" class="absolute right-1.5 top-1.5 rounded bg-brand px-1.5 py-0.5 text-[10px] font-medium text-brand-ink">封面</span>
-              </div>
-              <div class="mt-1 flex flex-wrap items-center gap-1 text-[11px] text-muted">
-                <button type="button" class="rounded border border-line px-1.5 py-0.5 disabled:opacity-40" :disabled="index === 0 || busy" @click="moveImage(index, -1)">前移</button>
-                <button type="button" class="rounded border border-line px-1.5 py-0.5 disabled:opacity-40" :disabled="index === draftState.images.length - 1 || busy" @click="moveImage(index, 1)">后移</button>
-                <button type="button" class="rounded border border-line px-1.5 py-0.5" :disabled="busy || coverIndex === index" @click="chooseCover(image.key)">设为封面</button>
-                <button type="button" class="rounded border border-line px-1.5 py-0.5 text-danger" :disabled="busy" @click="removeImage(index)">移除</button>
+              </button>
+              <div class="mt-1 grid grid-cols-2 gap-1 text-[11px] text-muted">
+                <button type="button" class="h-8 rounded-lg border border-line disabled:opacity-40" :disabled="index === 0 || busy" @click="moveImage(index, -1)">前移</button>
+                <button type="button" class="h-8 rounded-lg border border-line disabled:opacity-40" :disabled="index === draftState.images.length - 1 || busy" @click="moveImage(index, 1)">后移</button>
+                <button type="button" class="h-8 rounded-lg border border-line" :disabled="busy || coverIndex === index" @click="chooseCover(image.key)">设为封面</button>
+                <button type="button" class="h-8 rounded-lg border border-line text-danger" :disabled="busy" @click="removeImage(index)">移除</button>
               </div>
             </li>
           </ul>
@@ -176,14 +227,14 @@ async function publish(): Promise<void> {
           <div class="grid gap-3 sm:grid-cols-2">
             <label class="block">
               <span class="text-xs font-medium text-muted">画质</span>
-              <select v-model="mode" :disabled="busy" class="mt-1 h-10 w-full rounded-lg border border-line bg-canvas px-2 text-sm outline-none">
+              <select v-model="mode" :disabled="busy" class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none">
                 <option value="photo">省流量（照片，单张 10MB 内）</option>
                 <option value="document">原图（文档，单张 20MB 内）</option>
               </select>
             </label>
             <label class="block">
               <span class="text-xs font-medium text-muted">发布方式</span>
-              <select v-model="intent" :disabled="busy" class="mt-1 h-10 w-full rounded-lg border border-line bg-canvas px-2 text-sm outline-none">
+              <select v-model="intent" :disabled="busy" class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none">
                 <option value="">只存图，稍后手动发布</option>
                 <option value="auto">存图完成后自动发布</option>
               </select>
@@ -193,7 +244,7 @@ async function publish(): Promise<void> {
           <div class="mt-4 flex flex-wrap items-center gap-3">
             <button
               type="button"
-              class="inline-flex h-11 items-center rounded-lg bg-ink px-5 text-sm font-medium text-surface transition hover:opacity-90 disabled:opacity-60"
+              class="inline-flex h-11 items-center rounded-xl bg-brand px-5 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
               :disabled="busy"
               @click="publish"
             >
@@ -210,7 +261,7 @@ async function publish(): Promise<void> {
         <p class="mt-1 text-xs text-muted">先到导入页选择图片或压缩包，生成小图后会自动进入这里。</p>
         <router-link
           to="/workbench"
-          class="mt-4 inline-flex h-10 items-center rounded-lg bg-ink px-4 text-sm font-medium text-surface transition hover:opacity-90"
+          class="mt-4 inline-flex h-10 items-center rounded-xl bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong"
         >
           去导入
         </router-link>

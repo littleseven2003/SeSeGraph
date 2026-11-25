@@ -4,7 +4,7 @@ import { clearDraft, draftState, draftSummary, hasDraft, startDraft } from '../s
 
 // fakeImage 构造一条最小草稿项，只关心 key、名称与字节数。
 function fakeImage(key: string, size: number) {
-  return { key, file: new File([new Uint8Array(0)], key), thumb: 'data:,', name: key, size }
+  return { key, file: new File([new Uint8Array(0)], key), thumbBlob: new Blob(), name: key, size }
 }
 
 test('草稿写入后能统计张数与字节', () => {
