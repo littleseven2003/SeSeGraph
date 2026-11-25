@@ -94,6 +94,8 @@ function slotText(task: TaskRow): string {
 // progressById 缓存展开后才拉取的逐图进度，避免轮询时反复请求。
 const progressById = ref(new Map<number, ServerProgress>())
 const progressError = ref('')
+// failedStamp 记录逐图原因对应的任务更新时间，轮询发现变化时重新拉取。
+const failedStamp = ref(new Map<number, string>())
 
 // failureOf 汇总一条任务的可读失败原因：先看任务级，再看发布级。
 function failureOf(task: TaskRow): string {
@@ -136,13 +138,15 @@ async function retryTask(task: TaskRow): Promise<void> {
   }
 }
 
-async function loadTaskProgress(id: number): Promise<void> {
-  if (progressById.value.has(id)) return
+async function loadTaskProgress(id: number, force = false): Promise<void> {
+  if (!force && progressById.value.has(id)) return
   try {
     const state = await fetchProgress(id)
     const next = new Map(progressById.value)
     next.set(id, state)
     progressById.value = next
+    const task = tasks.value.find((item) => item.id === id)
+    if (task !== undefined) failedStamp.value = new Map(failedStamp.value).set(id, task.updated_at)
   } catch {
     progressError.value = '读取逐图原因失败，稍后重试'
   }

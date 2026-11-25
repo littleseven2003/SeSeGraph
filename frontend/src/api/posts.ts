@@ -103,6 +103,8 @@ export interface ServerProgress {
   cover_sort_order: number
   /** 提交时浏览器已处理的项数；null 表示旧任务没有这项记录 */
   compressed_count?: number | null
+  /** 任务失败的可读原因，未失败时为空 */
+  error?: string
 }
 
 // uploadImage 逐张上传，请求体直接使用浏览器里的 Blob，由后端流式落盘。

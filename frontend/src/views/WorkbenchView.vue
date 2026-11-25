@@ -1173,7 +1173,9 @@ async function refreshProgress(id: number, round = initSeq): Promise<void> {
       } else if (progress.status === 'completed') {
         message.value = '已存入频道'
       } else if (progress.status === 'failed') {
-        message.value = '部分图片存图失败，可以点击重试'
+        // 直接用服务端落库的脱敏原因，不再只给一句笼统提示。
+        const reason = (progress.error ?? '').trim()
+        message.value = reason !== '' ? reason : '存图失败，请到任务页查看原因后重试'
       }
     }
   } catch {

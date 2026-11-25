@@ -82,7 +82,9 @@ type Post struct {
 	// PublishPathMode 与 PublishSlug 是提交时冻结的链接口径，与意图同事务写入。
 	PublishPathMode string
 	PublishSlug     string
-	Tags            []string
+	// ErrorMessage 是任务失败的可读原因，未失败时为空。
+	ErrorMessage string
+	Tags         []string
 }
 
 // PublishInfo 是发布一帖所需的元数据与已存图列表。
@@ -431,11 +433,11 @@ func (r *Repository) Get(ctx context.Context, id int64) (*Post, error) {
 	err := r.handle.QueryRowContext(ctx,
 		`SELECT title, description, author_name, cover_thumb_path, image_count, upload_mode, status,
 		        COALESCE(control_state, 'running'), COALESCE(upload_round, 0), compressed_count,
-		        COALESCE(publish_intent, '')
+		        COALESCE(publish_intent, ''), COALESCE(error_message, '')
 		 FROM posts WHERE id = ?`, id,
 	).Scan(&post.Title, &post.Description, &post.AuthorName, &post.CoverThumbPath,
 		&post.ImageCount, &post.UploadMode, &post.Status, &post.ControlState, &post.UploadRound, &compressed,
-		&post.PublishIntent)
+		&post.PublishIntent, &post.ErrorMessage)
 	if compressed.Valid {
 		count := int(compressed.Int64)
 		post.CompressedCount = &count

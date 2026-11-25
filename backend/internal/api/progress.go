@@ -88,6 +88,7 @@ func progressHandler(deps Deps) gin.HandlerFunc {
 			"stored_count":     stored,
 			"failed_count":     failed,
 			"images":           items,
+			"error":            post.ErrorMessage,
 			"publish_state":    publishState,
 			"public":           public,
 			"telegraph_urls":   publishURLs,
