@@ -906,4 +906,3 @@ func TestFinishOnlyRetrySendsNothing(t *testing.T) {
 		t.Errorf("重跑收尾后状态 = %s，期望已完成", post.Status)
 	}
 }
-
