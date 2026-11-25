@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/auth"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/backup"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/botpool"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/provider"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/publisher"
@@ -76,6 +77,8 @@ type Deps struct {
 	SettingsLock *sync.Mutex
 	// Views 提供浏览量刷新，未装配时刷新接口返回 503。
 	Views *views.Service
+	// Bots 是多 Bot 池配置，未装配时池接口不可用。
+	Bots *botpool.Pool
 }
 
 // maxAuthBodyBytes 是登录与初始化请求体的上限，超出的请求不会被解码。
@@ -153,6 +156,8 @@ func NewRouter(deps Deps) *gin.Engine {
 	admin.POST("/settings/media-thumbs/clear", mediaThumbClearHandler(deps))
 	admin.POST("/settings/telegraph/create-account", limitBody(maxTelegraphBodyBytes), telegraphAccountHandler(deps))
 	admin.PUT("/settings/admin-credentials", limitBody(maxAccountBodyBytes), updateCredentialsHandler(deps))
+	admin.GET("/settings/bots", botsHandler(deps))
+	admin.PUT("/settings/bots", limitBody(maxSettingsBodyBytes), updateBotsHandler(deps))
 	admin.POST("/backup/trigger", backupTriggerHandler(deps))
 	admin.GET("/backup/download", backupDownloadHandler(deps))
 	admin.GET("/backup/status", backupStatusHandler(deps))

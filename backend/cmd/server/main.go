@@ -238,6 +238,7 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	backupState := newBackupScheduleState(effective)
 	backupSchedule := backupState.text()
 
+	botPool := botpool.New(settingsStore)
 	router := api.NewRouter(api.Deps{
 		Version:           version,
 		Commit:            commit,
@@ -269,9 +270,9 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 			return nil
 		},
 		Views: viewsService,
+		Bots:  botPool,
 	})
 
-	botPool := botpool.New(settingsStore)
 	enqueueProvider := storage.Provider(switcher)
 	var poolProvider *storage.Pool
 	if effective, resolveErr := resolver.Effective(ctx); resolveErr == nil {
