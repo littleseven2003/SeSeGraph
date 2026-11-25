@@ -139,9 +139,14 @@ test('换封面按操作代次解锁，旧回调不影响新操作', () => {
 
 test('遮罩开启时缩略图表面提示可揭开，卡片与轮播不再提供手动回遮', () => {
   assert.ok(
-    source.includes('v-if="thumbBlurred(image.sort_order) && thumbUrl(image) !== \'\'"'),
-    '只在已有小图且确实被遮罩时叠加提示',
+    source.includes('<template v-if="thumbUrl(image) !== \'\'">'),
+    '有图判断包住图片与遮罩，占位分支不被遮罩层截断',
   )
+  assert.ok(source.includes('v-if="thumbBlurred(image.sort_order)"'), '遮罩提示只随遮蔽状态出现')
+  const thumb = source.slice(source.indexOf('<template v-if="thumbUrl(image)'), source.indexOf('</button>', source.indexOf('<template v-if="thumbUrl(image)')))
+  assert.ok(thumb.indexOf('</template>') < thumb.indexOf("v-else-if=\"image.mime_type === 'video/mp4'\""), '占位 SVG 接在 template 之后')
+  const img = thumb.slice(thumb.indexOf('<img'), thumb.indexOf('/>', thumb.indexOf('<img')))
+  assert.equal(img.includes('v-if='), false, '图片不再单独判断，交给外层 template')
   assert.ok(source.includes('pointer-events-none absolute inset-0 flex items-center justify-center bg-ink/25'), '提示层不拦截点按')
   const card = readFileSync(new URL('../src/components/gallery/PostCard.vue', import.meta.url), 'utf8')
   const carousel = readFileSync(new URL('../src/components/gallery/FocusCarousel.vue', import.meta.url), 'utf8')

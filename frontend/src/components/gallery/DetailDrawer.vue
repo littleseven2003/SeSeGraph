@@ -1087,31 +1087,32 @@ watch(
                     @blur="closePreview"
                     @click="onThumbClick(image.sort_order, $event)"
                   >
-                    <img
-                      v-if="thumbUrl(image) !== ''"
-                      :src="thumbUrl(image)"
-                      alt=""
-                      class="h-full w-full object-cover"
-                      :class="thumbBlurred(image.sort_order) ? 'scale-125 blur-[6px]' : ''"
-                      loading="lazy"
-                      decoding="async"
-                    />
-                    <span
-                      v-if="thumbBlurred(image.sort_order) && thumbUrl(image) !== ''"
-                      class="pointer-events-none absolute inset-0 flex items-center justify-center bg-ink/25 text-white"
-                      aria-hidden="true"
-                    >
-                      <svg
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.75"
-                        class="h-4 w-4"
+                    <template v-if="thumbUrl(image) !== ''">
+                      <img
+                        :src="thumbUrl(image)"
+                        alt=""
+                        class="h-full w-full object-cover"
+                        :class="thumbBlurred(image.sort_order) ? 'scale-125 blur-[6px]' : ''"
+                        loading="lazy"
+                        decoding="async"
+                      />
+                      <span
+                        v-if="thumbBlurred(image.sort_order)"
+                        class="pointer-events-none absolute inset-0 flex items-center justify-center bg-ink/25 text-white"
+                        aria-hidden="true"
                       >
-                        <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" stroke-linecap="round" stroke-linejoin="round" />
-                        <circle cx="12" cy="12" r="3" />
-                      </svg>
-                    </span>
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.75"
+                          class="h-4 w-4"
+                        >
+                          <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" stroke-linecap="round" stroke-linejoin="round" />
+                          <circle cx="12" cy="12" r="3" />
+                        </svg>
+                      </span>
+                    </template>
                     <svg
                       v-else-if="image.mime_type === 'video/mp4'"
                       viewBox="0 0 24 24"
