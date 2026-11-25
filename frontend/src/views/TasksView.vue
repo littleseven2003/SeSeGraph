@@ -404,6 +404,13 @@ onBeforeUnmount(() => {
             <!-- 顶行已经给过更新时间，这里只留阶段概况，不重复同一时间。 -->
             <p class="mt-2 text-xs text-muted">{{ summaryOf(task) }}</p>
             <div class="mt-3 flex flex-wrap items-center gap-2">
+              <router-link
+                v-if="task.status === 'completed'"
+                :to="{ name: 'post', params: { id: String(task.id) }, hash: '#progress' }"
+                class="inline-flex h-11 items-center rounded-lg border border-line bg-surface px-4 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink sm:h-9"
+              >
+                查看图集
+              </router-link>
               <button
                 v-if="canResume(task)"
                 type="button"

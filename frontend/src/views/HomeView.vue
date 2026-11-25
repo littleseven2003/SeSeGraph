@@ -153,11 +153,9 @@ function clearFilters(): void {
   resetAndLoad()
 }
 
+// 图集点击直达独立详情页；列表筛选与页码保留在地址栏返回时恢复。
 async function openDetail(id: number): Promise<void> {
-  drawerOpen.value = true
-  detailId.value = id
-  viewsNotice.value = ''
-  void loadDetail()
+  await router.push({ name: 'post', params: { id: String(id) } })
 }
 
 async function loadDetail(): Promise<void> {
