@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { fetchStatus } from '../api/client'
 import HomeView from '../views/HomeView.vue'
 import PostDetailView from '../views/PostDetailView.vue'
+import DraftView from '../views/DraftView.vue'
 import LoginView from '../views/LoginView.vue'
 import SettingsView from '../views/SettingsView.vue'
 import SetupView from '../views/SetupView.vue'
@@ -16,6 +17,7 @@ const router = createRouter({
     { path: '/setup', name: 'setup', component: SetupView },
     { path: '/posts/:id(\\d+)', name: 'post', component: PostDetailView },
     { path: '/workbench', name: 'workbench', component: WorkbenchView },
+    { path: '/draft', name: 'draft', component: DraftView },
     { path: '/tasks', name: 'tasks', component: TasksView },
     { path: '/settings', name: 'settings', component: SettingsView },
     { path: '/:pathMatch(.*)*', redirect: '/' },
