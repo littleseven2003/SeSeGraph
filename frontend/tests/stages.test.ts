@@ -82,7 +82,7 @@ test('整体概况优先报失败，其次报进行中的阶段', () => {
   assert.equal(stageOverall(done), 100)
 
   const running = taskStages({ ...base, receivedCount: 2 })
-  assert.equal(stageSummary(running), '上传 50%')
+  assert.equal(stageSummary(running), '上传 2/4')
   // 排队与发布中没有确定进度，给文字而不是百分比。
   const queued = taskStages({ ...base, receivedCount: 4, channelCount: 4, publishState: 'pending' })
   assert.equal(stageSummary(queued), '发布排队中')
@@ -117,30 +117,36 @@ test('任务行来源字段缺失时按未记录与未接收处理', () => {
   assert.equal(uploadStageView(full).value, '1/3')
 })
 
-test('总进度只按适用阶段计分母，未达完成条件最高 99', () => {
+test('总进度只按适用阶段计分母，idle 不进发布段', () => {
   // 旧任务没有压缩记录：分母排除压缩段，上传一半、同步未开始即为两段均值的 25%。
   const legacy = taskStages({ ...base, compressedCount: null, receivedCount: 2 })
-  assert.equal(stageOverall(legacy, { hasCompressRecord: false, publishIntent: '', publishState: '' }), 25)
+  assert.equal(stageOverall(legacy, { hasCompressRecord: false, publishIntent: '', publishState: 'idle' }), 25)
 
-  // 仅存图：同步齐即满轨，不因发布段未开始而停在 75%。
-  const storedOnly = taskStages({ ...base, receivedCount: 4, channelCount: 4, publishState: '' })
-  assert.equal(stageOverall(storedOnly, { hasCompressRecord: true, publishIntent: '', publishState: '' }), 100)
+  // 仅存图：接口返回 idle，同步齐即满轨，不因发布段未开始而停在 75%。
+  const storedOnly = taskStages({ ...base, receivedCount: 4, channelCount: 4, publishState: 'idle' })
+  assert.equal(stageOverall(storedOnly, { hasCompressRecord: true, publishIntent: '', publishState: 'idle' }), 100)
 
-  // 提交并发布：同步齐但发布排队中，发布段没有确定进度，四段均值 75% 且不能满轨。
+  // 未记录压缩的旧任务同样是仅存图口径：剩余两段都完成即满轨。
+  const legacyDone = taskStages({ ...base, compressedCount: null, receivedCount: 4, channelCount: 4, publishState: 'idle' })
+  assert.equal(stageOverall(legacyDone, { hasCompressRecord: false, publishIntent: '', publishState: 'idle' }), 100)
+
+  // 提交并发布但还没入队：发布段在分母里，四段均值 75% 且不能满轨。
+  const autoIdle = taskStages({ ...base, receivedCount: 4, channelCount: 4, publishState: 'idle' })
+  assert.equal(stageOverall(autoIdle, { hasCompressRecord: true, publishIntent: 'auto', publishState: 'idle' }), 75)
   const autoPending = taskStages({ ...base, receivedCount: 4, channelCount: 4, publishState: 'pending' })
   assert.equal(stageOverall(autoPending, { hasCompressRecord: true, publishIntent: 'auto', publishState: 'pending' }), 75)
-  const autoDone = taskStages({ ...base, receivedCount: 4, channelCount: 4, publishState: 'published' })
-  assert.equal(stageOverall(autoDone, { hasCompressRecord: true, publishIntent: 'auto', publishState: 'published' }), 100)
 
   // 手动发起发布后同样以真实发布为完成条件。
   const manualRunning = taskStages({ ...base, receivedCount: 4, channelCount: 4, publishState: 'publishing' })
   assert.equal(stageOverall(manualRunning, { hasCompressRecord: true, publishIntent: '', publishState: 'publishing' }), 75)
+  const autoDone = taskStages({ ...base, receivedCount: 4, channelCount: 4, publishState: 'published' })
+  assert.equal(stageOverall(autoDone, { hasCompressRecord: true, publishIntent: 'auto', publishState: 'published' }), 100)
 
   // 暂停与失败保留已确认进度，不因状态变化归零。
   const paused = taskStages({ ...base, receivedCount: 2, status: 'uploading', controlState: 'paused' })
-  assert.equal(stageOverall(paused, { hasCompressRecord: true, publishIntent: '', publishState: '' }), 50)
+  assert.equal(stageOverall(paused, { hasCompressRecord: true, publishIntent: '', publishState: 'idle' }), 50)
 
-  // 整数百分点：三张里完成一张时给 33，不四舍五入成 34 以上。
+  // 整数百分点：三张里完成一张时给 33 以上的下取整，不四舍五入成满轨。
   const third = taskStages({ ...base, imageCount: 3, compressedCount: 3, receivedCount: 1 })
-  assert.equal(stageOverall(third, { hasCompressRecord: true, publishIntent: '', publishState: '' }), 44)
+  assert.equal(stageOverall(third, { hasCompressRecord: true, publishIntent: '', publishState: 'idle' }), 44)
 })

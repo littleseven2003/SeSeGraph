@@ -149,7 +149,7 @@ export function stageSummary(stages: readonly StageView[]): string {
     if (item.ratio >= 1) continue
     if (item.tone === 'warn') return `${item.label}${item.value}`
     if (item.value === '等待') return `${item.label}待开始`
-    if (/^\d+\/\d+$/.test(item.value)) return `${item.label} ${Math.round(item.ratio * 100)}%`
+    if (/^\d+\/\d+$/.test(item.value)) return `${item.label} ${item.value}`
     return `${item.label}${item.value === '未开始' ? '待开始' : item.value}`
   }
   return '四阶段已完成'
@@ -159,17 +159,20 @@ export function stageSummary(stages: readonly StageView[]): string {
 export interface OverallOptions {
   /** 提交时选择的发布意图：auto 表示同步完成后会自动发布 */
   publishIntent?: string
-  /** 当前发布状态：非空表示已经发起过发布，发布阶段计入总进度 */
+  /** 当前发布状态：pending 及之后表示已发起发布，发布阶段计入总进度；idle 视为未开始 */
   publishState?: string
   /** false 表示旧任务没有压缩记录，该段从分母排除 */
   hasCompressRecord?: boolean
 }
 
+// 已发起发布的取值：接口的 idle 与空串都表示还没开始，发布段不进分母。
+const PUBLISH_STARTED: ReadonlySet<string> = new Set(['pending', 'publishing', 'published', 'failed'])
+
 // stageOverall 返回整条进度（0–100 的整数百分点），供任务行的进度轨使用。
 // 分母只含适用阶段：旧任务缺压缩记录时不计该段；仅存图任务不计发布段。
 export function stageOverall(stages: readonly StageView[], options: OverallOptions = {}): number {
   const includeCompress = options.hasCompressRecord !== false
-  const includePublish = options.publishIntent === 'auto' || (options.publishState ?? '') !== ''
+  const includePublish = options.publishIntent === 'auto' || PUBLISH_STARTED.has(options.publishState ?? '')
   const applicable = stages.filter((item) => {
     if (item.key === 'compress') return includeCompress
     if (item.key === 'publish') return includePublish
