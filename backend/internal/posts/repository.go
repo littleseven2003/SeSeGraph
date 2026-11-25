@@ -1535,6 +1535,19 @@ func (r *Repository) MarkImageFailed(ctx context.Context, imageID int64, message
 	return nil
 }
 
+// MarkTaskFailed 把处理中的任务标记为失败：不受控制状态限制，
+// 暂停或停止时在途失败也能把原因落库，避免任务停在处理中无从解释。
+func (r *Repository) MarkTaskFailed(ctx context.Context, postID int64, message string) error {
+	if _, err := r.handle.ExecContext(ctx,
+		`UPDATE posts SET status = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND status IN (?, ?, ?)`,
+		StatusFailed, message, postID, StatusUploading, StatusQueued, StatusPublishing,
+	); err != nil {
+		return errors.New("更新任务失败状态失败")
+	}
+	return nil
+}
+
 // CountStored 统计已存入图床的图片数量。
 func (r *Repository) CountStored(ctx context.Context, postID int64) (int, error) {
 	var total int
@@ -1654,14 +1667,17 @@ func (r *Repository) Resume(ctx context.Context, postID int64) error {
 	result, err := r.handle.ExecContext(ctx,
 		`UPDATE posts SET control_state = ?, upload_round = upload_round + 1,
 		        status = CASE
-		            WHEN status IN (?, ?, ?) THEN
+		            WHEN status = ? THEN ?
+		            WHEN status IN (?, ?) THEN
 		                CASE WHEN (SELECT COUNT(*) FROM post_images
 		                           WHERE post_id = posts.id AND status IN (?, ?)) >= image_count
 		                     THEN ? ELSE ? END
 		            ELSE status END,
+		        error_message = '',
 		        updated_at = CURRENT_TIMESTAMP
 		 WHERE id = ? AND control_state = ?`,
-		ControlRunning, StatusUploading, StatusQueued, StatusPublishing,
+		ControlRunning, StatusPublishing, StatusQueued,
+		StatusUploading, StatusQueued,
 		ImageStatusUploaded, ImageStatusStored, StatusQueued, StatusUploading,
 		postID, ControlPaused)
 	if err != nil {

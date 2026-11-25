@@ -213,3 +213,64 @@ func TestControlStateSurvivesRestart(t *testing.T) {
 		t.Errorf("重启后仍领取了暂停或停止的任务: ok=%v err=%v", ok, err)
 	}
 }
+
+// TestMarkTaskFailedWhilePaused 确认暂停中在途失败也能落库，不会停在处理中。
+func TestMarkTaskFailedWhilePaused(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+	id, err := repo.Create(ctx, Post{Title: "暂停中失败", ImageCount: 2, Status: StatusPublishing})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+	if err := repo.Pause(ctx, id); err != nil {
+		t.Fatalf("暂停失败: %v", err)
+	}
+	if err := repo.MarkTaskFailed(ctx, id, "存图失败：账号受限"); err != nil {
+		t.Fatalf("标记失败出错: %v", err)
+	}
+	post, err := repo.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("读取帖子失败: %v", err)
+	}
+	var message string
+	if err := repo.handle.QueryRowContext(ctx, `SELECT COALESCE(error_message, '') FROM posts WHERE id = ?`, id).Scan(&message); err != nil {
+		t.Fatalf("读取错误原因失败: %v", err)
+	}
+	if post.Status != StatusFailed || message != "存图失败：账号受限" {
+		t.Errorf("暂停中失败未落库：状态 %s，原因 %q", post.Status, message)
+	}
+}
+
+// TestResumeFromPublishingReturnsToQueue 确认恢复同步中的任务回队列而不是退回上传。
+func TestResumeFromPublishingReturnsToQueue(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+	id, err := repo.Create(ctx, Post{Title: "同步暂停", ImageCount: 2, Status: StatusPublishing})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+	if _, err := repo.handle.ExecContext(ctx, `UPDATE posts SET error_message = '旧原因' WHERE id = ?`, id); err != nil {
+		t.Fatalf("写入旧原因失败: %v", err)
+	}
+	if err := repo.Pause(ctx, id); err != nil {
+		t.Fatalf("暂停失败: %v", err)
+	}
+	if err := repo.Resume(ctx, id); err != nil {
+		t.Fatalf("恢复失败: %v", err)
+	}
+	post, err := repo.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("读取帖子失败: %v", err)
+	}
+	if post.Status != StatusQueued {
+		t.Errorf("恢复后状态 = %s，期望回队列 %s", post.Status, StatusQueued)
+	}
+	var message string
+	if err := repo.handle.QueryRowContext(ctx, `SELECT COALESCE(error_message, '') FROM posts WHERE id = ?`, id).Scan(&message); err != nil {
+		t.Fatalf("读取错误原因失败: %v", err)
+	}
+	if message != "" {
+		t.Errorf("恢复后仍留着旧原因：%q", message)
+	}
+}
+

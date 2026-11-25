@@ -246,6 +246,9 @@ func (w *Worker) Process(ctx context.Context, postID int64) error {
 	readyErr := w.checkPublishReady(ctx)
 	enqueued, err := w.repo.FinishSync(ctx, postID, readyErr == nil, publishNotReadyNote)
 	if err != nil {
+		// 收尾写库失败会让任务停在处理中，这里立刻标失败并留下原因。
+		w.finish(ctx, postID, posts.StatusFailed, "同步收尾写库失败，请到任务页重试")
+		w.logger.Printf("同步收尾失败：编号 %d，%v", postID, err)
 		return err
 	}
 	if enqueued {
@@ -362,7 +365,15 @@ func (w *Worker) holdUntil(deadline time.Time) {
 }
 
 func (w *Worker) finish(ctx context.Context, postID int64, status, message string) {
-	_ = w.repo.MarkPostFinished(ctx, postID, status, message)
+	if err := w.repo.MarkPostFinished(ctx, postID, status, message); err == nil {
+		return
+	}
+	// 暂停或停止时 finish 的条件更新不命中，失败原因改走无条件落库。
+	if status == posts.StatusFailed {
+		if err := w.repo.MarkTaskFailed(ctx, postID, message); err != nil {
+			w.logger.Printf("记录失败状态失败：编号 %d，%v", postID, err)
+		}
+	}
 }
 
 func defaultSleep(ctx context.Context, d time.Duration) error {
