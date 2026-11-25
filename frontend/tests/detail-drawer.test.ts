@@ -43,7 +43,7 @@ test('旧封面下拉框已删除，改为行内设为封面', () => {
 test('换封面与缩略图都按捕获的帖子编号守卫旧响应', () => {
   const cover = source.slice(source.indexOf('async function setCover'), source.indexOf('onBeforeUnmount(() => {'))
   assert.ok(cover.includes('const postId = detail.id'), '先捕获帖子编号')
-  assert.ok(cover.includes('if (props.detail?.id !== postId) return'), '切帖后丢弃旧响应')
+  assert.ok(cover.includes('props.detail?.id !== postId || op !== coverOpSeq'), '切帖或后发操作后丢弃旧响应')
   const queue = source.slice(source.indexOf('function ensureThumbs'), source.indexOf('function requestThumb'))
   assert.ok(queue.includes('if (props.detail?.id !== postId || thumbs === null) return'), '缩略图回调同样校验帖子编号')
   assert.ok(source.includes('signal'), '取图支持取消')
@@ -125,4 +125,14 @@ test('离开、滚动、切帖与重新开启都会回遮', () => {
 test('画廊把全局开关传给抽屉', () => {
   const home = readFileSync(new URL('../src/views/HomeView.vue', import.meta.url), 'utf8')
   assert.ok(home.includes(':blurred="blurEnabled"'), '抽屉与列表共用同一个开关')
+})
+
+test('换封面按操作代次解锁，旧回调不影响新操作', () => {
+  assert.ok(source.includes('let coverOpSeq = 0'), '抽屉有操作代次')
+  const setCoverAt = source.indexOf('async function setCover')
+  const setCover = source.slice(setCoverAt, source.indexOf('onBeforeUnmount', setCoverAt))
+  assert.ok(setCover.includes('const op = (coverOpSeq += 1)'), '发起时取代次')
+  assert.ok(setCover.includes('op !== coverOpSeq'), '回写前校验代次')
+  assert.ok(setCover.indexOf('if (op === coverOpSeq)') < setCover.indexOf('coverBusy.value = false'), '只有当前操作能解锁')
+  assert.ok(source.includes('coverOpSeq += 1'), '换帖作废旧操作')
 })

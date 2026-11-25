@@ -1104,10 +1104,12 @@ function onSelectCover(id: string): void {
         const cover = await makeCover(tile.posterBlob ?? tile.blob)
         if (seq !== coverSelectSeq || round !== initSeq || postId.value !== target) return
         await changeCover(target, tile.sortOrder, cover.dataUrl)
-        if (seq !== coverSelectSeq || round !== initSeq || postId.value !== target) return
+        if (round !== initSeq || postId.value !== target) return
+        // 服务端真实封面已经变了：即使这次选择随后被取代，也要记下当前值供后续回滚。
         if (serverProgress.value !== null) {
           serverProgress.value = { ...serverProgress.value, cover_sort_order: tile.sortOrder }
         }
+        if (seq !== coverSelectSeq) return
         message.value = '封面已更新'
       } catch (error) {
         // 只有当前这次选择能回滚；被取代的旧操作不碰界面。

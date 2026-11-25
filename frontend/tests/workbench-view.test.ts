@@ -224,3 +224,10 @@ test('同一任务换封面串行，后选覆盖且只有当前选择能回滚',
   assert.ok(cover.includes('if (seq !== coverSelectSeq) return'), '被取代的选择不再发请求')
   assert.ok(cover.includes('seq !== coverSelectSeq || round !== initSeq'), '回写与回滚都核对当前选择')
 })
+
+test('换封面成功时记录服务端真实封面，回滚不会退回更早的选择', () => {
+  const cover = source.slice(source.indexOf('function onSelectCover'), source.indexOf('function onSortByName'))
+  const success = cover.slice(cover.indexOf('await changeCover'), cover.indexOf('message.value = \'封面已更新\''))
+  assert.ok(success.includes('cover_sort_order: tile.sortOrder'), '成功后记录服务端封面')
+  assert.ok(success.indexOf('cover_sort_order: tile.sortOrder') < success.indexOf('seq !== coverSelectSeq'), '记录先于代次判断，被取代也要记')
+})

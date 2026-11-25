@@ -683,12 +683,16 @@ function onViewportResize(): void {
   if (previewOrder.value !== 0) positionPreview()
 }
 
+// coverOpSeq 标记当前换封面操作：切帖、关闭或重新发起后，旧回调不再解锁与刷新。
+let coverOpSeq = 0
+
 // setCover 把某一张设为封面：先按共享额度取管理员媒体生成新缩略图，再交给现有换封面接口。
 async function setCover(image: GalleryImage): Promise<void> {
   const detail = props.detail
   if (detail === null || coverBusy.value) return
   if (!canLoadThumb(image) || image.sort_order === detail.cover_sort_order) return
   const postId = detail.id
+  const op = (coverOpSeq += 1)
   coverBusy.value = true
   coverError.value = ''
   coverAbort?.abort()
@@ -703,14 +707,14 @@ async function setCover(image: GalleryImage): Promise<void> {
       async (media, inner) => (await makeCoverFromMedia(media, inner)).dataUrl,
       { signal: controller.signal, decodeTimeout: COVER_DECODE_TIMEOUT_MS },
     )
-    // 切帖后旧响应不许改新帖。
-    if (props.detail?.id !== postId || controller.signal.aborted) return
+    // 切帖或已有更新的操作时，旧响应不许改新帖。
+    if (props.detail?.id !== postId || controller.signal.aborted || op !== coverOpSeq) return
     await changeCover(postId, image.sort_order, thumbnail)
-    if (props.detail?.id !== postId) return
+    if (props.detail?.id !== postId || op !== coverOpSeq) return
     coverError.value = ''
     emit('saved')
   } catch (cause) {
-    if (props.detail?.id !== postId) return
+    if (props.detail?.id !== postId || op !== coverOpSeq) return
     // 截止时间到点给出可重试的说明；切帖或关闭引起的取消静默收场。
     if (cause instanceof MediaReadTimeoutError) {
       coverError.value = '读取原图超时，已停止，请稍后重试'
@@ -719,8 +723,11 @@ async function setCover(image: GalleryImage): Promise<void> {
     if (controller.signal.aborted) return
     coverError.value = cause instanceof ApiError ? cause.message : '更换封面失败，请稍后重试'
   } finally {
-    if (coverAbort === controller) coverAbort = null
-    if (props.detail?.id === postId) coverBusy.value = false
+    // 只有当前操作能解锁：旧回调结束后到的结果不能放行新请求或触发刷新。
+    if (op === coverOpSeq) {
+      if (coverAbort === controller) coverAbort = null
+      if (props.detail?.id === postId) coverBusy.value = false
+    }
   }
 }
 
@@ -742,6 +749,12 @@ watch(
   () => props.detail,
   (next) => {
     if (next === null) return
+    // 换帖或重开时作废旧操作，旧回调既不解锁也不刷新。
+    coverOpSeq += 1
+    coverAbort?.abort()
+    coverAbort = null
+    coverBusy.value = false
+    coverError.value = ''
     void syncEagerThumbs()
   },
 )
