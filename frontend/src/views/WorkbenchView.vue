@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import AppHeader from '../components/AppHeader.vue'
+import BackToTop from '../components/BackToTop.vue'
 import DropZone from '../components/workbench/DropZone.vue'
 import ImageGrid from '../components/workbench/ImageGrid.vue'
 import ModeSwitch from '../components/workbench/ModeSwitch.vue'
@@ -1857,5 +1858,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </main>
+
+    <BackToTop lift-on-narrow />
   </div>
 </template>

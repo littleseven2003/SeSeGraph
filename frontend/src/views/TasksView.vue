@@ -4,6 +4,7 @@ import { ApiError } from '../api/client.ts'
 import { fetchTasks, pauseTask, resumeTask, stopTask, type TaskFilter, type TaskRow } from '../api/posts.ts'
 import { formatPublishedAt } from '../utils/gallery.ts'
 import AppHeader from '../components/AppHeader.vue'
+import BackToTop from '../components/BackToTop.vue'
 import TaskStageBar from '../components/tasks/TaskStageBar.vue'
 import {
   TASK_FILTERS,
@@ -367,22 +368,28 @@ onBeforeUnmount(() => {
       <div v-if="pages > 1" class="mt-4 flex items-center justify-between text-xs text-muted">
         <button
           type="button"
-          class="inline-flex h-11 items-center rounded-full border border-line bg-surface px-4 text-xs font-medium transition hover:bg-canvas hover:text-ink disabled:opacity-40"
+          class="inline-flex h-11 items-center justify-center gap-1 rounded-lg border border-line bg-surface px-3 text-xs font-medium transition hover:bg-canvas hover:text-ink disabled:opacity-40 sm:h-8 sm:px-2.5"
           :disabled="page <= 1"
+          aria-label="上一页"
           @click="go(-1)"
         >
-          上一页
+          <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6" /></svg>
+          <span class="hidden sm:inline">上一页</span>
         </button>
         <span class="tnum">{{ page }} / {{ pages }}</span>
         <button
           type="button"
-          class="inline-flex h-11 items-center rounded-full border border-line bg-surface px-4 text-xs font-medium transition hover:bg-canvas hover:text-ink disabled:opacity-40"
+          class="inline-flex h-11 items-center justify-center gap-1 rounded-lg border border-line bg-surface px-3 text-xs font-medium transition hover:bg-canvas hover:text-ink disabled:opacity-40 sm:h-8 sm:px-2.5"
           :disabled="page >= pages"
+          aria-label="下一页"
           @click="go(1)"
         >
-          下一页
+          <span class="hidden sm:inline">下一页</span>
+          <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
         </button>
       </div>
     </main>
+
+    <BackToTop />
   </div>
 </template>

@@ -20,6 +20,7 @@ import {
   type TrafficStats,
 } from '../api/settings.ts'
 import AppHeader from '../components/AppHeader.vue'
+import BackToTop from '../components/BackToTop.vue'
 import {
   UPLOAD_CONCURRENCY_MAX,
   UPLOAD_CONCURRENCY_MIN,
@@ -1442,5 +1443,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </main>
+
+    <BackToTop />
   </div>
 </template>

@@ -21,6 +21,7 @@ import {
   type GalleryView,
 } from '../utils/gallery'
 import AppHeader from '../components/AppHeader.vue'
+import BackToTop from '../components/BackToTop.vue'
 import DetailDrawer from '../components/gallery/DetailDrawer.vue'
 import PostCard from '../components/gallery/PostCard.vue'
 import PostList from '../components/gallery/PostList.vue'
@@ -452,17 +453,19 @@ onBeforeUnmount(() => {
           <nav v-if="totalPages > 1" class="mt-8 flex items-center justify-center gap-1.5" aria-label="分页">
             <button
               type="button"
-              class="h-11 shrink-0 rounded-full border border-line px-3 text-sm transition hover:bg-surface disabled:opacity-50"
+              class="inline-flex h-11 shrink-0 items-center justify-center gap-1 rounded-lg border border-line px-2.5 text-sm transition hover:bg-surface disabled:opacity-50 sm:h-8 sm:px-2"
               :disabled="page <= 1"
+              aria-label="上一页"
               @click="loadList(page - 1)"
             >
-              上一页
+              <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6" /></svg>
+              <span class="hidden sm:inline">上一页</span>
             </button>
             <button
               v-for="target in narrowPages"
               :key="'narrow-' + target"
               type="button"
-              class="h-11 w-11 shrink-0 rounded-full text-sm transition tnum sm:hidden"
+              class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-sm transition tnum sm:hidden"
               :class="
                 target === page
                   ? 'border border-ink bg-ink text-brand-ink'
@@ -477,7 +480,7 @@ onBeforeUnmount(() => {
               v-for="target in pages"
               :key="'wide-' + target"
               type="button"
-              class="hidden h-11 w-11 shrink-0 rounded-full text-sm transition tnum sm:inline-block"
+              class="hidden h-8 min-w-8 shrink-0 items-center justify-center rounded-lg px-2 text-xs transition tnum sm:inline-flex"
               :class="
                 target === page
                   ? 'border border-ink bg-ink text-brand-ink'
@@ -490,11 +493,13 @@ onBeforeUnmount(() => {
             </button>
             <button
               type="button"
-              class="h-11 shrink-0 rounded-full border border-line px-3 text-sm transition hover:bg-surface disabled:opacity-50"
+              class="inline-flex h-11 shrink-0 items-center justify-center gap-1 rounded-lg border border-line px-2.5 text-sm transition hover:bg-surface disabled:opacity-50 sm:h-8 sm:px-2"
               :disabled="page >= totalPages"
+              aria-label="下一页"
               @click="loadList(page + 1)"
             >
-              下一页
+              <span class="hidden sm:inline">下一页</span>
+              <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
             </button>
           </nav>
         </template>
@@ -519,5 +524,7 @@ onBeforeUnmount(() => {
       @saved="onSaved"
       @toggled="onToggled"
     />
+
+    <BackToTop />
   </div>
 </template>
