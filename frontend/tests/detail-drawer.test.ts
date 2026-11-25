@@ -136,3 +136,18 @@ test('换封面按操作代次解锁，旧回调不影响新操作', () => {
   assert.ok(setCover.indexOf('if (op === coverOpSeq)') < setCover.indexOf('coverBusy.value = false'), '只有当前操作能解锁')
   assert.ok(source.includes('coverOpSeq += 1'), '换帖作废旧操作')
 })
+
+test('遮罩开启时缩略图表面提示可揭开，卡片与轮播不再提供手动回遮', () => {
+  assert.ok(
+    source.includes('v-if="thumbBlurred(image.sort_order) && thumbUrl(image) !== \'\'"'),
+    '只在已有小图且确实被遮罩时叠加提示',
+  )
+  assert.ok(source.includes('pointer-events-none absolute inset-0 flex items-center justify-center bg-ink/25'), '提示层不拦截点按')
+  const card = readFileSync(new URL('../src/components/gallery/PostCard.vue', import.meta.url), 'utf8')
+  const carousel = readFileSync(new URL('../src/components/gallery/FocusCarousel.vue', import.meta.url), 'utf8')
+  assert.equal(card.includes('重新遮罩'), false, '卡片不再提供重新遮罩按钮')
+  assert.equal(carousel.includes('重新遮罩'), false, '轮播不再提供重新遮罩按钮')
+  assert.equal(card.includes('@click="remask"'), false, '卡片删除对应点击处理')
+  assert.ok(card.includes('onCoverLeave'), '鼠标离开仍自动回遮')
+  assert.ok(carousel.includes('remask()'), '轮播换项仍立即回遮')
+})

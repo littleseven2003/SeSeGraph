@@ -202,15 +202,6 @@ onBeforeUnmount(() => {
               </span>
             </span>
           </button>
-
-          <button
-            v-if="!showBlur && props.blurred"
-            type="button"
-            class="absolute bottom-3 left-3 inline-flex h-9 items-center gap-1 rounded-full bg-white/90 px-2.5 text-xs font-medium leading-none text-ink transition hover:bg-white"
-            @click="remask"
-          >
-            重新遮罩
-          </button>
         </div>
       </div>
 

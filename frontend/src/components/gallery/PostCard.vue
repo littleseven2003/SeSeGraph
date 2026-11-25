@@ -15,7 +15,7 @@ import { useCoverReveal } from './useCoverReveal.ts'
 const props = defineProps<{ item: GalleryItem; blurred: boolean }>()
 const emit = defineEmits<{ open: [id: number] }>()
 
-const { showBlur, activate, remask, onCoverLeave } = useCoverReveal(() => props.blurred)
+const { showBlur, activate, onCoverLeave } = useCoverReveal(() => props.blurred)
 
 function onOpen(event: MouseEvent): void {
   activate(() => emit('open', props.item.id), event, { fromCover: true })
@@ -125,19 +125,6 @@ const copyLabel = computed(() => {
         </span>
       </span>
 
-    </button>
-
-    <button
-      v-if="!showBlur && props.blurred"
-      type="button"
-      class="absolute bottom-2 left-2 inline-flex h-9 items-center gap-1 rounded-full bg-white/90 px-2.5 text-xs font-medium leading-none text-ink transition hover:bg-white"
-      @click="remask"
-    >
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-3.5 w-3.5" aria-hidden="true">
-        <path d="M3 12s3.5-6.5 9-6.5S21 12 21 12s-3.5 6.5-9 6.5S3 12 3 12Z" stroke-linecap="round" stroke-linejoin="round" />
-        <path d="M4 20L20 4" stroke-linecap="round" />
-      </svg>
-      重新遮罩
     </button>
     </div>
 

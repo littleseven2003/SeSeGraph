@@ -62,7 +62,7 @@ export function useCoverReveal(blurred: Ref<boolean> | (() => boolean)) {
     scheduleShortRemask()
   }
 
-  // remask 手动重新遮罩，供解锁后的「重新遮罩」入口使用。
+  // remask 供轮播换项与全局开关复位时立刻回遮。
   function remask(): void {
     clearTimer()
     pointerRevealed = false
