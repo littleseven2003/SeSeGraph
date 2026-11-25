@@ -59,8 +59,29 @@ function summaryOf(task: TaskRow): string {
   return stageSummary(stagesOf(task))
 }
 
+// overallOf 按适用阶段算总进度：旧任务缺压缩记录时不计该段，仅存图任务不计发布段。
 function overallOf(task: TaskRow): number {
-  return stageOverall(stagesOf(task))
+  return stageOverall(stagesOf(task), {
+    publishIntent: task.publish_intent,
+    publishState: task.publish_state,
+    hasCompressRecord: task.compressed_count !== null,
+  })
+}
+
+// overallTone 让进度轨跟随任务主状态，完成、暂停与失败一眼区分。
+function overallTone(task: TaskRow): string {
+  switch (badgeOf(task).tone) {
+    case 'ok':
+      return 'bg-accent'
+    case 'warn':
+      return 'bg-warn'
+    case 'danger':
+      return 'bg-danger'
+    case 'run':
+      return 'bg-brand'
+    default:
+      return 'bg-ink/25'
+  }
 }
 
 function toggleExpanded(id: number): void {
@@ -295,7 +316,16 @@ onBeforeUnmount(() => {
             <span class="flex min-h-11 w-full items-center gap-2">
               <span class="min-w-0 flex-1 truncate text-sm font-semibold" :title="task.title">{{ task.title }}</span>
               <span class="tnum hidden shrink-0 text-xs text-muted sm:inline">{{ updatedText(task.updated_at) }}</span>
-              <span class="tnum shrink-0 rounded-full bg-canvas px-2 py-0.5 text-[11px] font-medium text-muted">{{ overallOf(task) }}%</span>
+              <span
+                class="hidden h-1.5 w-20 shrink-0 overflow-hidden rounded-full bg-canvas sm:block sm:w-24"
+                role="progressbar"
+                :aria-label="`${task.title} 总进度`"
+                :aria-valuenow="overallOf(task)"
+                aria-valuemin="0"
+                aria-valuemax="100"
+              >
+                <span class="block h-full rounded-full transition-[width] duration-300" :class="overallTone(task)" :style="{ width: overallOf(task) + '%' }"></span>
+              </span>
               <span
                 class="shrink-0 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium"
                 :class="BADGE_CLASS[badgeOf(task).tone]"
@@ -308,8 +338,20 @@ onBeforeUnmount(() => {
                 </svg>
               </span>
             </span>
-            <!-- 窄屏把更新时间收进按钮内部，整行点按都能展开。 -->
-            <span class="pb-1.5 text-left text-xs text-muted sm:hidden">更新于 {{ updatedText(task.updated_at) }}</span>
+            <!-- 窄屏把更新时间与进度轨收进按钮内部，整行点按都能展开。 -->
+            <span class="flex items-center gap-2 pb-1.5 text-left text-xs text-muted sm:hidden">
+              <span
+                class="h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-canvas"
+                role="progressbar"
+                :aria-label="`${task.title} 总进度`"
+                :aria-valuenow="overallOf(task)"
+                aria-valuemin="0"
+                aria-valuemax="100"
+              >
+                <span class="block h-full rounded-full transition-[width] duration-300" :class="overallTone(task)" :style="{ width: overallOf(task) + '%' }"></span>
+              </span>
+              更新于 {{ updatedText(task.updated_at) }}
+            </span>
           </button>
 
           <div v-if="isExpanded(task.id)" :id="`task-stages-${task.id}`" class="border-t border-line/70 px-4 py-3 sm:px-5">

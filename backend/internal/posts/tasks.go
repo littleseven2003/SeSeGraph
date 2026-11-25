@@ -34,6 +34,8 @@ type TaskItem struct {
 	ChannelCount int
 	// CompressedCount 是提交时浏览器已处理的项数；nil 表示旧任务没有这项记录。
 	CompressedCount *int
+	// PublishIntent 是提交时选择的发布意图：auto 表示同步完成后自动入队，空串表示旧任务或仅存图。
+	PublishIntent string
 	UpdatedAt       string
 }
 
@@ -107,7 +109,7 @@ func (r *Repository) ListTasks(ctx context.Context, page, pageSize int, filter s
 		        (SELECT COUNT(*) FROM post_images pi
 		          WHERE pi.post_id = p.id AND pi.status = ?),
 		        strftime('%Y-%m-%dT%H:%M:%SZ', p.updated_at),
-		        p.compressed_count
+		        p.compressed_count, COALESCE(p.publish_intent, '')
 		 FROM posts p WHERE `+where+`
 		 ORDER BY p.updated_at DESC, p.id DESC LIMIT ? OFFSET ?`,
 		ImageStatusUploaded, ImageStatusStored, ImageStatusFailed,
@@ -126,7 +128,7 @@ func (r *Repository) ListTasks(ctx context.Context, page, pageSize int, filter s
 		if err := rows.Scan(&item.ID, &item.Title, &item.Status, &item.PublishState,
 			&item.ControlState, &item.UploadRound, &item.ImageCount,
 			&item.ReceivedCount, &item.StoredCount, &item.UploadedCount, &item.ChannelCount,
-			&item.UpdatedAt, &compressed); err != nil {
+			&item.UpdatedAt, &compressed, &item.PublishIntent); err != nil {
 			return nil, errors.New("读取任务失败")
 		}
 		if compressed.Valid {

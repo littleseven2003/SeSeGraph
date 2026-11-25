@@ -188,6 +188,8 @@ export interface TaskRow {
   channel_count: number
   /** 提交时浏览器已处理的项数；null 表示旧任务没有这项记录 */
   compressed_count: number | null
+  /** 提交时选择的发布意图：auto 表示同步完成后自动入队，空串表示旧任务或仅存图 */
+  publish_intent: string
   updated_at: string
 }
 

@@ -181,3 +181,45 @@ func TestCreatePostRejectsUnknownIntent(t *testing.T) {
 		t.Fatalf("状态码 = %d，期望 400", rec.Code)
 	}
 }
+
+// TestTasksListExposesPublishIntent 验证任务分页响应带出发布意图，供总进度确定分母。
+func TestTasksListExposesPublishIntent(t *testing.T) {
+	env := newTestEnv(t, testSetupToken)
+	cookie := env.setup(t)
+
+	if rec := env.do(t, http.MethodPost, "/api/posts",
+		`{"title":"自动发布","image_count":1,"publish_intent":"auto"}`, cookie); rec.Code != http.StatusCreated {
+		t.Fatalf("创建状态码 = %d，响应: %s", rec.Code, rec.Body.String())
+	}
+	if rec := env.do(t, http.MethodPost, "/api/posts",
+		`{"title":"仅存图","image_count":1}`, cookie); rec.Code != http.StatusCreated {
+		t.Fatalf("创建状态码 = %d", rec.Code)
+	}
+
+	var list struct {
+		Items []struct {
+			Title         string `json:"title"`
+			PublishIntent string `json:"publish_intent"`
+		} `json:"items"`
+	}
+	rec := env.do(t, http.MethodGet, "/api/tasks", "", cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("任务列表状态码 = %d", rec.Code)
+	}
+	if err := decodeJSON(rec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("解析任务列表失败: %v", err)
+	}
+	if len(list.Items) != 2 {
+		t.Fatalf("任务条数 = %d，期望 2", len(list.Items))
+	}
+	byTitle := map[string]string{}
+	for _, item := range list.Items {
+		byTitle[item.Title] = item.PublishIntent
+	}
+	if byTitle["自动发布"] != "auto" {
+		t.Errorf("自动发布意图 = %q，期望 auto", byTitle["自动发布"])
+	}
+	if byTitle["仅存图"] != "" {
+		t.Errorf("仅存图意图 = %q，期望空", byTitle["仅存图"])
+	}
+}

@@ -155,11 +155,32 @@ export function stageSummary(stages: readonly StageView[]): string {
   return '四阶段已完成'
 }
 
-// stageOverall 返回整条进度：四段比例的均值，供任务行的小标识使用。
-export function stageOverall(stages: readonly StageView[]): number {
-  if (stages.length === 0) return 0
-  const total = stages.reduce((sum, item) => sum + item.ratio, 0)
-  return Math.round((total / stages.length) * 100)
+/** OverallOptions 决定总进度的分母：只统计这条任务真正适用的阶段。 */
+export interface OverallOptions {
+  /** 提交时选择的发布意图：auto 表示同步完成后会自动发布 */
+  publishIntent?: string
+  /** 当前发布状态：非空表示已经发起过发布，发布阶段计入总进度 */
+  publishState?: string
+  /** false 表示旧任务没有压缩记录，该段从分母排除 */
+  hasCompressRecord?: boolean
+}
+
+// stageOverall 返回整条进度（0–100 的整数百分点），供任务行的进度轨使用。
+// 分母只含适用阶段：旧任务缺压缩记录时不计该段；仅存图任务不计发布段。
+export function stageOverall(stages: readonly StageView[], options: OverallOptions = {}): number {
+  const includeCompress = options.hasCompressRecord !== false
+  const includePublish = options.publishIntent === 'auto' || (options.publishState ?? '') !== ''
+  const applicable = stages.filter((item) => {
+    if (item.key === 'compress') return includeCompress
+    if (item.key === 'publish') return includePublish
+    return true
+  })
+  if (applicable.length === 0) return 0
+  const total = applicable.reduce((sum, item) => sum + item.ratio, 0)
+  const value = Math.floor((total / applicable.length) * 100)
+  // 未达完成条件最高 99：四舍五入不能把「还差一点」画成满轨。
+  if (applicable.every((item) => item.ratio >= 1)) return 100
+  return Math.min(99, Math.max(0, value))
 }
 
 /** StageSource 是任务行或进度响应里四阶段需要的字段。 */

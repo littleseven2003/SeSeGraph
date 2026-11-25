@@ -116,3 +116,31 @@ test('任务行来源字段缺失时按未记录与未接收处理', () => {
   assert.equal(compressStage(full).value, '完成')
   assert.equal(uploadStageView(full).value, '1/3')
 })
+
+test('总进度只按适用阶段计分母，未达完成条件最高 99', () => {
+  // 旧任务没有压缩记录：分母排除压缩段，上传一半、同步未开始即为两段均值的 25%。
+  const legacy = taskStages({ ...base, compressedCount: null, receivedCount: 2 })
+  assert.equal(stageOverall(legacy, { hasCompressRecord: false, publishIntent: '', publishState: '' }), 25)
+
+  // 仅存图：同步齐即满轨，不因发布段未开始而停在 75%。
+  const storedOnly = taskStages({ ...base, receivedCount: 4, channelCount: 4, publishState: '' })
+  assert.equal(stageOverall(storedOnly, { hasCompressRecord: true, publishIntent: '', publishState: '' }), 100)
+
+  // 提交并发布：同步齐但发布排队中，发布段没有确定进度，四段均值 75% 且不能满轨。
+  const autoPending = taskStages({ ...base, receivedCount: 4, channelCount: 4, publishState: 'pending' })
+  assert.equal(stageOverall(autoPending, { hasCompressRecord: true, publishIntent: 'auto', publishState: 'pending' }), 75)
+  const autoDone = taskStages({ ...base, receivedCount: 4, channelCount: 4, publishState: 'published' })
+  assert.equal(stageOverall(autoDone, { hasCompressRecord: true, publishIntent: 'auto', publishState: 'published' }), 100)
+
+  // 手动发起发布后同样以真实发布为完成条件。
+  const manualRunning = taskStages({ ...base, receivedCount: 4, channelCount: 4, publishState: 'publishing' })
+  assert.equal(stageOverall(manualRunning, { hasCompressRecord: true, publishIntent: '', publishState: 'publishing' }), 75)
+
+  // 暂停与失败保留已确认进度，不因状态变化归零。
+  const paused = taskStages({ ...base, receivedCount: 2, status: 'uploading', controlState: 'paused' })
+  assert.equal(stageOverall(paused, { hasCompressRecord: true, publishIntent: '', publishState: '' }), 50)
+
+  // 整数百分点：三张里完成一张时给 33，不四舍五入成 34 以上。
+  const third = taskStages({ ...base, imageCount: 3, compressedCount: 3, receivedCount: 1 })
+  assert.equal(stageOverall(third, { hasCompressRecord: true, publishIntent: '', publishState: '' }), 44)
+})

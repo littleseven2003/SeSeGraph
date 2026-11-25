@@ -33,6 +33,7 @@ func tasksHandler(deps Deps) gin.HandlerFunc {
 				"stored_count":     item.StoredCount,
 				"received_count":   item.ReceivedCount,
 				"compressed_count": item.CompressedCount,
+				"publish_intent":   item.PublishIntent,
 				"uploaded_count":   item.UploadedCount,
 				"channel_count":    item.ChannelCount,
 				"updated_at":       item.UpdatedAt,
