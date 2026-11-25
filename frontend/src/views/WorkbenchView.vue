@@ -84,6 +84,8 @@ import { effectiveUploadConcurrency, readUploadConcurrency } from '../utils/uplo
 import { DEFAULT_META_FILENAMES } from '../utils/zip.ts'
 import { cancelArchive, disposeArchiveWorker, imageBlob, unpackArchive } from '../utils/zip-client.ts'
 import { fetchSettings } from '../api/settings.ts'
+import { useRouter } from 'vue-router'
+import { draftState, startDraft } from '../stores/draft.ts'
 import {
   canLeaveResume,
   fallbackDefaults,
@@ -1297,6 +1299,33 @@ function clearAll(): void {
   resetToDefaultMode()
 }
 
+const router = useRouter()
+
+// 继续编辑：把小图与当前元信息交给草稿页，后续补齐排序与封面再提交。
+function goDraft(): void {
+  if (tiles.value.length === 0) {
+    pushError('请先选择图片或视频')
+    return
+  }
+  startDraft(tiles.value.map((tile) => ({
+    key: tile.id,
+    file: new File([tile.blob], tile.name, { type: tile.mime !== '' ? tile.mime : tile.blob.type }),
+    thumb: tile.thumbUrl,
+    name: tile.name,
+    size: tile.size,
+  })))
+  draftState.meta = {
+    title: draft.value.title,
+    description: draft.value.description,
+    authorName: draft.value.author,
+    uploadMode: mode.value === 'document' ? 'document' : 'photo',
+    publishIntent: '',
+    tags: draft.value.tags.join(','),
+    coverKey: '',
+  }
+  void router.push('/draft')
+}
+
 // 建任务：已存在任务或上次未完成任务时复用，避免重复建帖。
 async function ensureTask(intent: 'auto' | 'manual', routeRound = initSeq): Promise<number | null> {
   if (postId.value > 0) {
@@ -1756,6 +1785,14 @@ onBeforeUnmount(() => {
               @click="discardSnapshot"
             >
               重新开始
+            </button>
+            <button
+              v-if="!busy && !finished && tiles.length > 0"
+              type="button"
+              class="h-11 shrink-0 rounded-xl border border-line px-3 text-xs font-medium text-muted transition hover:border-ink/25 hover:bg-canvas hover:text-ink"
+              @click="goDraft"
+            >
+              继续编辑
             </button>
             <button
               v-if="newDraft && !busy && !finished"
