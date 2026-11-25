@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/littleseven2003/SeSeGraph/backend/internal/db"
@@ -324,6 +325,56 @@ func TestConcurrentClaimKeepsPostsIsolated(t *testing.T) {
 	}
 	if messageA == "" || messageB != "" {
 		t.Errorf("失败原因串了：甲 %q，乙 %q", messageA, messageB)
+	}
+}
+
+// TestRequeueFinishOnlyWhenAllStored 确认只有「图都存好、只差收尾」才允许重跑收尾。
+func TestRequeueFinishOnlyWhenAllStored(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+	id, err := repo.Create(ctx, Post{Title: "收尾失败", ImageCount: 2, Status: StatusUploading})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+	for order := 1; order <= 2; order++ {
+		if _, err := repo.AttachImage(ctx, Image{PostID: id, SortOrder: order, MimeType: "image/jpeg", Status: ImageStatusUploaded}); err != nil {
+			t.Fatalf("挂图失败: %v", err)
+		}
+		var imageID int64
+		if err := repo.handle.QueryRowContext(ctx, `SELECT id FROM post_images WHERE post_id = ? AND sort_order = ?`, id, order).Scan(&imageID); err != nil {
+			t.Fatalf("读取图片编号失败: %v", err)
+		}
+		if order == 1 {
+			// 只存了一张时不允许重跑收尾。
+			if ok, err := repo.RequeueFinish(ctx, id); err != nil || ok {
+				t.Fatalf("图未存齐不应放行：ok=%v err=%v", ok, err)
+			}
+		}
+		if err := repo.MarkImageStored(ctx, imageID, "file-"+strconv.Itoa(order), int64(order), "telegram"); err != nil {
+			t.Fatalf("标记已存失败: %v", err)
+		}
+	}
+	// 图都存好后再模拟「已同步、收尾写库失败」的终态。
+	if _, err := repo.handle.ExecContext(ctx, `UPDATE posts SET error_message = '同步收尾写库失败，请到任务页重试', status = ? WHERE id = ?`, StatusFailed, id); err != nil {
+		t.Fatalf("写入原因失败: %v", err)
+	}
+	ok, err := repo.RequeueFinish(ctx, id)
+	if err != nil || !ok {
+		t.Fatalf("图存齐后应可重跑收尾：ok=%v err=%v", ok, err)
+	}
+	post, err := repo.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("读取帖子失败: %v", err)
+	}
+	if post.Status != StatusQueued {
+		t.Errorf("状态 = %s，期望回队列", post.Status)
+	}
+	var message string
+	if err := repo.handle.QueryRowContext(ctx, `SELECT COALESCE(error_message, '') FROM posts WHERE id = ?`, id).Scan(&message); err != nil {
+		t.Fatalf("读取原因失败: %v", err)
+	}
+	if message != "" {
+		t.Errorf("重跑收尾时应清掉旧原因：%q", message)
 	}
 }
 

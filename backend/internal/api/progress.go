@@ -120,7 +120,22 @@ func retryHandler(deps Deps) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "重新排队失败"})
 			return
 		case retried == 0:
-			c.JSON(http.StatusConflict, gin.H{"error": "没有需要重试的图片"})
+			// 图片都存好了、只有收尾失败：只重跑收尾，不再调用图床。
+			finished, err := deps.Posts.RequeueFinish(c.Request.Context(), postID)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "重新排队失败"})
+				return
+			}
+			if !finished {
+				c.JSON(http.StatusConflict, gin.H{"error": "没有需要重试的图片"})
+				return
+			}
+			c.JSON(http.StatusAccepted, gin.H{
+				"id":          postID,
+				"status":      posts.StatusQueued,
+				"retried":     0,
+				"finish_only": true,
+			})
 			return
 		}
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ApiError } from '../api/client.ts'
-import { fetchProgress, fetchTasks, pauseTask, resumeTask, stopTask, type ServerProgress, type TaskFilter, type TaskRow } from '../api/posts.ts'
+import { fetchProgress, fetchTasks, pauseTask, resumeTask, retryPost, stopTask, type ServerProgress, type TaskFilter, type TaskRow } from '../api/posts.ts'
 import { formatPublishedAt } from '../utils/gallery.ts'
 import AppHeader from '../components/AppHeader.vue'
 import BackToTop from '../components/BackToTop.vue'
@@ -110,6 +110,23 @@ function failedImages(task: TaskRow): { sort_order: number; error: string }[] {
   return state.images
     .filter((image) => image.status === 'failed')
     .map((image) => ({ sort_order: image.sort_order, error: (image.error ?? '').trim() || '原因未知' }))
+}
+
+// retryTask 让失败任务重新排队：图片都存好时只重跑收尾，不再调用图床。
+async function retryTask(task: TaskRow): Promise<void> {
+  if (busyId.value !== 0) return
+  busyId.value = task.id
+  error.value = ''
+  notice.value = ''
+  try {
+    const result = await retryPost(task.id)
+    notice.value = result.retried === 0 ? '已重新排队，只重跑收尾' : `已重新排队 ${result.retried} 张`
+    await requestLoad(false)
+  } catch (cause) {
+    error.value = cause instanceof ApiError ? cause.message : '重新排队失败，请稍后重试'
+  } finally {
+    busyId.value = 0
+  }
 }
 
 async function loadTaskProgress(id: number): Promise<void> {
@@ -453,6 +470,15 @@ onBeforeUnmount(() => {
             </div>
             <p v-if="progressError !== '' && isExpanded(task.id)" class="mt-1 text-xs text-muted">{{ progressError }}</p>
             <div class="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                v-if="task.status === 'failed'"
+                type="button"
+                class="inline-flex h-11 items-center rounded-lg border border-danger/35 bg-surface px-4 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-60 sm:h-9"
+                :disabled="busyId !== 0"
+                @click="retryTask(task)"
+              >
+                重试
+              </button>
               <button
                 v-if="canResume(task)"
                 type="button"

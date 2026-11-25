@@ -1548,6 +1548,26 @@ func (r *Repository) MarkTaskFailed(ctx context.Context, postID int64, message s
 	return nil
 }
 
+// RequeueFinish 只重跑收尾：图片都已存好、仅收尾写库失败的任务回到队列，
+// 由 Worker 直接走 FinishSync，不会再次调用图床。
+func (r *Repository) RequeueFinish(ctx context.Context, postID int64) (bool, error) {
+	result, err := r.handle.ExecContext(ctx,
+		`UPDATE posts SET status = ?, error_message = '', updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND status = ? AND COALESCE(control_state, 'running') = ?
+		   AND (SELECT COUNT(*) FROM post_images
+		        WHERE post_id = posts.id AND status = ?) >= image_count`,
+		StatusQueued, postID, StatusFailed, ControlRunning, ImageStatusStored,
+	)
+	if err != nil {
+		return false, errors.New("重新排队失败")
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, errors.New("重新排队失败")
+	}
+	return affected > 0, nil
+}
+
 // CountStored 统计已存入图床的图片数量。
 func (r *Repository) CountStored(ctx context.Context, postID int64) (int, error) {
 	var total int
