@@ -5,6 +5,7 @@ import {
   publishStageView,
   stageInputOf,
   stageOverall,
+  stagePercent,
   stageSlots,
   stageSummary,
   syncStageView,
@@ -189,4 +190,29 @@ test('四槽固定：不适用的阶段保留槽位并标斜纹原因', () => {
     publishIntent: '',
     publishState: 'idle',
   }), 100)
+})
+
+test('阶段整数换算：未真正完成不会显示满格', () => {
+  assert.equal(stagePercent(0), 0)
+  assert.equal(stagePercent(1), 100)
+  assert.equal(stagePercent(199 / 200), 99)
+  assert.equal(stagePercent(0.995), 99)
+  assert.equal(stagePercent(0.9999), 99)
+  assert.equal(stagePercent(-1), 0)
+  assert.equal(stagePercent(2), 100)
+  // 非数值不放大成满格，按未开始处理。
+  assert.equal(stagePercent(Number.NaN), 0)
+})
+
+test('同步差一张时总值与同步槽同为 99', () => {
+  const stages = taskStages({ ...base, imageCount: 200, compressedCount: 200, receivedCount: 200, channelCount: 199 })
+  const slots = stageSlots(stages, { hasCompressRecord: true, publishIntent: '', publishState: 'idle' })
+  const sync = slots.find((slot) => slot.key === 'sync')
+  assert.ok(sync !== undefined)
+  assert.equal(stagePercent(sync.ratio), 99)
+  assert.equal(stageOverall(stages, { hasCompressRecord: true, publishIntent: '', publishState: 'idle' }), 99)
+
+  // 补齐最后一张才到满格。
+  const full = taskStages({ ...base, imageCount: 200, compressedCount: 200, receivedCount: 200, channelCount: 200 })
+  assert.equal(stageOverall(full, { hasCompressRecord: true, publishIntent: '', publishState: 'idle' }), 100)
 })

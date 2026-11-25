@@ -16,7 +16,7 @@ import {
   canStop,
   type TaskTone,
 } from '../utils/tasks.ts'
-import { stageInputOf, stageOverall, stageSlots, stageSummary, taskStages } from '../utils/stages.ts'
+import { stageInputOf, stageOverall, stagePercent, stageSlots, stageSummary, taskStages } from '../utils/stages.ts'
 
 const tasks = ref<TaskRow[]>([])
 const total = ref(0)
@@ -88,7 +88,7 @@ function slotsOf(task: TaskRow) {
 // slotText 给读屏一句话说明四段各自状态，不另造数值。
 function slotText(task: TaskRow): string {
   return slotsOf(task)
-    .map((slot) => (slot.inactive ? `${slot.label}${slot.reason}` : `${slot.label}${Math.round(slot.ratio * 100)}%`))
+    .map((slot) => (slot.inactive ? `${slot.label}${slot.reason}` : `${slot.label}${stagePercent(slot.ratio)}%`))
     .join('，')
 }
 
@@ -345,7 +345,7 @@ onBeforeUnmount(() => {
                   v-for="slot in slotsOf(task)"
                   :key="slot.key"
                   class="h-full flex-1 overflow-hidden rounded-[2px] bg-canvas first:rounded-l-full last:rounded-r-full"
-                  :title="slot.inactive ? `${slot.label}${slot.reason}` : `${slot.label}${Math.round(slot.ratio * 100)}%`"
+                  :title="slot.inactive ? `${slot.label}${slot.reason}` : `${slot.label}${stagePercent(slot.ratio)}%`"
                   aria-hidden="true"
                 >
                   <span v-if="slot.inactive" class="stage-slot-idle block h-full w-full"></span>
@@ -353,7 +353,7 @@ onBeforeUnmount(() => {
                     v-else
                     class="block h-full transition-[width] duration-300"
                     :class="SLOT_FILL[slot.key]"
-                    :style="{ width: `${String(Math.round(slot.ratio * 100))}%` }"
+                    :style="{ width: `${String(stagePercent(slot.ratio))}%` }"
                   ></span>
                 </span>
               </span>
@@ -384,7 +384,7 @@ onBeforeUnmount(() => {
                   v-for="slot in slotsOf(task)"
                   :key="'narrow-' + slot.key"
                   class="h-full flex-1 overflow-hidden rounded-[2px] bg-canvas first:rounded-l-full last:rounded-r-full"
-                  :title="slot.inactive ? `${slot.label}${slot.reason}` : `${slot.label}${Math.round(slot.ratio * 100)}%`"
+                  :title="slot.inactive ? `${slot.label}${slot.reason}` : `${slot.label}${stagePercent(slot.ratio)}%`"
                   aria-hidden="true"
                 >
                   <span v-if="slot.inactive" class="stage-slot-idle block h-full w-full"></span>
@@ -392,7 +392,7 @@ onBeforeUnmount(() => {
                     v-else
                     class="block h-full transition-[width] duration-300"
                     :class="SLOT_FILL[slot.key]"
-                    :style="{ width: `${String(Math.round(slot.ratio * 100))}%` }"
+                    :style="{ width: `${String(stagePercent(slot.ratio))}%` }"
                   ></span>
                 </span>
               </span>

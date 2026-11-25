@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { TaskTone } from '../../utils/tasks.ts'
-import type { StageKey, StageView } from '../../utils/stages.ts'
+import { stagePercent, type StageKey, type StageView } from '../../utils/stages.ts'
 
 // 四阶段进度条：桌面四等分，390px 折成 2×2；工作台与任务页共用同一份结构与色板。
 defineProps<{
@@ -23,7 +23,7 @@ function fillClass(item: StageView): string {
 
 function fillStyle(item: StageView): Record<string, string> {
   return {
-    width: `${Math.round(item.ratio * 100)}%`,
+    width: `${String(stagePercent(item.ratio))}%`,
     opacity: item.tone === 'warn' ? '0.55' : '1',
   }
 }
@@ -54,7 +54,7 @@ const VALUE_TEXT: Record<TaskTone, string> = {
         class="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-canvas"
         role="progressbar"
         :aria-label="`${item.label}进度`"
-        :aria-valuenow="Math.round(item.ratio * 100)"
+        :aria-valuenow="stagePercent(item.ratio)"
         aria-valuemin="0"
         aria-valuemax="100"
       >

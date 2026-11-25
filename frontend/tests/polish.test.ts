@@ -164,3 +164,13 @@ test('窄屏交互控件保留 44px 热区与 36px 视觉块', () => {
   assert.ok(chipCount >= 2, `标签行外层热区数量不足：${chipCount}`)
   assert.ok(tags.includes('rounded-lg bg-accent-soft px-2.5 py-1'), '面板已选标签统一 8px 圆角')
 })
+
+test('阶段填充与悬停提示共用同一份整数换算', () => {
+  const bar = source('components/tasks/TaskStageBar.vue')
+  assert.ok(bar.includes('stagePercent(item.ratio)'), '展开的阶段条用共享换算')
+  assert.equal(bar.includes('Math.round(item.ratio * 100)'), false, '不再四舍五入成满格')
+  const view = source('views/TasksView.vue')
+  assert.ok(view.includes('stagePercent(slot.ratio)'), '折叠总轨的宽度与提示同源')
+  assert.equal(view.includes('Math.round(slot.ratio * 100)'), false, '199/200 不再显示 100%')
+})
+
