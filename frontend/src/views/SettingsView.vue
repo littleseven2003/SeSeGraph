@@ -643,7 +643,7 @@ onBeforeUnmount(() => {
     <AppHeader />
 
     <main class="mx-auto w-full max-w-[1120px] px-5 py-7">
-      <nav class="mb-4 flex gap-2 overflow-x-auto overscroll-x-contain pb-1 lg:hidden" aria-label="设置分组">
+      <nav class="mb-4 flex gap-2 overflow-x-auto overscroll-x-contain py-1 lg:hidden" aria-label="设置分组">
         <a
           v-for="item in SETTING_NAV"
           :key="'narrow-' + item.id"
