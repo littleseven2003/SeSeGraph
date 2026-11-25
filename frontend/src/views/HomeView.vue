@@ -291,10 +291,10 @@ onBeforeUnmount(() => {
   <div class="min-h-full">
     <AppHeader />
 
-    <main class="mx-auto w-full max-w-[1240px] px-5 py-7">
+    <main class="mx-auto w-full max-w-[1120px] px-5 py-7">
       <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
         <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">图集</h1>
-        <p class="rounded-full border border-line bg-surface px-2.5 py-0.5 text-xs text-muted tnum">
+        <p class="rounded-md border border-line bg-surface px-2.5 py-0.5 text-xs text-muted tnum">
           共 {{ total }} 组<template v-if="hasFilter"> · 已筛选</template>
         </p>
         <button
@@ -375,8 +375,8 @@ onBeforeUnmount(() => {
       </div>
 
       <section class="mt-5">
-        <div v-if="loading" class="grid grid-cols-2 gap-3.5 md:grid-cols-3 md:gap-4 lg:grid-cols-4 xl:grid-cols-5">
-          <div v-for="index in 7" :key="index" class="flex flex-col gap-2.5">
+        <div v-if="loading" class="grid grid-cols-2 gap-3.5 md:grid-cols-3 md:gap-4 lg:grid-cols-4">
+          <div v-for="index in 8" :key="index" class="flex flex-col gap-2.5">
             <div class="aspect-[4/3] w-full animate-pulse rounded-2xl bg-canvas"></div>
             <div class="h-4 w-3/4 animate-pulse rounded bg-canvas"></div>
             <div class="h-3 w-1/2 animate-pulse rounded bg-canvas"></div>
@@ -432,7 +432,7 @@ onBeforeUnmount(() => {
             @open="openDetail"
           />
 
-          <div v-if="viewMode === 'gallery'" class="mt-6 grid grid-cols-2 gap-3.5 md:grid-cols-3 md:gap-4 lg:grid-cols-4 xl:grid-cols-5">
+          <div v-if="viewMode === 'gallery'" class="mt-6 grid grid-cols-2 gap-3.5 md:grid-cols-3 md:gap-4 lg:grid-cols-4">
             <PostCard
               v-for="item in items"
               :key="item.id"

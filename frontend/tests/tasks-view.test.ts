@@ -10,7 +10,7 @@ test('任务页使用全站统一顶栏并移除手动刷新', () => {
   assert.ok(source.includes('<AppHeader />'), '改用全站统一顶栏')
   const header = sourceFile('components/AppHeader.vue')
   assert.ok(header.includes('sticky top-0'), '顶栏要吸顶')
-  assert.ok(header.includes('max-w-[1240px]'), '顶栏内宽与全站一致')
+  assert.ok(header.includes('max-w-[1120px]'), '顶栏内宽与图集版心一致')
   assert.ok(source.includes('max-w-[960px]'), '主内容收束，避免大屏单列过宽')
   assert.equal(source.includes('每 10 秒刷新一次'), false, '不再展示定时刷新说明')
   assert.equal(source.includes('刷新中…'), false, '不再提供手动刷新按钮')

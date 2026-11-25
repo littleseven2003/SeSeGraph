@@ -1537,7 +1537,7 @@ onBeforeUnmount(() => {
   <div class="min-h-full">
     <AppHeader />
 
-    <main class="mx-auto w-full max-w-[1240px] px-5 py-6">
+    <main class="mx-auto w-full max-w-[1120px] px-5 py-6">
       <p v-if="message" class="mb-4 rounded-2xl bg-surface px-3.5 py-2.5 text-sm text-muted shadow-[0_1px_0_0_rgba(27,26,23,0.05)]" role="status">
         {{ message }}
       </p>

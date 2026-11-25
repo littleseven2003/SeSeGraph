@@ -642,13 +642,13 @@ onBeforeUnmount(() => {
   <div class="min-h-full">
     <AppHeader />
 
-    <main class="mx-auto w-full max-w-[1240px] px-5 py-7">
+    <main class="mx-auto w-full max-w-[1120px] px-5 py-7">
       <nav class="mb-4 flex gap-2 overflow-x-auto overscroll-x-contain pb-1 lg:hidden" aria-label="设置分组">
         <a
           v-for="item in SETTING_NAV"
           :key="'narrow-' + item.id"
           :href="'#' + item.id"
-          class="inline-flex h-11 shrink-0 items-center rounded-full border px-3.5 text-xs font-medium transition"
+          class="inline-flex h-10 shrink-0 items-center rounded-lg border px-3 text-xs font-medium transition sm:h-9"
           :class="activeSection === item.id ? 'border-brand-soft bg-brand-soft text-ink' : 'border-line bg-surface text-muted hover:bg-canvas hover:text-ink'"
           @click="selectSection(item.id)"
         >

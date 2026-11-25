@@ -46,7 +46,7 @@ async function signOut(): Promise<void> {
 
 <template>
   <header class="sticky top-0 z-30 border-b border-line/80 bg-surface/95 backdrop-blur-sm">
-    <div class="mx-auto w-full max-w-[1240px] px-4 sm:px-5">
+    <div class="mx-auto w-full max-w-[1120px] px-4 sm:px-5">
       <div class="flex items-center justify-between gap-2 py-2 sm:py-3">
         <router-link :to="{ name: 'home' }" class="flex min-w-0 items-center gap-2" aria-label="回到图集">
           <BrandMark :width="108" class="sm:hidden" />

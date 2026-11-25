@@ -28,7 +28,7 @@ onMounted(async () => {
 <template>
   <footer class="site-footer border-t border-line bg-surface/80">
     <div
-      class="mx-auto flex w-full max-w-[1100px] flex-col gap-2.5 px-4 py-4 text-xs text-muted sm:flex-row sm:items-center sm:justify-between"
+      class="mx-auto flex w-full max-w-[1120px] flex-col gap-2.5 px-5 py-4 text-xs text-muted sm:flex-row sm:items-center sm:justify-between"
     >
       <p class="flex items-center gap-1.5">
         <span class="font-semibold tracking-tight text-ink">SeSeGraph</span>

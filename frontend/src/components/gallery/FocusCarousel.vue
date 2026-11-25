@@ -137,7 +137,7 @@ onBeforeUnmount(() => {
 <template>
   <section
     v-if="current !== null"
-    class="rounded-2xl bg-surface p-4 shadow-[0_1px_0_0_rgba(27,26,23,0.05),0_24px_60px_-46px_rgba(27,26,23,0.4)] lg:p-5"
+    class="rounded-2xl bg-surface p-3.5 shadow-[0_1px_0_0_rgba(27,26,23,0.05),0_24px_60px_-46px_rgba(27,26,23,0.4)] lg:p-4"
     aria-roledescription="carousel"
     aria-label="最新图集"
     @mouseenter="hoverPaused = true"
@@ -147,12 +147,12 @@ onBeforeUnmount(() => {
     @keydown.left.prevent="step(-1)"
     @keydown.right.prevent="step(1)"
   >
-    <div class="grid gap-4 lg:grid-cols-[minmax(0,1.32fr)_minmax(0,1fr)] lg:items-stretch lg:gap-6">
+    <div class="grid gap-4 lg:grid-cols-[minmax(0,1.32fr)_minmax(0,1fr)] lg:items-stretch lg:gap-5">
       <div class="min-w-0" :class="showBlur ? 'is-blurred' : ''">
         <div class="relative">
           <button
             type="button"
-            class="relative block aspect-[16/10] w-full overflow-hidden rounded-2xl bg-canvas lg:aspect-auto lg:h-[360px]"
+            class="relative block aspect-[16/10] w-full overflow-hidden rounded-2xl bg-canvas lg:aspect-auto lg:h-[320px]"
             :aria-label="`打开《${current.title}》详情`"
             data-reveal="cover"
             @click="onCover"
