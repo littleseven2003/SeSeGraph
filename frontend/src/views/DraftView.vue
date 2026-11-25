@@ -7,6 +7,8 @@ import { ApiError } from '../api/client.ts'
 import { commitPost, createPost, uploadImage } from '../api/posts.ts'
 import { splitTags, type PostMeta } from '../utils/meta.ts'
 import { makeCoverFromMedia } from '../utils/cover.ts'
+import { TOUCH_REVEAL_MS } from '../utils/gallery.ts'
+import { renderThumb, THUMB_MAX_PIXELS } from '../utils/thumbs.ts'
 import { blurEnabled } from '../utils/blur.ts'
 import { clearDraft, draftState, hasDraft } from '../stores/draft.ts'
 
@@ -93,7 +95,7 @@ function toggleMask(key: string): void {
   maskTimers.set(key, window.setTimeout(() => {
     revealed.value = new Set([...revealed.value].filter((item) => item !== key))
     maskTimers.delete(key)
-  }, 4000))
+  }, TOUCH_REVEAL_MS))
 }
 
 // thumbOf 返回已生成的小图地址；空串表示还没生成好，渲染重试占位。
@@ -101,9 +103,8 @@ async function retryThumb(key: string): Promise<void> {
   const image = draftState.images.find((item) => item.key === key)
   if (image === undefined || busy.value) return
   try {
-    const cover = await makeCoverFromMedia(image.file)
-    const bytes = Uint8Array.from(atob(cover.dataUrl.split(',')[1] ?? ''), (char) => char.charCodeAt(0))
-    image.thumbBlob = new Blob([bytes], { type: 'image/webp' })
+    // 沿用全站同一套缩略图生成：限尺寸、限字节，产出 WebP 小图。
+    image.thumbBlob = await renderThumb(image.file, THUMB_MAX_PIXELS)
     buildThumbUrls()
   } catch {
     error.value = '小图生成失败，可移除这一张后重试'

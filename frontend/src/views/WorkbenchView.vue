@@ -1279,7 +1279,8 @@ function discardSnapshot(): void {
 
 function clearAll(): void {
   if (!ready.value) return
-  // 换一批文件：作废在途生成与压缩，迟到的结果不再挂回空网格。
+  // 换一批文件：作废在途生成、压缩与交接，迟到的结果不再挂回空网格或跳转草稿页。
+  handoffSeq += 1
   if (working.value) cancelArchive()
   bumpStrategy()
   localThumbs.reset()
@@ -1302,15 +1303,27 @@ function clearAll(): void {
 const router = useRouter()
 
 // 继续编辑：把小图与当前元信息交给草稿页，后续补齐排序与封面再提交。
+// handoffSeq 标记本批交接：离页或重新导入后递增，迟到的等待结果不再跳转。
+let handoffSeq = 0
+const handingOff = ref(false)
+
 async function goDraft(): Promise<void> {
   if (tiles.value.length === 0) {
     pushError('请先选择图片或视频')
     return
   }
-  // 等本批小图生成结束再交接：没生成好的项留给草稿页做可重试占位，绝不拿原件冒充小图。
-  const deadline = Date.now() + 20_000
-  while (Date.now() < deadline && tiles.value.some((tile) => tile.thumbBlob === undefined && tile.thumbUrl === '')) {
-    await new Promise((resolve) => setTimeout(resolve, 200))
+  if (handingOff.value) return
+  handingOff.value = true
+  const seq = (handoffSeq += 1)
+  try {
+    // 只等还在排队的项：失败项已从调度里移除，不会被当成「还在生成」空等。
+    const deadline = Date.now() + 20_000
+    while (localThumbs.size() > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 120))
+    }
+    if (seq !== handoffSeq) return
+  } finally {
+    handingOff.value = false
   }
   startDraft(tiles.value.map((tile) => ({
     key: tile.id,
@@ -1562,6 +1575,7 @@ async function runUpload(intent: 'auto' | 'manual', routeRound = initSeq): Promi
 }
 
 onBeforeUnmount(() => {
+  handoffSeq += 1
   window.removeEventListener('keydown', onPreviewKeydown)
   stopPolling()
   closePreview()
