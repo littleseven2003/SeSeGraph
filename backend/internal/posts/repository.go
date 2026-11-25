@@ -1604,9 +1604,12 @@ func (r *Repository) ResetFailedImages(ctx context.Context, postID int64) (int64
 
 	var (
 		status  string
+		control string
 		pending int
 	)
-	err = tx.QueryRowContext(ctx, `SELECT status, pending_delete FROM posts WHERE id = ?`, postID).Scan(&status, &pending)
+	err = tx.QueryRowContext(ctx,
+		`SELECT status, COALESCE(control_state, ?), pending_delete FROM posts WHERE id = ?`,
+		ControlRunning, postID).Scan(&status, &control, &pending)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, ErrNotFound
 	}
@@ -1617,6 +1620,10 @@ func (r *Repository) ResetFailedImages(ctx context.Context, postID int64) (int64
 		return 0, ErrPendingDelete
 	}
 	if status == StatusQueued || status == StatusPublishing {
+		return 0, nil
+	}
+	// 暂停或停止的任务不能重排：Worker 也领不到，避免排出一个永远不跑的队列项。
+	if control != ControlRunning {
 		return 0, nil
 	}
 
@@ -1693,13 +1700,13 @@ func (r *Repository) Resume(ctx context.Context, postID int64) error {
 		                           WHERE post_id = posts.id AND status IN (?, ?)) >= image_count
 		                     THEN ? ELSE ? END
 		            ELSE status END,
-		        error_message = '',
+		        error_message = CASE WHEN status = ? THEN error_message ELSE '' END,
 		        updated_at = CURRENT_TIMESTAMP
 		 WHERE id = ? AND control_state = ?`,
 		ControlRunning, StatusPublishing, StatusQueued,
 		StatusUploading, StatusQueued,
 		ImageStatusUploaded, ImageStatusStored, StatusQueued, StatusUploading,
-		postID, ControlPaused)
+		StatusFailed, postID, ControlPaused)
 	if err != nil {
 		return errors.New("恢复任务失败")
 	}

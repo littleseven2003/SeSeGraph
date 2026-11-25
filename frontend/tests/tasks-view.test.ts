@@ -85,9 +85,10 @@ test('卡片结构、空态与控件热区', () => {
 test('任务页复用同一套四阶段与控制判定', () => {
   assert.ok(source.includes('from \'../utils/tasks.ts\''), '控制规则集中在 utils/tasks.ts')
   assert.ok(source.includes('from \'../utils/stages.ts\''), '四阶段口径集中在 utils/stages.ts')
-  assert.ok(source.includes('canRetryStore(task)'), '频道失败走重试入口')
-  assert.ok(source.includes('重试存图'), '重试文案与补传分开')
-  for (const name of ['badgeOf', 'canPause', 'canResume', 'canRetryStore', 'canStop']) {
+  assert.ok(source.includes('retryPost(task.id)'), '失败任务统一走重试接口')
+  assert.ok(source.includes("task.status === 'failed' && task.control_state === 'running'"), '只有运行中的失败任务露出重试')
+  assert.equal(source.includes('重试存图'), false, '不再与重试按钮重复')
+  for (const name of ['badgeOf', 'canPause', 'canResume', 'canStop']) {
     assert.ok(source.includes(name), `缺少 ${name}`)
   }
   for (const name of ['taskStages', 'stageInputOf', 'stageSummary', 'stageOverall']) {

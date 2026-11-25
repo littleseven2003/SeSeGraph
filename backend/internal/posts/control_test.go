@@ -378,3 +378,66 @@ func TestRequeueFinishOnlyWhenAllStored(t *testing.T) {
 	}
 }
 
+// TestResumeKeepsReasonWhenPausedTaskFailed 确认「暂停→在途失败→继续」后原因仍可见。
+func TestResumeKeepsReasonWhenPausedTaskFailed(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+	id, err := repo.Create(ctx, Post{Title: "暂停中失败后恢复", ImageCount: 1, Status: StatusUploading})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+	if err := repo.Pause(ctx, id); err != nil {
+		t.Fatalf("暂停失败: %v", err)
+	}
+	if err := repo.MarkTaskFailed(ctx, id, "存图失败：账号受限（…），请解冻或更换 Bot，上游状态 400"); err != nil {
+		t.Fatalf("标记失败出错: %v", err)
+	}
+	if err := repo.Resume(ctx, id); err != nil {
+		t.Fatalf("恢复失败: %v", err)
+	}
+	post, err := repo.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("读取帖子失败: %v", err)
+	}
+	if post.Status != StatusFailed {
+		t.Errorf("失败任务恢复后不应回到处理中：%s", post.Status)
+	}
+	var message string
+	if err := repo.handle.QueryRowContext(ctx, `SELECT COALESCE(error_message, '') FROM posts WHERE id = ?`, id).Scan(&message); err != nil {
+		t.Fatalf("读取原因失败: %v", err)
+	}
+	if message == "" {
+		t.Error("继续后应保留失败原因，方便用户知道为什么失败")
+	}
+}
+
+// TestRetryRejectsPausedTask 确认暂停任务的失败图片不会被重排成永远不跑的队列项。
+func TestRetryRejectsPausedTask(t *testing.T) {
+	repo := newTestRepository(t)
+	ctx := context.Background()
+	id, err := repo.Create(ctx, Post{Title: "暂停任务重试", ImageCount: 1, Status: StatusUploading})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+	if _, err := repo.AttachImage(ctx, Image{PostID: id, SortOrder: 1, MimeType: "image/jpeg", Status: ImageStatusFailed}); err != nil {
+		t.Fatalf("挂图失败: %v", err)
+	}
+	if err := repo.Pause(ctx, id); err != nil {
+		t.Fatalf("暂停失败: %v", err)
+	}
+	retried, err := repo.ResetFailedImages(ctx, id)
+	if err != nil {
+		t.Fatalf("重排出错: %v", err)
+	}
+	if retried != 0 {
+		t.Errorf("暂停任务不应被重排：%d", retried)
+	}
+	post, err := repo.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("读取帖子失败: %v", err)
+	}
+	if post.Status != StatusUploading {
+		t.Errorf("暂停任务状态被改动：%s", post.Status)
+	}
+}
+

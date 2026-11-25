@@ -12,7 +12,6 @@ import {
   canContinueUpload,
   canPause,
   canResume,
-  canRetryStore,
   canStop,
   type TaskTone,
 } from '../utils/tasks.ts'
@@ -121,7 +120,15 @@ async function retryTask(task: TaskRow): Promise<void> {
   try {
     const result = await retryPost(task.id)
     notice.value = result.retried === 0 ? '已重新排队，只重跑收尾' : `已重新排队 ${result.retried} 张`
+    // 重试后逐图明细会变，丢掉缓存让展开时重新拉取。
+    const next = new Map(progressById.value)
+    next.delete(task.id)
+    progressById.value = next
     await requestLoad(false)
+    if (expanded.value.has(task.id)) {
+      progressError.value = ''
+      await loadTaskProgress(task.id)
+    }
   } catch (cause) {
     error.value = cause instanceof ApiError ? cause.message : '重新排队失败，请稍后重试'
   } finally {
@@ -471,7 +478,7 @@ onBeforeUnmount(() => {
             <p v-if="progressError !== '' && isExpanded(task.id)" class="mt-1 text-xs text-muted">{{ progressError }}</p>
             <div class="mt-3 flex flex-wrap items-center gap-2">
               <button
-                v-if="task.status === 'failed'"
+                v-if="task.status === 'failed' && task.control_state === 'running'"
                 type="button"
                 class="inline-flex h-11 items-center rounded-lg border border-danger/35 bg-surface px-4 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-60 sm:h-9"
                 :disabled="busyId !== 0"
@@ -488,13 +495,6 @@ onBeforeUnmount(() => {
               >
                 继续
               </button>
-              <router-link
-                v-else-if="canRetryStore(task)"
-                :to="{ name: 'workbench', query: { resume: task.id } }"
-                class="inline-flex h-11 items-center rounded-lg border border-brand/30 bg-brand-soft px-4 text-xs font-medium text-brand-strong transition hover:border-brand/50 sm:h-9"
-              >
-                重试存图
-              </router-link>
               <router-link
                 v-else-if="canContinueUpload(task)"
                 :to="{ name: 'workbench', query: { resume: task.id } }"
