@@ -4,10 +4,10 @@ import assert from 'node:assert/strict'
 
 const source = readFileSync(new URL('../src/components/gallery/DetailDrawer.vue', import.meta.url), 'utf8')
 
-test('媒体清单用固定列宽网格，桌面五列、窄屏两行', () => {
+test('媒体清单用固定列宽网格，桌面四列、窄屏两行', () => {
   assert.ok(
-    source.includes('sm:grid-cols-[2.75rem_minmax(0,1fr)_5.25rem_3.75rem_3.25rem]'),
-    '桌面五列固定宽度，外链与复制不再随元信息长度漂移',
+    source.includes('sm:grid-cols-[2.75rem_minmax(0,1fr)_auto_auto]'),
+    '桌面固定四列：缩略图、信息、换封面、图标动作',
   )
   assert.ok(source.includes('grid-cols-[2.75rem_minmax(0,1fr)]'), '窄屏两列，操作换到第二行')
   assert.ok(source.includes('h-11 w-11'), '缩略图 44px 热区')
@@ -162,4 +162,22 @@ test('换封面收敛为紧凑文字动作，状态与错误仍然可见', () =>
   assert.ok(cover.includes(':disabled="coverBusy || !canLoadThumb(image) || detail.pending_delete"'), '忙碌、未入库与待删除仍禁用')
   assert.ok(cover.includes("{{ coverBusy ? '设置中…' : '设为封面' }}"), '设置中就地反馈')
   assert.ok(source.includes('{{ coverError }}'), '换封面失败仍就地提示')
+})
+
+test('单图外链拆成新页打开与复制两个图标', () => {
+  const row = source.slice(source.indexOf('sm:col-start-4 sm:justify-self-end'), source.indexOf('<video'))
+  assert.equal(row.includes('查看外链'), false, '不再用文字外链')
+  assert.equal(row.includes('>复制<'), false, '复制不再是文字胶囊')
+  assert.ok(row.includes('target="_blank"'), '新页打开走原生链接')
+  assert.ok(row.includes('rel="noreferrer noopener"'), '新页打开保留安全属性')
+  assert.ok(row.includes('在新页面打开第 ${image.sort_order} 项原图'), '新页打开有可访问名称')
+  assert.ok(row.includes('复制第 ${image.sort_order} 项图片链接'), '复制有可访问名称')
+  assert.ok(row.includes(':disabled="imageLink(image) === \'\'"'), '无公开短码时复制不可用')
+  assert.ok(row.includes('v-if="imageLink(image) !== \'\'"'), '无公开短码时不渲染打开入口')
+  assert.ok(row.includes('image-${image.sort_order}'), '复制反馈按行区分')
+  assert.ok(row.includes("'已复制'"), '复制成功后图标切换提示')
+  assert.ok(row.includes('class="h-4 w-4"'), '两个入口都用 16px 线性图标')
+  assert.ok(row.includes('h-11 w-11') && row.includes('sm:h-8 sm:w-8'), '窄屏 44px 热区、桌面紧凑')
+  // 打开与复制都必须用同一条公开短码判断。
+  assert.ok(row.includes('imageLink(image)'), '两个入口共用公开短码')
 })

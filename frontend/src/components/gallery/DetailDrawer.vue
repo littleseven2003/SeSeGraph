@@ -1072,7 +1072,7 @@ watch(
             <ul class="mt-2 divide-y divide-line/70 overflow-hidden rounded-xl bg-surface">
               <li v-for="image in detail.images" :key="image.short_code" class="px-3 py-2">
                 <div
-                  class="grid grid-cols-[2.75rem_minmax(0,1fr)] items-start gap-x-3 gap-y-2 sm:grid-cols-[2.75rem_minmax(0,1fr)_5.25rem_3.75rem_3.25rem] sm:items-center sm:gap-x-2.5"
+                  class="grid grid-cols-[2.75rem_minmax(0,1fr)] items-start gap-x-3 gap-y-2 sm:grid-cols-[2.75rem_minmax(0,1fr)_auto_auto] sm:items-center sm:gap-x-3"
                 >
                   <button
                     type="button"
@@ -1160,41 +1160,86 @@ watch(
                     </button>
                   </div>
 
-                  <div class="col-start-2 flex flex-wrap items-center gap-2 sm:contents">
+                  <div class="col-start-2 flex flex-wrap items-center gap-1 sm:contents">
                     <span
                       v-if="image.sort_order === detail.cover_sort_order"
-                      class="inline-flex min-h-8 items-center whitespace-nowrap text-xs font-medium text-brand-strong sm:col-start-3 sm:justify-end"
+                      class="inline-flex min-h-8 items-center whitespace-nowrap text-xs font-medium text-brand-strong sm:col-start-3 sm:justify-self-end"
                       >当前封面</span
                     >
                     <button
                       v-else
                       type="button"
-                      class="inline-flex min-h-8 items-center whitespace-nowrap text-xs font-medium text-muted underline-offset-4 transition hover:text-brand-strong hover:underline focus-visible:underline disabled:opacity-45 sm:col-start-3 sm:justify-end"
+                      class="inline-flex min-h-8 items-center whitespace-nowrap text-xs font-medium text-muted underline-offset-4 transition hover:text-brand-strong hover:underline focus-visible:underline disabled:opacity-45 sm:col-start-3 sm:justify-self-end"
                       :disabled="coverBusy || !canLoadThumb(image) || detail.pending_delete"
                       :aria-label="`将第 ${image.sort_order} 项设为封面`"
                       @click="setCover(image)"
                     >
                       {{ coverBusy ? '设置中…' : '设为封面' }}
                     </button>
+                    <div class="flex items-center gap-1 sm:col-start-4 sm:justify-self-end">
                     <a
                       v-if="imageLink(image) !== ''"
                       :href="imageLink(image)"
                       target="_blank"
                       rel="noreferrer noopener"
-                      class="inline-flex min-h-8 items-center whitespace-nowrap text-xs text-brand-strong hover:underline sm:col-start-4 sm:justify-self-end"
-                      >查看外链</a
+                      class="inline-flex h-11 w-11 items-center justify-center rounded-lg text-muted transition hover:bg-canvas hover:text-ink sm:h-8 sm:w-8"
+                      :aria-label="`在新页面打开第 ${image.sort_order} 项原图`"
+                      title="在新页面打开图片"
                     >
-                    <span v-else class="hidden sm:col-start-4 sm:block" aria-hidden="true"></span>
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.75"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        class="h-4 w-4"
+                        aria-hidden="true"
+                      >
+                        <path d="M14 4h6v6" />
+                        <path d="M20 4l-8.5 8.5" />
+                        <path d="M18.5 14.5V19a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 19V7A1.5 1.5 0 0 1 5 5.5h4.5" />
+                      </svg>
+                    </a>
                     <button
                       type="button"
-                      class="inline-flex h-8 items-center rounded-full border border-line px-2.5 text-xs text-muted transition hover:bg-canvas disabled:opacity-50 sm:col-start-5 sm:justify-self-end"
+                      class="inline-flex h-11 w-11 items-center justify-center rounded-lg text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-40 sm:h-8 sm:w-8"
                       :disabled="imageLink(image) === ''"
-                      @click="copy(imageLink(image), '单图外链')"
+                      :aria-label="`复制第 ${image.sort_order} 项图片链接`"
+                      :title="copiedAction === `image-${image.sort_order}` ? '已复制' : '复制图片链接'"
+                      @click="copy(imageLink(image), '单图外链', `image-${image.sort_order}`)"
                     >
-                      复制
+                      <svg
+                        v-if="copiedAction === `image-${image.sort_order}`"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.9"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        class="h-4 w-4 text-accent"
+                        aria-hidden="true"
+                      >
+                        <path d="M4 12.5l5 5L20 6.5" />
+                      </svg>
+                      <svg
+                        v-else
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.75"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        class="h-4 w-4"
+                        aria-hidden="true"
+                      >
+                        <rect x="9" y="9" width="11.5" height="11.5" rx="2" />
+                        <path d="M6.5 15H5A1.5 1.5 0 0 1 3.5 13.5v-8A1.5 1.5 0 0 1 5 4h8a1.5 1.5 0 0 1 1.5 1.5V7" />
+                      </svg>
                     </button>
                   </div>
-                </div>
+                  </div>
+
                 <video
                   v-if="playingCode === image.short_code && imageLink(image) !== ''"
                   :src="imageLink(image)"
