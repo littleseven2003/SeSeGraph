@@ -798,7 +798,6 @@ onBeforeUnmount(() => {
             <div v-show="activeSection === 'channel'" class="space-y-8">
             <section id="upstream" class="scroll-mt-36">
               <div class="flex items-center gap-2">
-                <span class="tnum rounded border border-line bg-surface px-1.5 py-0.5 text-xs font-medium leading-none text-muted">01</span>
                 <h2 class="text-base font-semibold tracking-tight">上游与代理</h2>
               </div>
               <p class="mt-1 text-xs text-muted">图片与发布的上游凭据、代理走向，保存后立即重建传输层。</p>
@@ -1124,7 +1123,6 @@ onBeforeUnmount(() => {
             <div v-show="activeSection === 'media'" class="space-y-8">
             <section id="defaults" class="scroll-mt-36">
               <div class="flex items-center gap-2">
-                <span class="tnum rounded border border-line bg-surface px-1.5 py-0.5 text-xs font-medium leading-none text-muted">02</span>
                 <h2 class="text-base font-semibold tracking-tight">发帖默认值</h2>
               </div>
               <p class="mt-1 text-xs text-muted">说明文件命中后自动预填标题与说明，工作台的解析方式默认按这里。</p>
@@ -1196,7 +1194,6 @@ onBeforeUnmount(() => {
 
             <section id="check" class="scroll-mt-36">
               <div class="flex items-center gap-2">
-                <span class="tnum rounded border border-line bg-surface px-1.5 py-0.5 text-xs font-medium leading-none text-muted">03</span>
                 <h2 class="text-base font-semibold tracking-tight">连通性自检</h2>
               </div>
               <p class="mt-1 text-xs text-muted">并行检测 Bot 与频道权限、Telegraph 账户，只读请求，不发送任何内容。</p>
@@ -1248,7 +1245,6 @@ onBeforeUnmount(() => {
             <div v-show="activeSection === 'storage'" class="space-y-8">
             <section id="ops" class="scroll-mt-36">
               <div class="flex items-center gap-2">
-                <span class="tnum rounded border border-line bg-surface px-1.5 py-0.5 text-xs font-medium leading-none text-muted">04</span>
                 <h2 class="text-base font-semibold tracking-tight">流量与备份</h2>
               </div>
               <p class="mt-1 text-xs text-muted">按自然月统计图片出站流量，生成一致性快照并可下载或发到频道。</p>
@@ -1520,7 +1516,6 @@ onBeforeUnmount(() => {
             <div v-show="activeSection === 'appearance'" class="space-y-8">
             <section id="account" class="scroll-mt-36">
               <div class="flex items-center gap-2">
-                <span class="tnum rounded border border-line bg-surface px-1.5 py-0.5 text-xs font-medium leading-none text-muted">05</span>
                 <h2 class="text-base font-semibold tracking-tight">账号安全</h2>
               </div>
               <p class="mt-1 text-xs text-muted">修改网站管理员账号名或密码，成功后需要重新登录。</p>
