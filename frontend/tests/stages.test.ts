@@ -202,6 +202,11 @@ test('阶段整数换算：未真正完成不会显示满格', () => {
   assert.equal(stagePercent(2), 100)
   // 非数值不放大成满格，按未开始处理。
   assert.equal(stagePercent(Number.NaN), 0)
+  // 浮点边界：29/100 的乘积是 28.999…，仍要显示 29 而不是少一个百分点。
+  for (const value of [1, 7, 29, 57, 58, 99]) {
+    assert.equal(stagePercent(value / 100), value, `${value}/100 应显示 ${value}%`)
+  }
+  assert.equal(stagePercent(199 / 200), 99, '99.5% 夹回 99')
 })
 
 test('同步差一张时总值与同步槽同为 99', () => {

@@ -53,11 +53,12 @@ function stage(key: StageKey, value: string, tone: TaskTone, ratio: number): Sta
 }
 
 // stagePercent 把 0–1 比例换成整数百分点，阶段填充与提示共用这一份换算。
-// 未真正完成的阶段最高 99：199/200 这类「还差一点」不能画成满格。
+// 先四舍五入消掉浮点误差（29/100 会算成 28.999…），再夹住上限：
+// 未真正完成的阶段最高 99，199/200 这类「还差一点」不能画成满格。
 export function stagePercent(ratio: number): number {
   if (!Number.isFinite(ratio)) return 0
   if (ratio >= 1) return 100
-  return Math.min(99, Math.max(0, Math.floor(ratio * 100)))
+  return Math.min(99, Math.max(0, Math.round(ratio * 100)))
 }
 
 // ratioOf 用已完成数除以总数，总数非法时按 0 处理。
