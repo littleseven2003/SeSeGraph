@@ -347,9 +347,7 @@ function resetForRoute(): void {
   releaseTiles(tiles.value)
   tiles.value = []
   coverId.value = ''
-  coverPreview.value = ''
-  coverDataUrl.value = ''
-  coverBytes.value = 0
+  invalidateCover()
   statuses.value = {}
   serverProgress.value = null
   snapshot.value = null
@@ -642,24 +640,43 @@ function releaseTiles(items: WorkbenchTile[]): void {
   }
 }
 
+// coverSeq 是封面代次：换选、清空或换任务都会自增，迟到的生成结果直接丢弃。
+let coverSeq = 0
+// coverOwnerId 记录当前缩略图属于哪张卡片，提交时用它确认缩略图与序号来自同一张。
+const coverOwnerId = ref('')
+
+function clearCover(): void {
+  coverPreview.value = ''
+  coverDataUrl.value = ''
+  coverBytes.value = 0
+  coverOwnerId.value = ''
+}
+
+// invalidateCover 作废进行中的封面生成并清空展示，用于清空、换批与切路由。
+function invalidateCover(): void {
+  coverSeq += 1
+  clearCover()
+}
+
 // 重建封面缩略图：宽度 400px 的 WebP，同时用于列表展示与建任务请求体。
+// 生成期间换选或清空时，旧结果不写回，避免缩略图与封面序号对不上。
 async function refreshCover(): Promise<void> {
+  const token = (coverSeq += 1)
   const tile = coverTile.value
   if (!tile) {
-    coverPreview.value = ''
-    coverDataUrl.value = ''
-    coverBytes.value = 0
+    clearCover()
     return
   }
   try {
     const cover = await makeCover(tile.posterBlob ?? tile.blob)
+    if (token !== coverSeq || coverTile.value?.id !== tile.id) return
     coverPreview.value = cover.dataUrl
     coverDataUrl.value = cover.dataUrl
     coverBytes.value = cover.bytes
+    coverOwnerId.value = tile.id
   } catch {
-    coverPreview.value = ''
-    coverDataUrl.value = ''
-    coverBytes.value = 0
+    if (token !== coverSeq) return
+    clearCover()
     pushError('封面生成失败，可换一张图片试试')
   }
 }
@@ -1065,6 +1082,10 @@ async function runControl(action: 'pause' | 'resume' | 'stop'): Promise<void> {
   }
 }
 
+// 换封面的选择代次与串行链：同一任务的写请求按选择顺序发送，后选一定覆盖先选。
+let coverSelectSeq = 0
+let coverJob: Promise<void> = Promise.resolve()
+
 function onSelectCover(id: string): void {
   coverId.value = id
   void refreshCover()
@@ -1074,27 +1095,31 @@ function onSelectCover(id: string): void {
   if (tile === undefined) return
   const target = postId.value
   const round = initSeq
-  void (async () => {
-    try {
-      const cover = await makeCover(tile.posterBlob ?? tile.blob)
-      // 生成期间可能切到了别的任务：旧封面不能写给新任务。
-      if (round !== initSeq || postId.value !== target) return
-      await changeCover(target, tile.sortOrder, cover.dataUrl)
-      if (round !== initSeq || postId.value !== target) return
-      if (serverProgress.value !== null) {
-        serverProgress.value = { ...serverProgress.value, cover_sort_order: tile.sortOrder }
+  const seq = (coverSelectSeq += 1)
+  coverJob = coverJob
+    .then(async () => {
+      // 这一轮已经被后面的选择取代：不再发请求，新选择负责最终结果。
+      if (seq !== coverSelectSeq) return
+      try {
+        const cover = await makeCover(tile.posterBlob ?? tile.blob)
+        if (seq !== coverSelectSeq || round !== initSeq || postId.value !== target) return
+        await changeCover(target, tile.sortOrder, cover.dataUrl)
+        if (seq !== coverSelectSeq || round !== initSeq || postId.value !== target) return
+        if (serverProgress.value !== null) {
+          serverProgress.value = { ...serverProgress.value, cover_sort_order: tile.sortOrder }
+        }
+        message.value = '封面已更新'
+      } catch (error) {
+        // 只有当前这次选择能回滚；被取代的旧操作不碰界面。
+        if (seq !== coverSelectSeq || round !== initSeq || postId.value !== target) return
+        const actual = serverProgress.value?.cover_sort_order ?? 0
+        const fallback = tiles.value.find((item) => item.sortOrder === actual)
+        coverId.value = fallback?.id ?? ''
+        void refreshCover()
+        pushError(error instanceof ApiError ? error.message : '更换封面失败，请稍后重试')
       }
-      message.value = '封面已更新'
-    } catch (error) {
-      if (round !== initSeq || postId.value !== target) return
-      // 失败时回到服务端实际封面，不让界面显示一份没生效的选择。
-      const actual = serverProgress.value?.cover_sort_order ?? 0
-      const fallback = tiles.value.find((item) => item.sortOrder === actual)
-      coverId.value = fallback?.id ?? ''
-      void refreshCover()
-      pushError(error instanceof ApiError ? error.message : '更换封面失败，请稍后重试')
-    }
-  })()
+    })
+    .catch(() => {})
 }
 
 function onSortByName(): void {
@@ -1253,9 +1278,7 @@ function clearAll(): void {
   releaseTiles(tiles.value)
   tiles.value = []
   coverId.value = ''
-  coverPreview.value = ''
-  coverDataUrl.value = ''
-  coverBytes.value = 0
+  invalidateCover()
   metaText.value = ''
   metaSource.value = ''
   draft.value = { title: '', description: '', tags: [], author: '' }
@@ -1291,14 +1314,18 @@ async function ensureTask(intent: 'auto' | 'manual', routeRound = initSeq): Prom
       return postId.value
     }
   }
+  // 缩略图与序号必须来自同一张卡片：生成迟到或已换选时按无封面提交，不混用旧图。
+  const chosen = coverTile.value
+  const chosenOrder = chosen?.sortOrder ?? 0
+  const coverReady = chosenOrder > 0 && coverDataUrl.value !== '' && coverOwnerId.value === chosen?.id
   const created = await createPost({
     title: draft.value.title.trim(),
     description: draft.value.description,
     author_name: draft.value.author.trim(),
     upload_mode: mode.value,
     image_count: tiles.value.length,
-    cover_thumbnail: coverDataUrl.value,
-    cover_sort_order: coverTile.value?.sortOrder ?? 0,
+    cover_thumbnail: coverReady ? coverDataUrl.value : '',
+    cover_sort_order: coverReady ? chosenOrder : 0,
     // 压缩在浏览器侧一次性完成，建任务时把已处理项数一并上报。
     compressed_count: compressDone.value ?? undefined,
     // 只有新任务能选发布意图；续传沿用任务建好时的授权。
@@ -1339,9 +1366,16 @@ async function publish(intent: 'auto' | 'manual' = 'manual'): Promise<void> {
     pushError(`当前选择与上次任务 #${snapshot.value.postId} 不一致，请重新选择同一批文件，或放弃此任务后重新开始`)
     return
   }
+  const chosenTile = coverTile.value
+  const submitCoverReady = coverDataUrl.value !== '' && coverOwnerId.value === chosenTile?.id
+  // 新建任务且已经选了封面时，缩略图必须就是这张；生成中或生成失败先提示，不混用旧图。
+  if (newDraft.value && chosenTile !== undefined && !submitCoverReady) {
+    pushError('封面缩略图还在生成或生成失败，请稍候重试；也可以先换一张封面再提交')
+    return
+  }
   const invalid = validatePublishInput({
     title: draft.value.title,
-    coverReady: coverDataUrl.value !== '',
+    coverReady: chosenTile === undefined || submitCoverReady,
     resuming: resuming.value,
   })
   if (invalid !== null) {
