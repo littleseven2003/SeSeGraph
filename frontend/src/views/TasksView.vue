@@ -186,6 +186,13 @@ async function load(silent = false): Promise<void> {
     tasks.value = result.items
     total.value = result.total
     if (result.page !== page.value) page.value = result.page
+    // 展开中的失败任务在轮询里对比更新时间，变了就重读逐图原因。
+    for (const task of result.items) {
+      if (!expanded.value.has(task.id) || task.status !== 'failed') continue
+      const stamp = failedStamp.value.get(task.id)
+      if (stamp === undefined) void loadTaskProgress(task.id)
+      else if (stamp !== task.updated_at) void loadTaskProgress(task.id, true)
+    }
   } catch (cause) {
     if (seq !== requestSeq) return
     error.value = cause instanceof ApiError ? cause.message : '读取任务失败，请稍后重试'

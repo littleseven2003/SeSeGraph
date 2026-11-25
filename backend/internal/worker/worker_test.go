@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -107,6 +108,7 @@ func (c *testClock) recorded() []time.Duration {
 }
 
 type env struct {
+	handle   *sql.DB
 	repo     *posts.Repository
 	dataDir  string
 	provider *fakeProvider
@@ -129,6 +131,7 @@ func newEnv(t *testing.T) *env {
 	}
 
 	e := &env{
+		handle:   handle,
 		repo:     posts.NewRepository(handle),
 		dataDir:  t.TempDir(),
 		provider: &fakeProvider{},
@@ -865,3 +868,42 @@ func TestRecoverKeepsHiddenWithoutPublishConfig(t *testing.T) {
 		t.Fatalf("状态 = %q / public=%v，期望 idle / false", state, public)
 	}
 }
+
+// TestFinishOnlyRetrySendsNothing 确认收尾失败重跑只补收尾，图床调用次数不增加。
+func TestFinishOnlyRetrySendsNothing(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	id := e.queuedPost(t, 2, "photo")
+	if _, err := e.worker.ProcessOnce(ctx); err != nil {
+		t.Fatalf("首次处理失败: %v", err)
+	}
+	if e.provider.callCount() != 2 {
+		t.Fatalf("首次上传调用 = %d，期望 2", e.provider.callCount())
+	}
+
+	// 模拟「图都存好、仅收尾写库失败」的终态。
+	if _, err := e.handle.ExecContext(ctx,
+		`UPDATE posts SET status = ?, error_message = ? WHERE id = ?`,
+		posts.StatusFailed, "同步收尾写库失败，请到任务页重试", id); err != nil {
+		t.Fatalf("写入失败态出错: %v", err)
+	}
+	ok, err := e.repo.RequeueFinish(ctx, id)
+	if err != nil || !ok {
+		t.Fatalf("收尾重排失败：ok=%v err=%v", ok, err)
+	}
+	before := e.provider.callCount()
+	if _, err := e.worker.ProcessOnce(ctx); err != nil {
+		t.Fatalf("重跑收尾出错: %v", err)
+	}
+	if e.provider.callCount() != before {
+		t.Fatalf("重跑收尾又调用了图床：%d → %d", before, e.provider.callCount())
+	}
+	post, err := e.repo.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("读取帖子失败: %v", err)
+	}
+	if post.Status != posts.StatusCompleted {
+		t.Errorf("重跑收尾后状态 = %s，期望已完成", post.Status)
+	}
+}
+
