@@ -257,6 +257,55 @@ func TestListTagCounts(t *testing.T) {
 	}
 }
 
+// TestListGallerySyncedScope 只收已完成图集，未传 scope 时保持全部。
+func TestListGallerySyncedScope(t *testing.T) {
+	repo := newTestRepository(t)
+	ids := seedGallery(t, repo)
+	ctx := context.Background()
+	if err := repo.MarkPostFinished(ctx, ids["海边写真"], StatusCompleted, ""); err != nil {
+		t.Fatalf("标记完成失败: %v", err)
+	}
+	if err := repo.MarkPostFinished(ctx, ids["街拍记录"], StatusUploading, ""); err != nil {
+		t.Fatalf("标记上传中失败: %v", err)
+	}
+
+	all, err := repo.ListGallery(ctx, GalleryQuery{})
+	if err != nil || all.Total != 3 {
+		t.Fatalf("未传 scope 应保持全部：总数 %d，错误 %v", all.Total, err)
+	}
+	synced, err := repo.ListGallery(ctx, GalleryQuery{Scope: "synced"})
+	if err != nil {
+		t.Fatalf("读取已同步画廊失败: %v", err)
+	}
+	if synced.Total != 1 || len(synced.Items) != 1 || synced.Items[0].Title != "海边写真" {
+		t.Fatalf("已同步范围 = %d 条 %v", synced.Total, titlesOf(synced))
+	}
+	// 未知取值按全部处理，避免拼错参数就把画廊清空。
+	unknown, err := repo.ListGallery(ctx, GalleryQuery{Scope: "everything"})
+	if err != nil || unknown.Total != 3 {
+		t.Fatalf("未知 scope 应按全部：%d，%v", unknown.Total, err)
+	}
+
+	counts, err := repo.ListTagCountsScoped(ctx, "synced")
+	if err != nil {
+		t.Fatalf("读取已同步标签失败: %v", err)
+	}
+	for _, item := range counts {
+		if item.Name == "海边" || item.Name == "写真" {
+			if item.Count != 1 {
+				t.Errorf("已同步标签 %s 计数 = %d，期望 1", item.Name, item.Count)
+			}
+		}
+		if item.Name == "风景" && item.Count != 0 {
+			t.Errorf("未同步标签应计 0，实际 %d", item.Count)
+		}
+	}
+	legacy, err := repo.ListTagCounts(ctx)
+	if err != nil || len(legacy) != 4 {
+		t.Fatalf("旧口径标签数 = %d，%v", len(legacy), err)
+	}
+}
+
 func TestMarkPublishedKeepsFirstPublishedAt(t *testing.T) {
 	repo := newTestRepository(t)
 	ctx := context.Background()

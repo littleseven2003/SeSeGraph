@@ -26,6 +26,8 @@ type GalleryQuery struct {
 	Tags     []string
 	Page     int
 	PageSize int
+	// Scope 为 synced 时只看已同步完成的图集；空串保持原有全部范围。
+	Scope string
 }
 
 // Normalize 清洗筛选条件：去空白、去重标签、修正分页范围。
@@ -34,6 +36,7 @@ func (q GalleryQuery) Normalize() GalleryQuery {
 		Keyword:  strings.TrimSpace(q.Keyword),
 		Page:     q.Page,
 		PageSize: q.PageSize,
+		Scope:    normalizeGalleryScope(q.Scope),
 	}
 	if normalized.Page < 1 {
 		normalized.Page = 1
@@ -143,10 +146,23 @@ func galleryFilter(query GalleryQuery) (string, []any) {
 			WHERE fpt.post_id = p.id AND ft.name = ?)`)
 		args = append(args, tag)
 	}
+	// 管理画廊只收已同步完成的图集：未传 scope 的调用保持原有全部范围。
+	if query.Scope == "synced" {
+		clauses = append(clauses, "p.status = ?")
+		args = append(args, StatusCompleted)
+	}
 	if len(clauses) == 0 {
 		return "", nil
 	}
 	return " WHERE " + strings.Join(clauses, " AND "), args
+}
+
+// normalizeGalleryScope 只接受已同步这一种收敛范围，其它取值按全部处理。
+func normalizeGalleryScope(scope string) string {
+	if strings.TrimSpace(scope) == "synced" {
+		return "synced"
+	}
+	return ""
 }
 
 // escapeLike 转义 LIKE 的通配符，避免关键词被当成模式。
@@ -324,10 +340,29 @@ func (r *Repository) galleryImages(ctx context.Context, postID int64) ([]Gallery
 
 // ListTagCounts 按关联帖子数量倒序返回全部标签。
 func (r *Repository) ListTagCounts(ctx context.Context) ([]TagCount, error) {
-	rows, err := r.handle.QueryContext(ctx,
-		`SELECT t.name, COUNT(pt.post_id) FROM tags t
+	return r.listTagCounts(ctx, "")
+}
+
+// ListTagCountsScoped 按画廊范围统计标签，synced 只数已同步完成的图集，
+// 让标签计数与同一范围内的列表、总数保持一致。
+func (r *Repository) ListTagCountsScoped(ctx context.Context, scope string) ([]TagCount, error) {
+	return r.listTagCounts(ctx, normalizeGalleryScope(scope))
+}
+
+func (r *Repository) listTagCounts(ctx context.Context, scope string) ([]TagCount, error) {
+	condition := ""
+	if scope == "synced" {
+		condition = " AND p.status = ?"
+	}
+	query := `SELECT t.name, COUNT(p.id) FROM tags t
 		 LEFT JOIN post_tags pt ON pt.tag_id = t.id
-		 GROUP BY t.id ORDER BY COUNT(pt.post_id) DESC, t.name`)
+		 LEFT JOIN posts p ON p.id = pt.post_id` + condition + `
+		 GROUP BY t.id ORDER BY COUNT(p.id) DESC, t.name`
+	args := []any{}
+	if scope == "synced" {
+		args = append(args, StatusCompleted)
+	}
+	rows, err := r.handle.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, errors.New("读取标签失败")
 	}

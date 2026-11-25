@@ -40,6 +40,7 @@ export function buildGalleryQuery(input: {
   tags?: string[]
   page?: number
   pageSize?: number
+  scope?: 'synced'
 }): string {
   const params = new URLSearchParams()
   const keyword = (input.q ?? '').trim()
@@ -49,6 +50,7 @@ export function buildGalleryQuery(input: {
   }
   params.set('page', String(input.page ?? 1))
   params.set('page_size', String(input.pageSize ?? 12))
+  if (input.scope === 'synced') params.set('scope', 'synced')
   return params.toString()
 }
 

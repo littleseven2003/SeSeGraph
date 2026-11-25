@@ -140,6 +140,10 @@ func parseGalleryQuery(c *gin.Context) (posts.GalleryQuery, string) {
 	query := posts.GalleryQuery{
 		Keyword: strings.TrimSpace(c.Query("q")),
 		Tags:    galleryTags(c),
+		Scope:   strings.TrimSpace(c.Query("scope")),
+	}
+	if scope := query.Scope; scope != "" && scope != "synced" {
+		return query, "scope 只支持 synced"
 	}
 	if len([]rune(query.Keyword)) > posts.MaxGalleryKeywordRunes {
 		return query, "关键词不超过 100 字"

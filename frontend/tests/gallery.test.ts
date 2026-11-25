@@ -574,3 +574,17 @@ test('停止的任务显示已停止', () => {
   assert.equal(label.label, '已停止')
   assert.equal(label.tone, 'error')
 })
+
+test('管理画廊显式请求已同步范围，未传时保持原语义', () => {
+  const withScope = buildGalleryQuery({ q: '', tags: [], page: 2, pageSize: 12, scope: 'synced' })
+  assert.ok(withScope.includes('scope=synced'), '显式下发已同步范围')
+  const plain = buildGalleryQuery({ q: '', tags: [], page: 2, pageSize: 12 })
+  assert.equal(plain.includes('scope='), false, '不传 scope 时查询串不变')
+
+  const home = readFileSync(new URL('../src/views/HomeView.vue', import.meta.url), 'utf8')
+  assert.ok(home.includes("scope: 'synced'"), '图集页按已同步范围取列表')
+  assert.ok(home.includes("fetchTags('synced')"), '标签计数与列表同一范围')
+  const settings = readFileSync(new URL('../src/views/SettingsView.vue', import.meta.url), 'utf8')
+  assert.equal(settings.includes("scope: 'synced'"), false, '设置页缓存重建仍用全部范围')
+})
+

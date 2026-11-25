@@ -103,6 +103,7 @@ async function loadList(target = page.value): Promise<void> {
       tags: selectedTags.value,
       page: target,
       pageSize: PAGE_SIZE,
+      scope: 'synced',
     })
     if (!listGuard.isCurrent(token)) return
     items.value = result.items
@@ -118,7 +119,7 @@ async function loadList(target = page.value): Promise<void> {
 
 async function loadTags(): Promise<void> {
   try {
-    tags.value = await fetchTags()
+    tags.value = await fetchTags('synced')
   } catch {
     // 标签读取失败不影响列表浏览
   }

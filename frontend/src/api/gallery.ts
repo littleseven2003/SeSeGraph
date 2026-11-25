@@ -77,6 +77,8 @@ export interface GalleryQuery {
   tags: string[]
   page: number
   pageSize: number
+  /** synced 只看已同步完成的图集；不传保持原有全部范围。 */
+  scope?: 'synced'
 }
 
 export interface PostMetadata {
@@ -111,6 +113,7 @@ export async function fetchGallery(query: GalleryQuery): Promise<GalleryPage> {
   for (const tag of query.tags) params.append('tag', tag)
   params.set('page', String(query.page))
   params.set('page_size', String(query.pageSize))
+  if (query.scope === 'synced') params.set('scope', 'synced')
   return (await (await galleryRequest('/api/posts?' + params.toString())).json()) as GalleryPage
 }
 
@@ -119,9 +122,10 @@ export async function fetchPostDetail(id: number): Promise<PostDetail> {
   return (await (await galleryRequest('/api/posts/' + String(id))).json()) as PostDetail
 }
 
-// fetchTags 读取全部标签及关联数量。
-export async function fetchTags(): Promise<TagCount[]> {
-  const body = (await (await galleryRequest('/api/tags')).json()) as { items: TagCount[] }
+// fetchTags 读取标签及关联数量，传 synced 时与已同步画廊同一范围。
+export async function fetchTags(scope?: 'synced'): Promise<TagCount[]> {
+  const suffix = scope === 'synced' ? '?scope=synced' : ''
+  const body = (await (await galleryRequest('/api/tags' + suffix)).json()) as { items: TagCount[] }
   return body.items
 }
 

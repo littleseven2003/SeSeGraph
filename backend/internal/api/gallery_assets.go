@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
@@ -12,7 +13,7 @@ import (
 // tagsHandler 返回全部标签及其关联帖子数量。
 func tagsHandler(deps Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		counts, err := deps.Posts.ListTagCounts(c.Request.Context())
+		counts, err := deps.Posts.ListTagCountsScoped(c.Request.Context(), strings.TrimSpace(c.Query("scope")))
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取标签失败"})
 			return
