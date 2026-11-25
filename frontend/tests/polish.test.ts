@@ -97,3 +97,17 @@ test('面向用户的编号与卷号彻底移除，内部标识与标签保留',
   // 内容标签的 # 语义保留。
   assert.ok(source('components/gallery/TagFilter.vue').includes('#{{ name }}'), '标签仍带 # 前缀')
 })
+
+test('顶栏防社死开关收紧尺寸但保留状态与热区', () => {
+  const header = source('components/AppHeader.vue')
+  assert.ok(header.includes('sm:h-8'), '桌面视觉高度收敛到 32px')
+  assert.ok(header.includes('h-11 shrink-0 items-center gap-1.5'), '窄屏保留 44px 触达高度')
+  assert.ok(header.includes('h-3.5 w-3.5 shrink-0'), '眼睛图标为 14px')
+  assert.ok(header.includes('h-3.5 w-6 shrink-0'), '拨片收窄')
+  assert.ok(header.includes('h-2.5 w-2.5 rounded-full bg-white'), '拨片圆点同步缩小')
+  assert.ok(header.includes(':aria-pressed="blurEnabled"'), '开关状态对读屏可见')
+  assert.ok(header.includes("blurEnabled ? '关闭防社死模糊' : '开启防社死模糊'"), '可访问名称随状态切换')
+  assert.ok(header.includes('hidden sm:inline">防社死<'), '桌面短标签')
+  assert.ok(header.includes('toggleBlur'), '点击仍切换同一份全局偏好')
+  assert.equal(header.includes('防社死模糊</span>'), false, '不再显示长标签')
+})

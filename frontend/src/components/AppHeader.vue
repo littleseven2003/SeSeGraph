@@ -58,24 +58,26 @@ async function signOut(): Promise<void> {
         <div class="flex min-w-0 items-center gap-0.5 sm:gap-1">
           <button
             type="button"
-            class="inline-flex h-11 shrink-0 items-center gap-2 rounded-full px-2 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink sm:px-3.5"
+            class="inline-flex h-11 shrink-0 items-center gap-1.5 rounded-lg border border-line bg-canvas/60 px-2 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink sm:h-8 sm:px-2.5"
+            :class="blurEnabled ? 'border-accent/30 bg-accent/10 text-accent' : ''"
             :aria-pressed="blurEnabled"
-            aria-label="切换防社死模糊"
+            :aria-label="blurEnabled ? '关闭防社死模糊' : '开启防社死模糊'"
+            :title="blurEnabled ? '防社死已开启' : '防社死已关闭'"
             @click="toggleBlur"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4 shrink-0" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-3.5 w-3.5 shrink-0" aria-hidden="true">
               <path d="M2.5 12S6 6.5 12 6.5 21.5 12 21.5 12 18 17.5 12 17.5 2.5 12 2.5 12Z" stroke-linecap="round" />
               <circle cx="12" cy="12" r="2.6" />
               <path v-if="blurEnabled" d="M4 20L20 4" stroke-linecap="round" />
             </svg>
             <span
-              class="relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition motion-safe:active:scale-95"
+              class="relative inline-flex h-3.5 w-6 shrink-0 items-center rounded-full transition motion-safe:active:scale-95"
               :class="blurEnabled ? 'bg-accent' : 'bg-line'"
               aria-hidden="true"
             >
-              <span class="absolute h-3 w-3 rounded-full bg-white transition" :class="blurEnabled ? 'left-3.5' : 'left-0.5'"></span>
+              <span class="absolute h-2.5 w-2.5 rounded-full bg-white transition" :class="blurEnabled ? 'left-3' : 'left-0.5'"></span>
             </span>
-            <span class="hidden lg:inline">防社死模糊</span>
+            <span class="hidden sm:inline">防社死</span>
           </button>
 
           <nav class="hidden items-center gap-0.5 sm:flex sm:gap-1" aria-label="全站导航">
