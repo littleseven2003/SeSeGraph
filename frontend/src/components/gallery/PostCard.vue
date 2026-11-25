@@ -158,13 +158,13 @@ const copyLabel = computed(() => {
         <button
           v-if="shareUrl !== ''"
           type="button"
-          class="-my-1.5 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
+          class="-my-1.5 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg"
           :aria-label="copyLabel"
           :title="copyLabel"
           @click="copyLink"
         >
           <span
-            class="inline-flex h-8 w-8 items-center justify-center rounded-full border transition motion-safe:group-hover:scale-[1.04]"
+            class="inline-flex h-8 w-8 items-center justify-center rounded-lg border transition motion-safe:group-hover:scale-[1.04]"
             :class="
               copyState === 'idle'
                 ? 'border-brand/25 bg-brand-soft text-brand-strong'

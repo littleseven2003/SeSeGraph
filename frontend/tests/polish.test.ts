@@ -50,3 +50,24 @@ test('回到顶部只滚动窗口，不动筛选与页码', () => {
     assert.ok(view.includes(`<BackToTop${extra} />`), `${file} 挂载回顶入口`)
   }
 })
+
+test('圆角分三档：卡片 16px、操作 12px、紧凑动作 8px', () => {
+  const login = source('views/LoginView.vue')
+  assert.ok(login.includes('rounded-xl bg-brand'), '登录提交为 12px 圆角')
+  assert.equal(login.includes('rounded-full bg-brand'), false, '主操作不再用胶囊')
+
+  const drawer = source('components/gallery/DetailDrawer.vue')
+  assert.ok(drawer.includes('sm:h-8 sm:w-8'), '紧凑图标动作在桌面收紧为 8px 圆角尺寸')
+  assert.ok(drawer.includes('h-11 rounded-xl bg-brand'), '抽屉主操作为 12px')
+
+  assert.ok(source('components/gallery/FocusCarousel.vue').includes('rounded-2xl bg-surface'), '卡片容器保持 16px')
+  const card = source('components/gallery/PostCard.vue')
+  assert.ok(card.includes('whitespace-nowrap rounded-full border px-2 py-1'), '状态徽章保持圆形轮廓')
+
+  for (const file of ['views/HomeView.vue', 'views/TasksView.vue']) {
+    const view = source(file)
+    assert.ok(view.includes('rounded-full bg-canvas p-1'), `${file} 分段控件保持圆形`)
+  }
+  assert.ok(source('utils/../components/tasks/TaskStageBar.vue').includes('overflow-hidden rounded-full bg-canvas'), '进度轨保持圆形')
+  assert.ok(source('components/workbench/ModeSwitch.vue').includes('h-6 w-10 items-center rounded-full'), '开关拨片保持圆形')
+})

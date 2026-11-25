@@ -149,7 +149,7 @@ async function submit(): Promise<void> {
         <button
           type="submit"
           :disabled="pending"
-          class="mt-5 h-11 w-full rounded-full bg-brand text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:cursor-not-allowed disabled:bg-line disabled:text-muted disabled:shadow-none"
+          class="mt-5 h-11 w-full rounded-xl bg-brand text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:cursor-not-allowed disabled:bg-line disabled:text-muted disabled:shadow-none"
         >
           {{ pending ? '正在创建…' : '创建管理员' }}
         </button>

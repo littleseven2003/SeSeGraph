@@ -1564,7 +1564,7 @@ onBeforeUnmount(() => {
           </div>
           <button
             type="button"
-            class="h-11 rounded-full px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-50"
+            class="h-11 rounded-xl px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-50"
             :disabled="!canLeaveResume(ready, phase) || busy || working"
             @click="discardSnapshot"
           >
@@ -1604,7 +1604,7 @@ onBeforeUnmount(() => {
           </span>
           <router-link
             :to="{ name: 'workbench', query: { resume: resumableHint.postId } }"
-            class="shrink-0 rounded-full px-3 py-1.5 text-sm font-medium text-brand-strong transition hover:bg-canvas"
+            class="shrink-0 rounded-lg px-3 py-1.5 text-sm font-medium text-brand-strong transition hover:bg-canvas"
           >
             前往续传 →
           </router-link>
@@ -1646,7 +1646,7 @@ onBeforeUnmount(() => {
                 <span class="tnum text-xs text-muted">{{ imageCount }} 项 · {{ formatBytes(totalSize) }}</span>
                 <button
                   type="button"
-                  class="inline-flex h-11 items-center rounded-full px-3.5 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-50"
+                  class="inline-flex h-11 items-center rounded-xl px-3.5 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-50"
                   :disabled="locked"
                   @click="onSortByName"
                 >
@@ -1655,7 +1655,7 @@ onBeforeUnmount(() => {
                 <button
                   v-if="!locked"
                   type="button"
-                  class="inline-flex h-11 items-center rounded-full border border-line px-3.5 text-xs font-medium text-muted transition hover:border-ink/25 hover:bg-canvas hover:text-ink"
+                  class="inline-flex h-11 items-center rounded-xl border border-line px-3.5 text-xs font-medium text-muted transition hover:border-ink/25 hover:bg-canvas hover:text-ink"
                   @click="clearAll"
                 >
                   清空
@@ -1736,7 +1736,7 @@ onBeforeUnmount(() => {
                 <div class="mt-3 space-y-2">
                   <button
                     type="button"
-                    class="h-11 w-full rounded-full bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+                    class="h-11 w-full rounded-xl bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
                     :disabled="busy || phase === 'queued' || finished"
                     @click="publish(newDraft ? 'auto' : 'manual')"
                   >
@@ -1745,7 +1745,7 @@ onBeforeUnmount(() => {
                   <button
                     v-if="newDraft && !busy && !finished"
                     type="button"
-                    class="h-11 w-full rounded-full border border-line px-4 text-sm font-medium text-muted transition hover:border-ink/25 hover:bg-canvas hover:text-ink"
+                    class="h-11 w-full rounded-xl border border-line px-4 text-sm font-medium text-muted transition hover:border-ink/25 hover:bg-canvas hover:text-ink"
                     @click="publish('manual')"
                   >
                     仅存图（稍后手动发布）
@@ -1753,7 +1753,7 @@ onBeforeUnmount(() => {
                   <button
                     v-if="finished"
                     type="button"
-                    class="h-11 w-full rounded-full px-3 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
+                    class="h-11 w-full rounded-xl px-3 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
                     @click="clearAll"
                   >
                     再发一组
@@ -1761,7 +1761,7 @@ onBeforeUnmount(() => {
                   <button
                     v-else-if="phase === 'failed' || phase === 'queued'"
                     type="button"
-                    class="h-11 w-full rounded-full px-3 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-50"
+                    class="h-11 w-full rounded-xl px-3 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-50"
                     :disabled="busy || working"
                     @click="discardSnapshot"
                   >
@@ -1785,7 +1785,7 @@ onBeforeUnmount(() => {
             <button
               v-if="finished"
               type="button"
-              class="h-11 shrink-0 rounded-full px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
+              class="h-11 shrink-0 rounded-xl px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
               @click="clearAll"
             >
               再发一组
@@ -1793,7 +1793,7 @@ onBeforeUnmount(() => {
             <button
               v-else-if="phase === 'failed' || phase === 'queued'"
               type="button"
-              class="h-11 shrink-0 rounded-full px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-50"
+              class="h-11 shrink-0 rounded-xl px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-50"
               :disabled="busy || working"
               @click="discardSnapshot"
             >
@@ -1802,14 +1802,14 @@ onBeforeUnmount(() => {
             <button
               v-if="newDraft && !busy && !finished"
               type="button"
-              class="h-11 shrink-0 rounded-full border border-line px-3 text-xs font-medium text-muted transition hover:border-ink/25 hover:bg-canvas hover:text-ink"
+              class="h-11 shrink-0 rounded-xl border border-line px-3 text-xs font-medium text-muted transition hover:border-ink/25 hover:bg-canvas hover:text-ink"
               @click="publish('manual')"
             >
               仅存图
             </button>
             <button
               type="button"
-              class="h-11 shrink-0 rounded-full bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+              class="h-11 shrink-0 rounded-xl bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
               :disabled="busy || phase === 'queued' || finished"
               @click="publish(newDraft ? 'auto' : 'manual')"
             >
@@ -1849,7 +1849,7 @@ onBeforeUnmount(() => {
           </button>
           <button
             type="button"
-            class="absolute -top-12 right-0 flex h-11 w-11 items-center justify-center rounded-full bg-surface text-lg text-ink shadow transition hover:bg-canvas"
+            class="absolute -top-12 right-0 flex h-11 w-11 items-center justify-center rounded-lg bg-surface text-lg text-ink shadow transition hover:bg-canvas"
             aria-label="关闭预览"
             @click="closePreview"
           >

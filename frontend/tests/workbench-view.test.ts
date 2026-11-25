@@ -71,12 +71,12 @@ test('空态不显示数量与清空，续传提示放在拖放区下方', () =>
   const dropzone = source.indexOf('<DropZone :disabled="!ready || working || locked"', empty)
   assert.ok(dropzone > empty && dropzone < hint, '提示排在拖放区下方')
   assert.ok(source.includes('与 720px 容器同宽'), '说明同宽口径')
-  // 数量与清空收进「已选媒体」标题行，清空改为胶囊形态。
+  // 数量与清空收进「已选媒体」标题行，清空是紧凑动作。
   const media = source.indexOf('已选媒体')
   const count = source.indexOf('{{ imageCount }} 项 · {{ formatBytes(totalSize) }}', media)
   const clear = source.indexOf('清空', media)
   assert.ok(count > media && clear > count, '标题行右侧依次是数量与清空')
-  assert.ok(source.slice(clear - 260, clear).includes('rounded-full'), '清空按钮为胶囊形态')
+  assert.ok(source.slice(clear - 260, clear).includes('rounded-xl'), '清空按钮收敛为 12px 圆角的次级动作')
 })
 
 test('提交时明确选择发布意图，续传沿用原任务', () => {

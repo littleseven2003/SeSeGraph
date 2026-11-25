@@ -238,12 +238,12 @@ onBeforeUnmount(() => {
 
               <button
                 type="button"
-                class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
+                class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg"
                 :aria-label="`打开《${entry.item.title}》`"
                 :title="`打开《${entry.item.title}》`"
                 @click="emit('open', entry.item.id)"
               >
-                <span class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-line bg-surface text-ink transition hover:border-ink/30 hover:bg-ink hover:text-white">
+                <span class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-line bg-surface text-ink transition hover:border-ink/30 hover:bg-ink hover:text-white">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4" aria-hidden="true">
                     <path d="M7 17 17 7M9 7h8v8" stroke-linecap="round" stroke-linejoin="round" />
                   </svg>
@@ -253,13 +253,13 @@ onBeforeUnmount(() => {
               <button
                 v-if="entry.shareUrl !== ''"
                 type="button"
-                class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
+                class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg"
                 :aria-label="copiedId === entry.item.id ? `已复制《${entry.item.title}》链接` : `复制《${entry.item.title}》链接`"
                 :title="copiedId === entry.item.id ? '已复制链接' : '复制链接'"
                 @click="copyItem(entry.item)"
               >
                 <span
-                  class="inline-flex h-8 w-8 items-center justify-center rounded-full border transition"
+                  class="inline-flex h-8 w-8 items-center justify-center rounded-lg border transition"
                   :class="
                     copiedId === entry.item.id
                       ? 'border-accent/30 bg-accent-soft text-accent'

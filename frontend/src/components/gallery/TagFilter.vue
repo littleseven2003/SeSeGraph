@@ -145,7 +145,7 @@ onBeforeUnmount(() => {
       <button
         v-if="selectedTags.length > 0"
         type="button"
-        class="h-11 shrink-0 rounded-full px-2 text-xs font-medium text-danger underline-offset-4 hover:underline"
+        class="h-11 shrink-0 rounded-lg px-2 text-xs font-medium text-danger underline-offset-4 hover:underline"
         @click="clearAll"
       >
         清除标签
@@ -163,7 +163,7 @@ onBeforeUnmount(() => {
         <p class="text-sm font-semibold">全部标签 <span class="tnum text-xs font-normal text-muted">{{ props.tags.length }}</span></p>
         <button
           type="button"
-          class="inline-flex h-9 w-9 items-center justify-center rounded-full text-muted transition hover:bg-canvas hover:text-ink"
+          class="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted transition hover:bg-canvas hover:text-ink"
           aria-label="关闭标签面板"
           @click="closePanel"
         >
@@ -180,7 +180,7 @@ onBeforeUnmount(() => {
           v-model="query"
           type="search"
           placeholder="搜索标签…"
-          class="h-11 w-full rounded-full border border-line bg-canvas px-3.5 text-sm outline-none transition focus:border-ink/40 focus:bg-surface"
+          class="h-11 w-full rounded-xl border border-line bg-canvas px-3.5 text-sm outline-none transition focus:border-ink/40 focus:bg-surface"
         />
       </label>
 

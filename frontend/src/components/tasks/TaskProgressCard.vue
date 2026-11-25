@@ -59,7 +59,7 @@ const publishLabel = computed(() => (props.progress ? publishStateLabel(props.pr
       <button
         v-if="canRetry"
         type="button"
-        class="inline-flex h-11 items-center rounded-full bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+        class="inline-flex h-11 items-center rounded-xl bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
         :disabled="props.retrying"
         @click="emit('retry')"
       >
@@ -68,7 +68,7 @@ const publishLabel = computed(() => (props.progress ? publishStateLabel(props.pr
       <button
         v-if="controllable && controlState === 'running'"
         type="button"
-        class="inline-flex h-11 items-center rounded-full border border-line bg-surface px-3.5 text-xs font-medium text-muted transition hover:border-ink/25 hover:text-ink disabled:opacity-60"
+        class="inline-flex h-11 items-center rounded-xl border border-line bg-surface px-3.5 text-xs font-medium text-muted transition hover:border-ink/25 hover:text-ink disabled:opacity-60"
         :disabled="props.controlBusy"
         @click="emit('pause')"
       >
@@ -77,7 +77,7 @@ const publishLabel = computed(() => (props.progress ? publishStateLabel(props.pr
       <button
         v-else-if="controllable && controlState === 'paused'"
         type="button"
-        class="inline-flex h-11 items-center rounded-full border border-brand/30 bg-brand-soft px-3.5 text-xs font-medium text-brand-strong transition hover:border-brand/50 disabled:opacity-60"
+        class="inline-flex h-11 items-center rounded-xl border border-brand/30 bg-brand-soft px-3.5 text-xs font-medium text-brand-strong transition hover:border-brand/50 disabled:opacity-60"
         :disabled="props.controlBusy"
         @click="emit('resume')"
       >
@@ -86,7 +86,7 @@ const publishLabel = computed(() => (props.progress ? publishStateLabel(props.pr
       <button
         v-if="controllable"
         type="button"
-        class="inline-flex h-11 items-center rounded-full border border-danger/35 bg-surface px-3.5 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-60"
+        class="inline-flex h-11 items-center rounded-xl border border-danger/35 bg-surface px-3.5 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-60"
         :disabled="props.controlBusy"
         @click="emit('stop')"
       >
@@ -105,7 +105,7 @@ const publishLabel = computed(() => (props.progress ? publishStateLabel(props.pr
         <button
           v-if="canPublish"
           type="button"
-          class="inline-flex h-11 items-center rounded-full bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+          class="inline-flex h-11 items-center rounded-xl bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
           :disabled="props.progress ? publishActive(props.progress) || props.publishing : false"
           @click="emit('publish')"
         >

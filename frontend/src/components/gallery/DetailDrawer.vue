@@ -796,7 +796,7 @@ watch(
           <button
             v-if="detail !== null && !editing"
             type="button"
-            class="h-11 rounded-full border border-line px-3.5 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
+            class="h-11 rounded-xl border border-line px-3.5 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
             :disabled="toggling"
             @click="startEdit"
           >
@@ -805,7 +805,7 @@ watch(
           <button
             v-if="detail !== null && !editing"
             type="button"
-            class="h-11 rounded-full border px-3.5 text-xs font-medium transition disabled:opacity-60"
+            class="h-11 rounded-xl border px-3.5 text-xs font-medium transition disabled:opacity-60"
             :class="detail.disabled ? 'border-accent/40 text-accent hover:bg-accent/10' : 'border-line text-danger hover:bg-danger-soft'"
             :disabled="toggling"
             @click="askToggle"
@@ -815,7 +815,7 @@ watch(
           <button
             ref="closeButton"
             type="button"
-            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-line text-muted transition hover:bg-canvas hover:text-ink"
+            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-line text-muted transition hover:bg-canvas hover:text-ink"
             aria-label="关闭详情"
             @click="emit('close')"
           >
@@ -833,7 +833,7 @@ watch(
           <p class="text-sm text-danger">{{ error }}</p>
           <button
             type="button"
-            class="mt-3 h-11 rounded-full border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
+            class="mt-3 h-11 rounded-xl border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
             @click="emit('retry')"
           >
             重试
@@ -883,14 +883,14 @@ watch(
           <div class="flex items-center gap-2">
             <button
               type="submit"
-              class="h-11 rounded-full bg-brand px-4 text-xs font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+              class="h-11 rounded-xl bg-brand px-4 text-xs font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
               :disabled="saving"
             >
               {{ saving ? '正在保存…' : '保存' }}
             </button>
             <button
               type="button"
-              class="h-11 rounded-full border border-line px-3.5 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
+              class="h-11 rounded-xl border border-line px-3.5 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
               :disabled="saving"
               @click="cancelEdit"
             >
@@ -905,7 +905,7 @@ watch(
             <div class="mt-2 flex items-center gap-2">
               <button
                 type="button"
-                class="h-9 rounded-full bg-brand px-3 text-xs font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+                class="h-9 rounded-lg bg-brand px-3 text-xs font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
                 :disabled="toggling"
                 @click="doToggle"
               >
@@ -913,7 +913,7 @@ watch(
               </button>
               <button
                 type="button"
-                class="h-9 rounded-full border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
+                class="h-9 rounded-lg border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
                 :disabled="toggling"
                 @click="confirmToggle = false"
               >
@@ -949,7 +949,7 @@ watch(
             <button
               v-if="canRefreshViews"
               type="button"
-              class="inline-flex h-8 items-center gap-1 rounded-full border border-line bg-surface px-2.5 text-xs text-muted transition hover:border-ink/25 hover:text-ink disabled:opacity-60"
+              class="inline-flex h-8 items-center gap-1 rounded-lg border border-line bg-surface px-2.5 text-xs text-muted transition hover:border-ink/25 hover:text-ink disabled:opacity-60"
               :disabled="viewsRefreshing"
               :title="viewsTitle"
               aria-label="刷新浏览量"
@@ -995,7 +995,7 @@ watch(
             <div class="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                class="inline-flex h-11 min-w-[8.5rem] flex-1 items-center justify-center rounded-full border px-3.5 text-sm font-medium transition disabled:cursor-not-allowed"
+                class="inline-flex h-11 min-w-[8.5rem] flex-1 items-center justify-center rounded-xl border px-3.5 text-sm font-medium transition disabled:cursor-not-allowed"
                 :class="
                   shareReady
                     ? 'border-brand bg-brand text-brand-ink hover:bg-brand-strong'
@@ -1008,7 +1008,7 @@ watch(
               </button>
               <button
                 type="button"
-                class="inline-flex h-11 min-w-[8.5rem] flex-1 items-center justify-center rounded-full border px-3.5 text-sm font-medium transition disabled:cursor-not-allowed"
+                class="inline-flex h-11 min-w-[8.5rem] flex-1 items-center justify-center rounded-xl border px-3.5 text-sm font-medium transition disabled:cursor-not-allowed"
                 :class="
                   shareReady
                     ? 'border-line bg-surface text-ink hover:border-ink/25'
@@ -1153,7 +1153,7 @@ watch(
                     <button
                       v-if="image.mime_type === 'video/mp4'"
                       type="button"
-                      class="mt-1 inline-flex h-7 items-center rounded-full border border-line px-2.5 text-[11px] text-muted transition hover:bg-canvas"
+                      class="mt-1 inline-flex h-7 items-center rounded-lg border border-line px-2.5 text-[11px] text-muted transition hover:bg-canvas"
                       @click="togglePlay(image.short_code)"
                     >
                       {{ playingCode === image.short_code ? '收起' : '播放' }}
@@ -1268,7 +1268,7 @@ watch(
               <div class="mt-2 flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  class="h-9 rounded-full bg-danger px-3 text-xs font-medium text-white transition hover:bg-danger/90 disabled:opacity-60"
+                  class="h-9 rounded-lg bg-danger px-3 text-xs font-medium text-white transition hover:bg-danger/90 disabled:opacity-60"
                   :disabled="deleting"
                   @click="emit('delete')"
                 >
@@ -1276,7 +1276,7 @@ watch(
                 </button>
                 <button
                   type="button"
-                  class="h-9 rounded-full border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
+                  class="h-9 rounded-lg border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
                   :disabled="deleting"
                   @click="confirmDelete = false"
                 >
@@ -1290,7 +1290,7 @@ watch(
             <button
               v-else
               type="button"
-              class="h-9 rounded-full border border-danger/35 px-3 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-60"
+              class="h-9 rounded-lg border border-danger/35 px-3 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-60"
               :disabled="deleting"
               @click="confirmDelete = true"
             >
@@ -1324,14 +1324,14 @@ watch(
               <div class="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  class="h-9 rounded-full bg-brand px-3 text-xs font-medium text-brand-ink transition hover:bg-brand-strong"
+                  class="h-9 rounded-lg bg-brand px-3 text-xs font-medium text-brand-ink transition hover:bg-brand-strong"
                   @click="applyTemplate"
                 >
                   保存模板
                 </button>
                 <button
                   type="button"
-                  class="h-9 rounded-full border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
+                  class="h-9 rounded-lg border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
                   @click="resetTemplate"
                 >
                   恢复默认

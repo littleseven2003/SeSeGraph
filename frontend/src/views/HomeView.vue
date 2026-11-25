@@ -324,14 +324,14 @@ onBeforeUnmount(() => {
               type="search"
               aria-label="搜索图集"
               placeholder="搜索标题或标签"
-              class="h-11 w-full rounded-full border border-line bg-surface pl-9 pr-3 text-sm outline-none transition focus:border-ink/40 focus:shadow-[0_2px_0_0_rgba(27,26,23,0.06)]"
+              class="h-11 w-full rounded-xl border border-line bg-surface pl-9 pr-3 text-sm outline-none transition focus:border-ink/40 focus:shadow-[0_2px_0_0_rgba(27,26,23,0.06)]"
             />
           </label>
 
           <div class="flex w-full items-center gap-2 sm:w-auto">
             <router-link
               :to="{ name: 'workbench' }"
-              class="inline-flex h-11 flex-1 shrink-0 items-center justify-center rounded-full bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong sm:flex-none"
+              class="inline-flex h-11 flex-1 shrink-0 items-center justify-center rounded-xl bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong sm:flex-none"
             >
               新建图集
             </router-link>
@@ -387,7 +387,7 @@ onBeforeUnmount(() => {
           <p class="text-sm text-danger">{{ error }}</p>
           <button
             type="button"
-            class="mt-3 h-11 rounded-full px-4 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
+            class="mt-3 h-11 rounded-xl px-4 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
             @click="loadList()"
           >
             重新加载
@@ -416,7 +416,7 @@ onBeforeUnmount(() => {
           <button
             v-if="hasFilter"
             type="button"
-            class="mt-4 h-11 rounded-full px-4 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
+            class="mt-4 h-11 rounded-xl px-4 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
             @click="clearFilters"
           >
             清除筛选

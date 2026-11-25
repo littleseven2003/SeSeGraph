@@ -95,7 +95,7 @@ async function onDrop(event: DragEvent): Promise<void> {
       <button
         type="button"
         :disabled="props.disabled"
-        class="h-11 rounded-full bg-canvas px-3 text-xs font-medium text-muted transition hover:bg-line/50 hover:text-ink disabled:opacity-60"
+        class="h-11 rounded-xl bg-canvas px-3 text-xs font-medium text-muted transition hover:bg-line/50 hover:text-ink disabled:opacity-60"
         @click="open(imageInput)"
       >
         选择图片 / 视频
@@ -103,7 +103,7 @@ async function onDrop(event: DragEvent): Promise<void> {
       <button
         type="button"
         :disabled="props.disabled"
-        class="h-11 rounded-full bg-canvas px-3 text-xs font-medium text-muted transition hover:bg-line/50 hover:text-ink disabled:opacity-60"
+        class="h-11 rounded-xl bg-canvas px-3 text-xs font-medium text-muted transition hover:bg-line/50 hover:text-ink disabled:opacity-60"
         @click="open(folderInput)"
       >
         选择文件夹
@@ -111,7 +111,7 @@ async function onDrop(event: DragEvent): Promise<void> {
       <button
         type="button"
         :disabled="props.disabled"
-        class="h-11 rounded-full bg-canvas px-3 text-xs font-medium text-muted transition hover:bg-line/50 hover:text-ink disabled:opacity-60"
+        class="h-11 rounded-xl bg-canvas px-3 text-xs font-medium text-muted transition hover:bg-line/50 hover:text-ink disabled:opacity-60"
         @click="open(zipInput)"
       >
         选择 ZIP
@@ -143,7 +143,7 @@ async function onDrop(event: DragEvent): Promise<void> {
       <button
         type="button"
         :disabled="props.disabled"
-        class="h-11 rounded-full bg-brand px-5 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+        class="h-11 rounded-xl bg-brand px-5 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
         @click="open(zipInput)"
       >
         选择 ZIP
@@ -151,7 +151,7 @@ async function onDrop(event: DragEvent): Promise<void> {
       <button
         type="button"
         :disabled="props.disabled"
-        class="h-11 rounded-full bg-canvas px-4 text-sm font-medium text-muted transition hover:bg-line/50 hover:text-ink disabled:opacity-60"
+        class="h-11 rounded-xl bg-canvas px-4 text-sm font-medium text-muted transition hover:bg-line/50 hover:text-ink disabled:opacity-60"
         @click="open(folderInput)"
       >
         选择文件夹
@@ -159,7 +159,7 @@ async function onDrop(event: DragEvent): Promise<void> {
       <button
         type="button"
         :disabled="props.disabled"
-        class="h-11 rounded-full bg-canvas px-4 text-sm font-medium text-muted transition hover:bg-line/50 hover:text-ink disabled:opacity-60"
+        class="h-11 rounded-xl bg-canvas px-4 text-sm font-medium text-muted transition hover:bg-line/50 hover:text-ink disabled:opacity-60"
         @click="open(imageInput)"
       >
         选择图片 / 视频

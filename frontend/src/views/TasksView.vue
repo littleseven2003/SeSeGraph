@@ -226,7 +226,7 @@ onBeforeUnmount(() => {
         </div>
         <router-link
           :to="{ name: 'workbench' }"
-          class="inline-flex h-11 items-center rounded-full bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong"
+          class="inline-flex h-11 items-center rounded-xl bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong"
         >
           新建图集
         </router-link>
@@ -265,14 +265,14 @@ onBeforeUnmount(() => {
           <button
             v-if="filtered"
             type="button"
-            class="inline-flex h-11 items-center rounded-full border border-line bg-surface px-4 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
+            class="inline-flex h-11 items-center rounded-xl border border-line bg-surface px-4 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
             @click="setFilter('')"
           >
             查看全部
           </button>
           <router-link
             :to="{ name: 'workbench' }"
-            class="inline-flex h-11 items-center rounded-full bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong"
+            class="inline-flex h-11 items-center rounded-xl bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong"
           >
             新建图集
           </router-link>
@@ -320,7 +320,7 @@ onBeforeUnmount(() => {
               <button
                 v-if="canResume(task)"
                 type="button"
-                class="inline-flex h-11 items-center rounded-full border border-brand/30 bg-brand-soft px-4 text-xs font-medium text-brand-strong transition hover:border-brand/50 disabled:opacity-60"
+                class="inline-flex h-11 items-center rounded-xl border border-brand/30 bg-brand-soft px-4 text-xs font-medium text-brand-strong transition hover:border-brand/50 disabled:opacity-60"
                 :disabled="busyId !== 0"
                 @click="control(task, 'resume')"
               >
@@ -329,21 +329,21 @@ onBeforeUnmount(() => {
               <router-link
                 v-else-if="canRetryStore(task)"
                 :to="{ name: 'workbench', query: { resume: task.id } }"
-                class="inline-flex h-11 items-center rounded-full border border-brand/30 bg-brand-soft px-4 text-xs font-medium text-brand-strong transition hover:border-brand/50"
+                class="inline-flex h-11 items-center rounded-xl border border-brand/30 bg-brand-soft px-4 text-xs font-medium text-brand-strong transition hover:border-brand/50"
               >
                 重试存图
               </router-link>
               <router-link
                 v-else-if="canContinueUpload(task)"
                 :to="{ name: 'workbench', query: { resume: task.id } }"
-                class="inline-flex h-11 items-center rounded-full border border-line bg-surface px-4 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
+                class="inline-flex h-11 items-center rounded-xl border border-line bg-surface px-4 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
               >
                 继续上传
               </router-link>
               <button
                 v-if="canPause(task)"
                 type="button"
-                class="inline-flex h-11 items-center rounded-full border border-line bg-surface px-4 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
+                class="inline-flex h-11 items-center rounded-xl border border-line bg-surface px-4 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
                 :disabled="busyId !== 0"
                 @click="control(task, 'pause')"
               >
@@ -352,7 +352,7 @@ onBeforeUnmount(() => {
               <button
                 v-if="canStop(task)"
                 type="button"
-                class="inline-flex h-11 items-center rounded-full border border-danger/35 bg-surface px-4 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-60"
+                class="inline-flex h-11 items-center rounded-xl border border-danger/35 bg-surface px-4 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-60"
                 :disabled="busyId !== 0"
                 @click="control(task, 'stop')"
               >

@@ -684,7 +684,7 @@ onBeforeUnmount(() => {
           <button
             type="button"
             :disabled="saving"
-            class="mt-3 h-11 w-full rounded-full bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+            class="mt-3 h-11 w-full rounded-xl bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
             @click="save"
           >
             {{ saving ? '保存中…' : '保存设置' }}
@@ -699,7 +699,7 @@ onBeforeUnmount(() => {
           <p class="text-sm text-danger">{{ loadError }}</p>
           <button
             type="button"
-            class="mt-3 h-11 rounded-full border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
+            class="mt-3 h-11 rounded-xl border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
             @click="load"
           >
             重试
@@ -737,7 +737,7 @@ onBeforeUnmount(() => {
                           v-if="view.telegram.token_set && !managed(FIELD_TELEGRAM_TOKEN)"
                           type="button"
                           :disabled="saving"
-                          class="h-11 shrink-0 rounded-full border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas disabled:opacity-60"
+                          class="h-11 shrink-0 rounded-xl border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas disabled:opacity-60"
                           @click="clearToken"
                         >
                           清除
@@ -847,7 +847,7 @@ onBeforeUnmount(() => {
                       <button
                         type="button"
                         :disabled="telegraphAccountDisabled(telegraphState()) || telegraphSubmitting"
-                        class="h-11 shrink-0 rounded-full border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-surface hover:text-ink disabled:opacity-60"
+                        class="h-11 shrink-0 rounded-xl border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-surface hover:text-ink disabled:opacity-60"
                         @click="requestTelegraphAccount"
                       >
                         {{ telegraphSubmitting ? '申请中…' : '申请账户' }}
@@ -906,7 +906,7 @@ onBeforeUnmount(() => {
                           v-if="view.proxy.url_set && view.proxy.mode !== 'custom' && !managed(FIELD_PROXY_URL)"
                           type="button"
                           :disabled="saving"
-                          class="h-11 shrink-0 rounded-full border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas disabled:opacity-60"
+                          class="h-11 shrink-0 rounded-xl border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas disabled:opacity-60"
                           @click="clearProxy"
                         >
                           清除
@@ -1037,7 +1037,7 @@ onBeforeUnmount(() => {
                   <button
                     type="button"
                     :disabled="checking"
-                    class="h-11 shrink-0 rounded-full border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
+                    class="h-11 shrink-0 rounded-xl border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
                     @click="check"
                   >
                     {{ checking ? '检测中…' : '开始检测' }}
@@ -1087,7 +1087,7 @@ onBeforeUnmount(() => {
                     <h3 class="text-sm font-semibold">流量看护</h3>
                     <button
                       type="button"
-                      class="h-11 shrink-0 rounded-full border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
+                      class="h-11 shrink-0 rounded-xl border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
                       @click="loadTraffic"
                     >
                       刷新
@@ -1160,7 +1160,7 @@ onBeforeUnmount(() => {
                       <button
                         type="button"
                         :disabled="backing"
-                        class="h-11 rounded-full border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
+                        class="h-11 rounded-xl border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
                         @click="runBackup"
                       >
                         {{ backing ? '备份中…' : '立即备份' }}
@@ -1168,7 +1168,7 @@ onBeforeUnmount(() => {
                       <a
                         v-if="backup !== null && backup.latest !== null"
                         href="/api/backup/download"
-                        class="inline-flex h-11 items-center rounded-full border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
+                        class="inline-flex h-11 items-center rounded-xl border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
                       >
                         下载最近备份
                       </a>
@@ -1228,7 +1228,7 @@ onBeforeUnmount(() => {
                     <h3 class="text-sm font-semibold">媒体缩略图缓存</h3>
                     <button
                       type="button"
-                      class="h-11 shrink-0 rounded-full border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
+                      class="h-11 shrink-0 rounded-xl border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
                       @click="refreshThumbUsage"
                     >
                       刷新占用
@@ -1264,7 +1264,7 @@ onBeforeUnmount(() => {
                     <div class="flex flex-wrap items-center gap-3">
                       <button
                         type="button"
-                        class="h-11 rounded-full border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
+                        class="h-11 rounded-xl border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
                         :disabled="thumbBusy || saving"
                         @click="clearThumbs"
                       >
@@ -1288,7 +1288,7 @@ onBeforeUnmount(() => {
                         </select>
                         <button
                           type="button"
-                          class="h-11 shrink-0 rounded-full bg-ink px-3.5 text-sm font-medium text-surface transition hover:opacity-90 disabled:opacity-60"
+                          class="h-11 shrink-0 rounded-xl bg-ink px-3.5 text-sm font-medium text-surface transition hover:opacity-90 disabled:opacity-60"
                           :disabled="rebuildRunning || rebuildPostId === null"
                           @click="startRebuild"
                         >
@@ -1297,7 +1297,7 @@ onBeforeUnmount(() => {
                         <button
                           v-if="rebuildRunning"
                           type="button"
-                          class="h-11 shrink-0 rounded-full border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-surface hover:text-ink"
+                          class="h-11 shrink-0 rounded-xl border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-surface hover:text-ink"
                           @click="cancelRebuild"
                         >
                           取消
@@ -1407,7 +1407,7 @@ onBeforeUnmount(() => {
                       <button
                         type="button"
                         :disabled="credentialSubmitting"
-                        class="h-11 shrink-0 rounded-full bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+                        class="h-11 shrink-0 rounded-xl bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
                         @click="submitCredentials"
                       >
                         {{ credentialSubmitting ? '提交中…' : '保存账号修改' }}
@@ -1435,7 +1435,7 @@ onBeforeUnmount(() => {
           <button
             type="button"
             :disabled="saving"
-            class="h-11 shrink-0 rounded-full bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+            class="h-11 shrink-0 rounded-xl bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
             @click="save"
           >
             {{ saving ? '保存中…' : '保存设置' }}

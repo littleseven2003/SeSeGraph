@@ -156,7 +156,7 @@ const copyLabel = computed(() => {
       <button
         v-if="shareUrl !== ''"
         type="button"
-        class="inline-flex h-11 w-11 items-center justify-center rounded-full border border-brand/25 bg-brand-soft text-brand-strong transition hover:border-brand/45"
+        class="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-brand/25 bg-brand-soft text-brand-strong transition hover:border-brand/45"
         :class="copyState === 'copied' ? 'border-accent/30 bg-accent-soft text-accent' : ''"
         :aria-label="copyLabel"
         :title="copyLabel"
@@ -177,7 +177,7 @@ const copyLabel = computed(() => {
 
       <button
         type="button"
-        class="inline-flex h-11 items-center rounded-full bg-ink px-3.5 text-xs font-medium text-white transition hover:bg-ink/90"
+        class="inline-flex h-11 items-center rounded-xl bg-ink px-3.5 text-xs font-medium text-white transition hover:bg-ink/90"
         @click="onRowOpen"
       >
         打开
