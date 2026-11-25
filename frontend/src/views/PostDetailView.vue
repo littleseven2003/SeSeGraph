@@ -37,6 +37,14 @@ const editing = ref(false)
 const form = ref({ title: '', description: '', authorName: '', tagsText: '' })
 const revealed = ref(new Set<number>())
 const lightbox = ref<number | null>(null)
+// 读取失败的缩略图按序号记下来，用占位块替代破图图标。
+const failedThumbs = ref<Set<number>>(new Set())
+
+function markThumbFailed(sortOrder: number): void {
+  const next = new Set(failedThumbs.value)
+  next.add(sortOrder)
+  failedThumbs.value = next
+}
 const confirmDelete = ref(false)
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
@@ -298,13 +306,25 @@ onBeforeUnmount(() => {
                 <div class="group relative overflow-hidden rounded-lg border border-line bg-canvas">
                   <button type="button" class="relative block aspect-square w-full" :aria-label="`预览第 ${image.sort_order} 张`" @click="openLightbox(image.sort_order)">
                     <img
-                      v-if="thumbUrl(image) !== ''"
+                      v-if="thumbUrl(image) !== '' && !failedThumbs.has(image.sort_order)"
                       :src="thumbUrl(image)"
                       :alt="`第 ${image.sort_order} 张`"
                       class="h-full w-full object-cover transition"
                       :class="masked(image.sort_order) ? 'scale-105 blur-xl' : 'blur-0'"
                       loading="lazy"
+                      @error="markThumbFailed(image.sort_order)"
                     />
+                    <span
+                      v-else-if="failedThumbs.has(image.sort_order)"
+                      class="flex h-full w-full flex-col items-center justify-center gap-1 bg-canvas px-2 text-center text-[11px] leading-tight text-muted"
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" class="h-5 w-5" aria-hidden="true">
+                        <rect x="3" y="4" width="18" height="16" rx="2" />
+                        <path d="m3 16 4.5-4.5L12 16l3-3 6 6" stroke-linecap="round" stroke-linejoin="round" />
+                        <circle cx="8.5" cy="8.5" r="1.3" />
+                      </svg>
+                      第 {{ image.sort_order }} 张暂不可读
+                    </span>
                     <span v-if="masked(image.sort_order)" class="absolute inset-0 flex items-center justify-center bg-ink/10 text-ink/70">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" class="h-6 w-6" aria-hidden="true">
                         <path d="M2.5 12S6 6.5 12 6.5 21.5 12 21.5 12 18 17.5 12 17.5 2.5 12 2.5 12Z" stroke-linecap="round" />
