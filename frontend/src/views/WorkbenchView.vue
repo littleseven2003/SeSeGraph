@@ -1169,7 +1169,9 @@ async function refreshProgress(id: number, round = initSeq): Promise<void> {
       if (progress.publish_state === 'published') {
         message.value = '已发布到 Telegraph，分享链接见下方'
       } else if (progress.publish_state === 'failed') {
-        message.value = 'Telegraph 发布失败，可重新发布'
+        // 发布失败也用服务端落库的脱敏原因，不再只给通用提示。
+        const publishReason = (progress.publish_error ?? '').trim()
+        message.value = publishReason !== '' ? publishReason : 'Telegraph 发布失败，可重新发布'
       } else if (progress.status === 'completed') {
         message.value = '已存入频道'
       } else if (progress.status === 'failed') {

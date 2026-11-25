@@ -84,6 +84,8 @@ type Post struct {
 	PublishSlug     string
 	// ErrorMessage 是任务失败的可读原因，未失败时为空。
 	ErrorMessage string
+	// PublishError 是发布失败的可读原因，未发布失败时为空。
+	PublishError string
 	Tags         []string
 }
 
@@ -433,11 +435,11 @@ func (r *Repository) Get(ctx context.Context, id int64) (*Post, error) {
 	err := r.handle.QueryRowContext(ctx,
 		`SELECT title, description, author_name, cover_thumb_path, image_count, upload_mode, status,
 		        COALESCE(control_state, 'running'), COALESCE(upload_round, 0), compressed_count,
-		        COALESCE(publish_intent, ''), COALESCE(error_message, '')
+		        COALESCE(publish_intent, ''), COALESCE(error_message, ''), COALESCE(publish_error, '')
 		 FROM posts WHERE id = ?`, id,
 	).Scan(&post.Title, &post.Description, &post.AuthorName, &post.CoverThumbPath,
 		&post.ImageCount, &post.UploadMode, &post.Status, &post.ControlState, &post.UploadRound, &compressed,
-		&post.PublishIntent, &post.ErrorMessage)
+		&post.PublishIntent, &post.ErrorMessage, &post.PublishError)
 	if compressed.Valid {
 		count := int(compressed.Int64)
 		post.CompressedCount = &count

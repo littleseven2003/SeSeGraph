@@ -105,6 +105,8 @@ export interface ServerProgress {
   compressed_count?: number | null
   /** 任务失败的可读原因，未失败时为空 */
   error?: string
+  /** 发布失败的可读原因，未发布失败时为空 */
+  publish_error?: string
 }
 
 // uploadImage 逐张上传，请求体直接使用浏览器里的 Blob，由后端流式落盘。
