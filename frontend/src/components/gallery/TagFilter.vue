@@ -101,29 +101,34 @@ onBeforeUnmount(() => {
       <div class="flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto">
         <span class="hidden shrink-0 text-xs text-muted sm:inline">标签</span>
 
+      <!-- 外层统一 44px 热区，内层标签块 36px 与 8px 圆角。 -->
       <button
         v-for="name in selectedTags"
         :key="'on-' + name"
         type="button"
-        class="inline-flex h-10 min-w-0 max-w-full shrink-0 items-center gap-1.5 rounded-lg border border-accent bg-accent px-2.5 text-xs font-medium text-white transition motion-safe:active:scale-[0.97] sm:h-9 [overflow-wrap:anywhere]"
+        class="inline-flex h-11 min-w-0 max-w-full shrink-0 items-center"
         :aria-label="'移除标签 ' + name"
         @click="toggle(name)"
       >
-        #{{ name }}
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-3 w-3" aria-hidden="true">
-          <path d="M6 6l12 12M18 6L6 18" stroke-linecap="round" />
-        </svg>
+        <span class="inline-flex h-9 min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-accent bg-accent px-2.5 text-xs font-medium text-white transition motion-safe:active:scale-[0.97] [overflow-wrap:anywhere]">
+          #{{ name }}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-3 w-3 shrink-0" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18" stroke-linecap="round" />
+          </svg>
+        </span>
       </button>
 
       <button
         v-for="(tag, index) in visibleTags"
         :key="tag.name"
         type="button"
-        class="inline-flex h-10 min-w-0 max-w-full shrink-0 items-center gap-1 rounded-lg border border-line bg-surface px-2.5 text-xs font-medium text-muted transition hover:border-brand/40 hover:bg-brand-soft/60 hover:text-ink motion-safe:active:scale-[0.97] sm:h-9 [overflow-wrap:anywhere]"
+        class="inline-flex h-11 min-w-0 max-w-full shrink-0 items-center"
         @click="toggle(tag.name)"
       >
-        <span class="tnum text-muted">#</span>{{ tag.name
-        }}<span class="tnum rounded bg-canvas px-1.5 py-0.5 text-xs text-muted">{{ tag.count }}</span>
+        <span class="inline-flex h-9 min-w-0 max-w-full items-center gap-1 rounded-lg border border-line bg-surface px-2.5 text-xs font-medium text-muted transition hover:border-brand/40 hover:bg-brand-soft/60 hover:text-ink motion-safe:active:scale-[0.97] [overflow-wrap:anywhere]">
+          <span class="tnum text-muted">#</span>{{ tag.name
+          }}<span class="tnum rounded bg-canvas px-1.5 py-0.5 text-xs text-muted">{{ tag.count }}</span>
+        </span>
       </button>
 
       </div>
@@ -133,13 +138,15 @@ onBeforeUnmount(() => {
       <button
         ref="trigger"
         type="button"
-        class="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-lg border border-dashed border-line px-2.5 text-xs font-medium text-muted transition hover:border-brand/40 hover:text-ink sm:h-9"
+        class="inline-flex h-11 shrink-0 items-center"
         :aria-expanded="open"
         aria-haspopup="dialog"
         @click="open ? closePanel() : openPanel()"
       >
-        全部标签
-        <span class="tnum rounded bg-canvas px-1.5 py-0.5 text-xs">{{ props.tags.length }}</span>
+        <span class="inline-flex h-9 items-center gap-1.5 rounded-lg border border-dashed border-line px-2.5 text-xs font-medium text-muted transition hover:border-brand/40 hover:text-ink">
+          全部标签
+          <span class="tnum rounded bg-canvas px-1.5 py-0.5 text-xs">{{ props.tags.length }}</span>
+        </span>
       </button>
 
       <button
@@ -190,7 +197,7 @@ onBeforeUnmount(() => {
           v-for="name in selectedTags"
           :key="'pick-' + name"
           type="button"
-          class="inline-flex min-w-0 max-w-full items-center gap-1 rounded-md bg-accent-soft px-2.5 py-1 text-xs font-medium text-accent [overflow-wrap:anywhere]"
+          class="inline-flex min-w-0 max-w-full items-center gap-1 rounded-lg bg-accent-soft px-2.5 py-1 text-xs font-medium text-accent [overflow-wrap:anywhere]"
           :aria-label="'取消 ' + name"
           @click="toggle(name)"
         >

@@ -267,12 +267,17 @@ onBeforeUnmount(() => {
             v-for="item in TASK_FILTERS"
             :key="item.value"
             type="button"
-            class="inline-flex h-10 shrink-0 items-center rounded-lg px-3 text-xs font-medium transition sm:h-9"
-            :class="filter === item.value ? 'bg-surface text-ink shadow-[0_1px_0_0_rgba(27,26,23,0.08)]' : 'text-muted hover:text-ink'"
+            class="inline-flex h-11 shrink-0 items-center -my-1"
             :aria-pressed="filter === item.value"
             @click="setFilter(item.value)"
           >
-            {{ item.label }}
+            <!-- 外层留 44px 热区，内层视觉块保持 36px 与 8px 圆角。 -->
+            <span
+              class="inline-flex h-9 items-center rounded-lg px-3 text-xs font-medium transition"
+              :class="filter === item.value ? 'bg-surface text-ink shadow-[0_1px_0_0_rgba(27,26,23,0.08)]' : 'text-muted hover:text-ink'"
+            >
+              {{ item.label }}
+            </span>
           </button>
         </div>
       </div>
@@ -322,8 +327,11 @@ onBeforeUnmount(() => {
             @click="toggleExpanded(task.id)"
           >
             <span class="flex min-h-11 w-full items-center gap-2">
-              <span class="min-w-0 flex-1 truncate text-sm font-semibold" :title="task.title">{{ task.title }}</span>
-              <span class="tnum shrink-0 text-xs text-muted">{{ updatedText(task.updated_at) }}</span>
+              <!-- 标题与时间同组占剩余宽度：短标题时间紧跟，长标题截断给时间让位。 -->
+              <span class="flex min-w-0 flex-1 items-center gap-2">
+                <span class="min-w-0 truncate text-sm font-semibold" :title="task.title">{{ task.title }}</span>
+                <span class="tnum shrink-0 text-xs text-muted">{{ updatedText(task.updated_at) }}</span>
+              </span>
               <span
                 class="hidden h-2 w-60 shrink-0 items-center gap-[3px] sm:flex"
                 role="progressbar"
@@ -350,7 +358,7 @@ onBeforeUnmount(() => {
                 </span>
               </span>
               <span
-                class="shrink-0 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium"
+                class="shrink-0 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium sm:min-w-[4.5rem] sm:text-center"
                 :class="BADGE_CLASS[badgeOf(task).tone]"
               >
                 {{ badgeOf(task).label }}
@@ -393,12 +401,13 @@ onBeforeUnmount(() => {
 
           <div v-if="isExpanded(task.id)" :id="`task-stages-${task.id}`" class="border-t border-line/70 px-4 py-3 sm:px-5">
             <TaskStageBar :stages="stagesOf(task)" />
-            <p class="mt-2 text-xs text-muted">{{ summaryOf(task) }} · 更新于 {{ updatedText(task.updated_at) }}</p>
+            <!-- 顶行已经给过更新时间，这里只留阶段概况，不重复同一时间。 -->
+            <p class="mt-2 text-xs text-muted">{{ summaryOf(task) }}</p>
             <div class="mt-3 flex flex-wrap items-center gap-2">
               <button
                 v-if="canResume(task)"
                 type="button"
-                class="inline-flex h-11 items-center rounded-xl border border-brand/30 bg-brand-soft px-4 text-xs font-medium text-brand-strong transition hover:border-brand/50 disabled:opacity-60"
+                class="inline-flex h-11 items-center rounded-lg border border-brand/30 bg-brand-soft px-4 text-xs font-medium text-brand-strong transition hover:border-brand/50 disabled:opacity-60 sm:h-9"
                 :disabled="busyId !== 0"
                 @click="control(task, 'resume')"
               >
@@ -407,21 +416,21 @@ onBeforeUnmount(() => {
               <router-link
                 v-else-if="canRetryStore(task)"
                 :to="{ name: 'workbench', query: { resume: task.id } }"
-                class="inline-flex h-11 items-center rounded-xl border border-brand/30 bg-brand-soft px-4 text-xs font-medium text-brand-strong transition hover:border-brand/50"
+                class="inline-flex h-11 items-center rounded-lg border border-brand/30 bg-brand-soft px-4 text-xs font-medium text-brand-strong transition hover:border-brand/50 sm:h-9"
               >
                 重试存图
               </router-link>
               <router-link
                 v-else-if="canContinueUpload(task)"
                 :to="{ name: 'workbench', query: { resume: task.id } }"
-                class="inline-flex h-11 items-center rounded-xl border border-line bg-surface px-4 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
+                class="inline-flex h-11 items-center rounded-lg border border-line bg-surface px-4 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink sm:h-9"
               >
                 继续上传
               </router-link>
               <button
                 v-if="canPause(task)"
                 type="button"
-                class="inline-flex h-11 items-center rounded-xl border border-line bg-surface px-4 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
+                class="inline-flex h-11 items-center rounded-lg border border-line bg-surface px-4 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60 sm:h-9"
                 :disabled="busyId !== 0"
                 @click="control(task, 'pause')"
               >
@@ -430,7 +439,7 @@ onBeforeUnmount(() => {
               <button
                 v-if="canStop(task)"
                 type="button"
-                class="inline-flex h-11 items-center rounded-xl border border-danger/35 bg-surface px-4 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-60"
+                class="inline-flex h-11 items-center rounded-lg border border-danger/35 bg-surface px-4 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-60 sm:h-9"
                 :disabled="busyId !== 0"
                 @click="control(task, 'stop')"
               >

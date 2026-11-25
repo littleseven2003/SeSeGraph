@@ -126,3 +126,24 @@ test('窄屏时间紧跟标题，总轨换行铺满', () => {
   // 顶行右侧提供与画廊对称的新建入口。
   assert.ok(source.includes('bg-brand px-4 text-sm font-medium text-brand-ink'), '新建图集主按钮')
 })
+
+test('时间紧跟任务名，长标题截断让位', () => {
+  const group = source.slice(source.indexOf('<span class="flex min-w-0 flex-1 items-center gap-2">'))
+  const head = group.slice(0, group.indexOf('role="progressbar"'))
+  assert.ok(head.includes('class="min-w-0 truncate text-sm font-semibold"'), '标题只负责截断')
+  assert.ok(head.includes('tnum shrink-0 text-xs text-muted'), '时间不参与压缩')
+  // flex-1 挂在小分组上，时间保持紧跟标题而不是被推到总轨旁。
+  assert.equal(source.includes('min-w-0 flex-1 truncate text-sm font-semibold'), false, '标题不再独自占满剩余宽度')
+  assert.equal(head.includes('justify-between'), false, '组内不两端对齐，避免拉开间距')
+})
+
+test('状态徽章列定宽，多行总轨纵向对齐', () => {
+  assert.ok(source.includes('sm:min-w-[4.5rem] sm:text-center'), '三种字数的徽章在桌面对齐同一列')
+})
+
+test('展开区不重复显示更新时间', () => {
+  const summary = source.slice(source.indexOf('{{ summaryOf(task) }}') - 120, source.indexOf('{{ summaryOf(task) }}') + 60)
+  assert.equal(summary.includes('更新于'), false, '顶行已给时间，展开摘要只留阶段概况')
+  assert.ok(source.includes('{{ updatedText(task.updated_at) }}'), '时间仍在顶行显示一次')
+})
+

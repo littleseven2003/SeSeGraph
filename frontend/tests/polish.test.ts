@@ -139,3 +139,28 @@ test('四阶段按字标四色取色，槽位与进度条共用同一映射', ()
   assert.ok(view.includes('gap-[3px]'), '槽间隔 3px')
   assert.ok(view.includes('first:rounded-l-full last:rounded-r-full'), '总轨首尾圆角、中间小圆角')
 })
+
+test('窄屏交互控件保留 44px 热区与 36px 视觉块', () => {
+  const header = source('components/AppHeader.vue')
+  assert.ok(header.includes('inline-flex h-11 flex-1 items-center justify-center'), '窄屏导航外层 44px 热区')
+  assert.ok(header.includes('inline-flex h-9 w-full items-center justify-center rounded-lg'), '内层导航块 36px 与 8px 圆角')
+  assert.equal(header.includes('h-10 flex-1 items-center justify-center'), false, '不再用 40px 高度当热区')
+
+  const tasks = source('views/TasksView.vue')
+  const filterStart = tasks.indexOf('aria-label="按状态筛选任务"')
+  const filter = tasks.slice(filterStart, tasks.indexOf('</div>', tasks.indexOf('TASK_FILTERS', filterStart)))
+  assert.ok(filter.includes('inline-flex h-11 shrink-0 items-center -my-1'), '筛选外层 44px 热区且不撑高外框')
+  assert.ok(filter.includes('inline-flex h-9 items-center rounded-lg px-3'), '筛选内层视觉块 36px')
+
+  const tags = source('components/gallery/TagFilter.vue')
+  assert.ok(tags.includes('ref="trigger"'), '全部标签仍是同一触发按钮')
+  assert.ok(tags.includes('inline-flex h-11 shrink-0 items-center"'), '全部标签外层 44px 热区')
+  assert.ok(
+    tags.includes('inline-flex h-9 items-center gap-1.5 rounded-lg border border-dashed border-line px-2.5'),
+    '全部标签内层 36px 视觉块',
+  )
+  // 标签行内外层同步，避免同一行高低不齐。
+  const chipCount = (tags.match(/inline-flex h-11 min-w-0 max-w-full shrink-0 items-center/g) ?? []).length
+  assert.ok(chipCount >= 2, `标签行外层热区数量不足：${chipCount}`)
+  assert.ok(tags.includes('rounded-lg bg-accent-soft px-2.5 py-1'), '面板已选标签统一 8px 圆角')
+})

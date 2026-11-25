@@ -18,11 +18,12 @@ function navClass(name: string): string {
     : 'inline-flex h-10 shrink-0 items-center rounded-lg px-3 text-sm text-muted transition hover:bg-canvas hover:text-ink sm:h-9'
 }
 
+// 窄屏导航外层留 44px 热区，内层视觉块保持 36px 与 8px 圆角。
 function narrowNavClass(name: string): string {
   const active = route.name === name
   return active
-    ? 'inline-flex h-10 flex-1 items-center justify-center rounded-lg bg-brand-soft text-sm font-medium text-brand-strong transition'
-    : 'inline-flex h-10 flex-1 items-center justify-center rounded-lg text-sm text-muted transition hover:bg-canvas hover:text-ink'
+    ? 'inline-flex h-9 w-full items-center justify-center rounded-lg bg-brand-soft text-sm font-medium text-brand-strong transition'
+    : 'inline-flex h-9 w-full items-center justify-center rounded-lg text-sm text-muted transition hover:bg-canvas hover:text-ink'
 }
 
 const NAV = [
@@ -116,9 +117,9 @@ async function signOut(): Promise<void> {
           v-for="item in NAV"
           :key="'narrow-' + item.name"
           :to="{ name: item.name }"
-          :class="narrowNavClass(item.name)"
+          class="inline-flex h-11 flex-1 items-center justify-center"
         >
-          {{ item.label }}
+          <span :class="narrowNavClass(item.name)">{{ item.label }}</span>
         </router-link>
       </nav>
     </div>
