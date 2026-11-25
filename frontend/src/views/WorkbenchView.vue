@@ -1724,18 +1724,10 @@ onBeforeUnmount(() => {
                   <button
                     type="button"
                     class="h-11 w-full rounded-xl bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
-                    :disabled="busy || phase === 'queued' || finished"
-                    @click="publish(newDraft ? 'auto' : 'manual')"
+                    :disabled="busy || working || tiles.length === 0"
+                    @click="goDraft"
                   >
-                    {{ submitLabel }}
-                  </button>
-                  <button
-                    v-if="newDraft && !busy && !finished"
-                    type="button"
-                    class="h-11 w-full rounded-xl border border-line px-4 text-sm font-medium text-muted transition hover:border-ink/25 hover:bg-canvas hover:text-ink"
-                    @click="publish('manual')"
-                  >
-                    仅存图（稍后手动发布）
+                    继续编辑
                   </button>
                   <button
                     v-if="finished"
@@ -1787,28 +1779,12 @@ onBeforeUnmount(() => {
               重新开始
             </button>
             <button
-              v-if="!busy && !finished && tiles.length > 0"
               type="button"
-              class="h-11 shrink-0 rounded-xl border border-line px-3 text-xs font-medium text-muted transition hover:border-ink/25 hover:bg-canvas hover:text-ink"
+              class="h-11 shrink-0 rounded-xl bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+              :disabled="busy || working || tiles.length === 0"
               @click="goDraft"
             >
               继续编辑
-            </button>
-            <button
-              v-if="newDraft && !busy && !finished"
-              type="button"
-              class="h-11 shrink-0 rounded-xl border border-line px-3 text-xs font-medium text-muted transition hover:border-ink/25 hover:bg-canvas hover:text-ink"
-              @click="publish('manual')"
-            >
-              仅存图
-            </button>
-            <button
-              type="button"
-              class="h-11 shrink-0 rounded-xl bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
-              :disabled="busy || phase === 'queued' || finished"
-              @click="publish(newDraft ? 'auto' : 'manual')"
-            >
-              {{ submitLabel }}
             </button>
           </div>
         </div>

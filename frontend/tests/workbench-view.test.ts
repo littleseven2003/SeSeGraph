@@ -78,14 +78,13 @@ test('空态不显示数量与清空，续传提示已移到任务页', () => {
   assert.ok(source.slice(clear - 260, clear).includes('rounded-xl'), '清空按钮收敛为 12px 圆角的次级动作')
 })
 
-test('提交时明确选择发布意图，续传沿用原任务', () => {
-  assert.ok(source.includes("publish_intent: intent === 'auto' ? 'auto' : undefined"), '新任务随请求上报发布意图')
-  assert.ok(source.includes("async function publish(intent: 'auto' | 'manual' = 'manual')"), '提交入口带意图参数')
-  assert.ok(source.includes("return newDraft.value ? '提交并发布' : '提交存图'"), '新草稿默认提交并发布')
-  assert.ok(source.includes('仅存图（稍后手动发布）'), '桌面端保留仅存图入口')
-  assert.ok(source.includes('仅存图'), '移动端同样可选仅存图')
-  assert.ok(source.includes("publish(newDraft ? 'auto' : 'manual')"), '续传不会改写原任务的发布权限')
-  assert.ok(source.includes('const newDraft = computed'), '只在没有任务时提供选择')
+test('导入完成后交接给草稿页，提交不再留在导入页', () => {
+  assert.ok(source.includes('startDraft(tiles.value.map'), '把小图与元信息交给草稿页')
+  assert.ok(source.includes("void router.push('/draft')"), '交接后跳到草稿页')
+  assert.ok(source.includes('@click="goDraft"'), '导入页主按钮是继续编辑')
+  assert.equal(source.includes('仅存图（稍后手动发布）'), false, '导入页不再提供仅存图')
+  assert.equal(source.includes('{{ submitLabel }}'), false, '导入页不再渲染提交按钮')
+  assert.equal(source.includes("publish(newDraft ? 'auto' : 'manual')"), false, '提交入口已移到草稿页')
 })
 
 test('导入即压缩，提交等同一队列并复用结果', () => {
