@@ -648,11 +648,15 @@ onBeforeUnmount(() => {
           v-for="item in SETTING_NAV"
           :key="'narrow-' + item.id"
           :href="'#' + item.id"
-          class="inline-flex h-10 shrink-0 items-center rounded-lg border px-3 text-xs font-medium transition sm:h-9"
-          :class="activeSection === item.id ? 'border-brand-soft bg-brand-soft text-ink' : 'border-line bg-surface text-muted hover:bg-canvas hover:text-ink'"
+          class="inline-flex h-11 shrink-0 items-center -my-1"
           @click="selectSection(item.id)"
         >
-          {{ item.label }}
+          <span
+            class="inline-flex h-9 items-center rounded-lg border px-3 text-xs font-medium transition"
+            :class="activeSection === item.id ? 'border-brand-soft bg-brand-soft text-ink' : 'border-line bg-surface text-muted hover:bg-canvas hover:text-ink'"
+          >
+            {{ item.label }}
+          </span>
         </a>
       </nav>
       <div class="flex items-start gap-8">

@@ -47,16 +47,20 @@ const compressLabel = computed(() => (props.autoCompress ? '自动压缩：开' 
           v-for="option in options"
           :key="option.value"
           type="button"
-          class="h-10 rounded-lg px-3 text-xs font-medium transition disabled:opacity-50 sm:h-9"
-          :class="
-            props.mode === option.value
-              ? 'bg-accent text-white'
-              : 'text-muted hover:bg-surface hover:text-ink'
-          "
+          class="inline-flex h-11 items-center -my-1 disabled:opacity-50"
           :disabled="props.disabled"
           @click="emit('select', option.value)"
         >
-          {{ option.label }}
+          <span
+            class="inline-flex h-9 items-center rounded-lg px-3 text-xs font-medium transition"
+            :class="
+              props.mode === option.value
+                ? 'bg-accent text-white'
+                : 'text-muted hover:bg-surface hover:text-ink'
+            "
+          >
+            {{ option.label }}
+          </span>
         </button>
       </div>
     </div>
@@ -71,16 +75,20 @@ const compressLabel = computed(() => (props.autoCompress ? '自动压缩：开' 
             v-for="option in options"
             :key="option.value"
             type="button"
-            class="h-10 rounded-lg px-3 text-xs font-medium transition disabled:opacity-50 sm:h-9"
-            :class="
-              props.mode === option.value
-                ? 'bg-accent text-white'
-                : 'text-muted hover:bg-surface hover:text-ink'
-            "
+            class="inline-flex h-11 items-center -my-1 disabled:opacity-50"
             :disabled="props.disabled"
             @click="emit('select', option.value)"
           >
-            {{ option.label }}
+            <span
+              class="inline-flex h-9 items-center rounded-lg px-3 text-xs font-medium transition"
+              :class="
+                props.mode === option.value
+                  ? 'bg-accent text-white'
+                  : 'text-muted hover:bg-surface hover:text-ink'
+              "
+            >
+              {{ option.label }}
+            </span>
           </button>
         </div>
       </div>

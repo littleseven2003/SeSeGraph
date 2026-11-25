@@ -163,6 +163,22 @@ test('窄屏交互控件保留 44px 热区与 36px 视觉块', () => {
   const chipCount = (tags.match(/inline-flex h-11 min-w-0 max-w-full shrink-0 items-center/g) ?? []).length
   assert.ok(chipCount >= 2, `标签行外层热区数量不足：${chipCount}`)
   assert.ok(tags.includes('rounded-lg bg-accent-soft px-2.5 py-1'), '面板已选标签统一 8px 圆角')
+
+  // 图集视图切换、设置锚点、工作台画质切换同样补齐 44px 热区。
+  const home = source('views/HomeView.vue')
+  const switchCount = (home.match(/inline-flex h-11 items-center -my-1/g) ?? []).length
+  assert.ok(switchCount >= 2, `视图切换外层热区不足：${switchCount}`)
+  assert.ok(home.includes('inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5'), '视图切换内层 36px')
+
+  const settings = source('views/SettingsView.vue')
+  assert.ok(settings.includes('inline-flex h-11 shrink-0 items-center -my-1'), '设置锚点外层 44px 热区')
+  assert.ok(settings.includes('inline-flex h-9 items-center rounded-lg border px-3'), '设置锚点内层 36px')
+
+  const mode = source('components/workbench/ModeSwitch.vue')
+  assert.equal(mode.includes('h-10'), false, '画质切换不再用 40px 当热区')
+  const modeButtons = (mode.match(/inline-flex h-11 items-center -my-1 disabled:opacity-50/g) ?? []).length
+  assert.ok(modeButtons === 2, `画质切换两处都要 44px 热区：${modeButtons}`)
+  assert.ok(mode.includes('inline-flex h-9 items-center rounded-lg px-3'), '画质切换内层 36px')
 })
 
 test('阶段填充与悬停提示共用同一份整数换算', () => {
@@ -173,4 +189,3 @@ test('阶段填充与悬停提示共用同一份整数换算', () => {
   assert.ok(view.includes('stagePercent(slot.ratio)'), '折叠总轨的宽度与提示同源')
   assert.equal(view.includes('Math.round(slot.ratio * 100)'), false, '199/200 不再显示 100%')
 })
-

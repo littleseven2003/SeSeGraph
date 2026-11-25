@@ -146,4 +146,3 @@ test('展开区不重复显示更新时间', () => {
   assert.equal(summary.includes('更新于'), false, '顶行已给时间，展开摘要只留阶段概况')
   assert.ok(source.includes('{{ updatedText(task.updated_at) }}'), '时间仍在顶行显示一次')
 })
-

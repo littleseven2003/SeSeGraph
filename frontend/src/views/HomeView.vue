@@ -344,32 +344,40 @@ onBeforeUnmount(() => {
         <div class="flex shrink-0 items-center rounded-xl border border-line/70 bg-canvas p-1" role="group" aria-label="视图切换">
           <button
             type="button"
-            class="inline-flex h-10 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition sm:h-9 sm:px-3"
-            :class="viewMode === 'gallery' ? 'bg-surface text-ink shadow-[0_1px_0_0_rgba(27,26,23,0.08)]' : 'text-muted hover:text-ink'"
+            class="inline-flex h-11 items-center -my-1"
             :aria-pressed="viewMode === 'gallery'"
             aria-label="画廊视图"
             @click="setViewMode('gallery')"
           >
+            <span
+              class="inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition sm:px-3"
+              :class="viewMode === 'gallery' ? 'bg-surface text-ink shadow-[0_1px_0_0_rgba(27,26,23,0.08)]' : 'text-muted hover:text-ink'"
+            >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4" aria-hidden="true">
               <rect x="3.5" y="3.5" width="7" height="7" rx="1.5" />
               <rect x="13.5" y="3.5" width="7" height="7" rx="1.5" />
               <rect x="3.5" y="13.5" width="7" height="7" rx="1.5" />
               <rect x="13.5" y="13.5" width="7" height="7" rx="1.5" />
             </svg>
-            <span class="hidden sm:inline">画廊</span>
+              <span class="hidden sm:inline">画廊</span>
+            </span>
           </button>
           <button
             type="button"
-            class="inline-flex h-10 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition sm:h-9 sm:px-3"
-            :class="viewMode === 'list' ? 'bg-surface text-ink shadow-[0_1px_0_0_rgba(27,26,23,0.08)]' : 'text-muted hover:text-ink'"
+            class="inline-flex h-11 items-center -my-1"
             :aria-pressed="viewMode === 'list'"
             aria-label="列表视图"
             @click="setViewMode('list')"
           >
+            <span
+              class="inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition sm:px-3"
+              :class="viewMode === 'list' ? 'bg-surface text-ink shadow-[0_1px_0_0_rgba(27,26,23,0.08)]' : 'text-muted hover:text-ink'"
+            >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="h-4 w-4" aria-hidden="true">
               <path d="M4 6h16M4 12h16M4 18h16" stroke-linecap="round" />
             </svg>
-            <span class="hidden sm:inline">列表</span>
+              <span class="hidden sm:inline">列表</span>
+            </span>
           </button>
         </div>
       </div>
