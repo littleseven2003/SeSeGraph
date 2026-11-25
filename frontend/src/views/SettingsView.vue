@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { setThemeMode, themeMode } from '../utils/theme.ts'
 import { ApiError } from '../api/client.ts'
 import {
   clearMediaThumbs,
@@ -88,6 +89,13 @@ import {
   trafficSummary,
 } from '../utils/settings.ts'
 
+// 主题三态：跟随系统、浅色、深色；只记本机，不动媒体遮罩偏好。
+const THEME_OPTIONS = [
+  { value: 'system' as const, label: '跟随系统' },
+  { value: 'light' as const, label: '浅色' },
+  { value: 'dark' as const, label: '深色' },
+]
+
 const view = ref<SettingsView | null>(null)
 // uploadCap 是服务端同时接收上传的上限，仅用于说明；派发时按 min(本地偏好, 上限) 执行。
 const uploadCap = computed(() => serverUploadConcurrency(view.value?.upload.concurrency))
@@ -134,17 +142,25 @@ const credentialNote = ref('')
 const router = useRouter()
 let reloginTimer = 0
 const result = ref<ConnectionResult | null>(null)
-// activeSection 跟随滚动更新，左侧目录用它显示当前所在分组。
-const activeSection = ref('upstream')
+// activeSection 记录当前展开的分组；四组一次只显示一组，避免长滚屏。
+const activeSection = ref('channel')
 
-// 分组导航：桌面左侧目录与手机顶部横向目录共用同一份锚点。
+// 分组导航：桌面左侧目录与手机顶部横向目录共用同一份分组。
 const SETTING_NAV = [
-  { id: 'upstream', label: '上游与代理' },
-  { id: 'defaults', label: '发帖默认值' },
-  { id: 'check', label: '连通性自检' },
-  { id: 'ops', label: '流量与备份' },
-  { id: 'account', label: '账号安全' },
+  { id: 'channel', label: '通道与连接' },
+  { id: 'media', label: '上传与媒体' },
+  { id: 'storage', label: '流量与存储' },
+  { id: 'appearance', label: '外观与安全' },
 ]
+
+// LEGACY_ANCHORS 让旧地址里的分区锚点安静落到新分组，不报错也不丢定位。
+const LEGACY_ANCHORS: Record<string, string> = {
+  upstream: 'channel',
+  check: 'channel',
+  defaults: 'media',
+  ops: 'storage',
+  account: 'appearance',
+}
 
 // fieldErrorText 给字段就近的报错文案，避免只在底部提示。
 function fieldErrorText(field: string): string {
@@ -555,8 +571,9 @@ async function check(): Promise<void> {
 
 // hashSection 取出地址里的有效分组锚点；刷新直达时浏览器早于分组渲染尝试定位，需自己补一次。
 function hashSection(): string {
-  const id = window.location.hash.replace(/^#/, '')
-  return SETTING_NAV.some((item) => item.id === id) ? id : ''
+  const raw = window.location.hash.replace(/^#/, '')
+  if (SETTING_NAV.some((item) => item.id === raw)) return raw
+  return LEGACY_ANCHORS[raw] ?? ''
 }
 
 // pendingJump 保护主动跳转的选中项：桌面端尾部分组滚不到顶部时，
@@ -565,16 +582,8 @@ let pendingJump = ''
 let pendingTimer = 0
 
 function jumpToSection(id: string): void {
-  const node = document.getElementById(id)
-  if (node === null) return
+  if (!SETTING_NAV.some((item) => item.id === id)) return
   activeSection.value = id
-  pendingJump = id
-  window.clearTimeout(pendingTimer)
-  node.scrollIntoView({ block: 'start' })
-  pendingTimer = window.setTimeout(() => {
-    pendingJump = ''
-    pendingTimer = 0
-  }, 600)
 }
 
 // followHash 在分组渲染后补一次定位，刷新、前进后退和直接打开都能落到同一分组。
@@ -587,23 +596,11 @@ function followHash(): void {
 // syncActiveFromScroll 以顶栏下沿为准判定当前分组；滚到底部时直接取最后一组，
 // 尾部分组比视口高时观察器算不出比例，按位置判定不会再漏。
 function syncActiveFromScroll(): void {
+  // 单组显示后不再按滚动位置改分组，翻到下一组只能手动点选。
   if (pendingJump !== '') {
     activeSection.value = pendingJump
     return
   }
-  const line = 160
-  const rest = document.documentElement.scrollHeight - window.scrollY - window.innerHeight
-  if (rest <= 8) {
-    activeSection.value = SETTING_NAV[SETTING_NAV.length - 1].id
-    return
-  }
-  let current = SETTING_NAV[0].id
-  for (const item of SETTING_NAV) {
-    const node = document.getElementById(item.id)
-    if (node === null) continue
-    if (node.getBoundingClientRect().top <= line) current = item.id
-  }
-  activeSection.value = current
 }
 
 onBeforeUnmount(() => {
@@ -712,6 +709,7 @@ onBeforeUnmount(() => {
 
         <template v-else-if="view !== null">
           <div class="space-y-8">
+            <div v-show="activeSection === 'channel'" class="space-y-8">
             <section id="upstream" class="scroll-mt-36">
               <div class="flex items-center gap-2">
                 <span class="tnum rounded border border-line bg-surface px-1.5 py-0.5 text-xs font-medium leading-none text-muted">01</span>
@@ -957,6 +955,7 @@ onBeforeUnmount(() => {
               </div>
             </section>
 
+            <div v-show="activeSection === 'media'" class="space-y-8">
             <section id="defaults" class="scroll-mt-36">
               <div class="flex items-center gap-2">
                 <span class="tnum rounded border border-line bg-surface px-1.5 py-0.5 text-xs font-medium leading-none text-muted">02</span>
@@ -1026,7 +1025,8 @@ onBeforeUnmount(() => {
                   </label>
                 </div>
               </div>
-            </section>
+            </section>            </div>
+
 
             <section id="check" class="scroll-mt-36">
               <div class="flex items-center gap-2">
@@ -1076,8 +1076,10 @@ onBeforeUnmount(() => {
                   </template>
                 </div>
               </div>
-            </section>
+            </section>            </div>
 
+
+            <div v-show="activeSection === 'storage'" class="space-y-8">
             <section id="ops" class="scroll-mt-36">
               <div class="flex items-center gap-2">
                 <span class="tnum rounded border border-line bg-surface px-1.5 py-0.5 text-xs font-medium leading-none text-muted">04</span>
@@ -1320,8 +1322,36 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
               </div>
-            </section>
+            </section>            </div>
 
+
+            <div class="rounded-lg border border-line bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+              <div class="border-b border-line/70 px-5 py-4">
+                <h3 class="text-sm font-semibold">外观主题</h3>
+                <p class="mt-1 text-xs text-muted">跟随系统会随设备日夜自动切换；主题只记在本机，不影响媒体遮罩开关。</p>
+              </div>
+              <div class="px-5 py-4">
+                <div class="inline-flex w-max items-center gap-1 rounded-xl border border-line/70 bg-canvas p-1" role="group" aria-label="主题模式">
+                  <button
+                    v-for="item in THEME_OPTIONS"
+                    :key="item.value"
+                    type="button"
+                    class="inline-flex h-11 items-center -my-1"
+                    :aria-pressed="themeMode === item.value"
+                    @click="setThemeMode(item.value)"
+                  >
+                    <span
+                      class="inline-flex h-9 items-center rounded-lg px-3 text-xs font-medium transition"
+                      :class="themeMode === item.value ? 'bg-surface text-ink shadow-[0_1px_0_0_rgba(27,26,23,0.08)]' : 'text-muted hover:text-ink'"
+                    >
+                      {{ item.label }}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div v-show="activeSection === 'appearance'" class="space-y-8">
             <section id="account" class="scroll-mt-36">
               <div class="flex items-center gap-2">
                 <span class="tnum rounded border border-line bg-surface px-1.5 py-0.5 text-xs font-medium leading-none text-muted">05</span>
@@ -1420,7 +1450,8 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
               </div>
-            </section>
+            </section>            </div>
+
           </div>
 
         </template>

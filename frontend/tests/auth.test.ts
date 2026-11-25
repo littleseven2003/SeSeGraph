@@ -8,11 +8,14 @@ function source(file: string): string {
 
 test('设置页分组锚点与就近字段错误', () => {
   const view = source('views/SettingsView.vue')
-  const ids = ['upstream', 'defaults', 'check', 'ops']
-  for (const id of ids) {
-    assert.ok(view.includes(`id="${id}"`), `缺少分组锚点 ${id}`)
+  // 原有分区仍在页面内，旧地址的分区锚点经映射表落到新的四个分组。
+  for (const id of ['upstream', 'defaults', 'check', 'ops', 'account']) {
+    assert.ok(view.includes(`id="${id}"`), `缺少分区 ${id}`)
+  }
+  for (const id of ['channel', 'media', 'storage', 'appearance']) {
     assert.ok(view.includes(`{ id: '${id}'`), `导航缺少 ${id}`)
   }
+  assert.ok(view.includes('LEGACY_ANCHORS'), '旧锚点有映射表')
   assert.ok(view.includes('scroll-mt-36'), '锚点跳转要为固定顶栏留出偏移')
   assert.ok(view.includes('fieldErrorText(FIELD_TELEGRAM_CHANNEL)'), '频道标识错误要就近提示')
   assert.ok(view.includes(':href="\'#\' + item.id"'), '锚点用原生链接，便于键盘与复制')

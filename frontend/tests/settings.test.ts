@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import type { SettingsView, TrafficStats } from '../src/api/settings.ts'
 import {
@@ -380,3 +381,22 @@ test('流量与备份受环境变量托管时不提交', () => {
   assert.equal(patch.traffic, undefined)
   assert.equal(patch.backup, undefined)
 })
+
+test('设置页按四组单组显示，旧锚点静默映射', () => {
+  const view = readFileSync(new URL('../src/views/SettingsView.vue', import.meta.url), 'utf8')
+  for (const [id, label] of [
+    ['channel', '通道与连接'],
+    ['media', '上传与媒体'],
+    ['storage', '流量与存储'],
+    ['appearance', '外观与安全'],
+  ]) {
+    assert.ok(view.includes(`{ id: '${id}', label: '${label}' }`), `分组 ${label}`)
+  }
+  assert.ok(view.includes("v-show=\"activeSection === 'channel'\""), '单组显示')
+  assert.ok(view.includes('LEGACY_ANCHORS'), '旧锚点映射表')
+  for (const [old, target] of [['upstream', 'channel'], ['check', 'channel'], ['defaults', 'media'], ['ops', 'storage'], ['account', 'appearance']]) {
+    assert.ok(view.includes(`${old}: '${target}'`), `旧锚点 ${old} 映射到 ${target}`)
+  }
+  assert.ok(view.includes('aria-label="主题模式"'), '外观与安全内有主题三态')
+})
+
