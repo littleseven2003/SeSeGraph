@@ -316,8 +316,16 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	}
 
 	// 故障切换始终挂上：运行中加入第二个 Bot 后无需重启即可生效。
-	nextProvider := func(callCtx context.Context, _ storage.Provider, _ error) (storage.Provider, bool) {
+	nextProvider := func(callCtx context.Context, failed storage.Provider, _ error) (storage.Provider, bool) {
+		// 优先用本次请求实际使用的 Bot 编号，避免热替换后标错对象。
+		actualID := int64(0)
+		if origin, ok := failed.(storage.Origin); ok {
+			actualID, _ = origin.Origin()
+		}
 		failedBotID, next, ok := runtime.Failover(uploadFrozenNote)
+		if actualID > 0 {
+			failedBotID = actualID
+		}
 		if failedBotID > 0 {
 			if err := botPool.MarkFrozen(callCtx, failedBotID, uploadFrozenNote); err != nil {
 				log.Print("记录 Bot 冻结状态失败")
@@ -344,7 +352,7 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	go func() {
 		seedCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
 		defer cancel()
-		if err := seedBotPool(seedCtx, botPool, resolver); err != nil {
+		if err := seedBotPool(seedCtx, botPool, resolver, settingsStore); err != nil {
 			log.Print("旧 Bot 配置并入列表失败")
 		}
 		if err := reloadBots(seedCtx); err != nil {
@@ -396,7 +404,12 @@ const uploadFrozenNote = "上游拒绝，账号受限"
 
 // seedBotPool 把升级前的单 Bot 配置幂等并入列表：列表为空且环境里有令牌时才写入。
 // 编号用 getMe 的真实结果，重复启动不会产生第二条。
-func seedBotPool(ctx context.Context, pool *botpool.Pool, resolver *settings.Resolver) error {
+func seedBotPool(ctx context.Context, pool *botpool.Pool, resolver *settings.Resolver, store *settings.Store) error {
+	// 迁移只做一次：用户把旧 Bot 从列表移除后，重启不会再被加回来。
+	if _, done, err := store.Get(ctx, "telegram.bots.migrated"); err == nil && done {
+		return nil
+	}
+	defer func() { _ = store.Set(ctx, "telegram.bots.migrated", "1") }()
 	existing, err := pool.List(ctx)
 	if err != nil {
 		return err

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -205,6 +206,32 @@ func updateBotsHandler(deps Deps) gin.HandlerFunc {
 				return
 			}
 			seen[bot.BotID] = bot.Alias
+		}
+		// 删除保护：仍有媒体只能靠被移除的 Bot 读取时，先接管再删。
+		if deps.Posts != nil {
+			existing, _ := deps.Bots.List(ctx)
+			keep := make(map[int64]bool, len(bots))
+			for _, bot := range bots {
+				keep[bot.BotID] = true
+			}
+			for _, old := range existing {
+				if old.BotID == 0 || keep[old.BotID] {
+					continue
+				}
+				count, countErr := deps.Posts.CountImagesExclusiveToBot(ctx, old.BotID)
+				if countErr != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "检查媒体归属失败"})
+					return
+				}
+				if count > 0 {
+					name := strings.TrimSpace(old.Alias)
+					if name == "" {
+						name = "该 Bot"
+					}
+					c.JSON(http.StatusBadRequest, gin.H{"error": name + "：仍有 " + strconv.FormatInt(count, 10) + " 张图只能由它读取，请先完成接管再移除"})
+					return
+				}
+			}
 		}
 		if err := deps.Bots.Replace(ctx, bots); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

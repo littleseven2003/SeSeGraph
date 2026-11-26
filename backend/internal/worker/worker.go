@@ -326,6 +326,11 @@ func (w *Worker) uploadImage(ctx context.Context, provider storage.Provider, pos
 		if image.MimeType == posts.MimeVideoMP4 {
 			mode = storage.ModeVideo
 		}
+		// 发送前固定本次使用的 Bot 与频道：热替换期间迟到的结果仍记在实际发送者名下。
+		botID, chatID := int64(0), ""
+		if origin, ok := provider.(storage.Origin); ok {
+			botID, chatID = origin.Origin()
+		}
 		result, uploadErr := provider.Upload(ctx, storage.UploadRequest{
 			FileName: filepath.Base(path),
 			MIMEType: image.MimeType,
@@ -336,7 +341,7 @@ func (w *Worker) uploadImage(ctx context.Context, provider storage.Provider, pos
 		_ = file.Close()
 
 		if uploadErr == nil {
-			if err := w.recordStored(ctx, provider, image.ID, result); err != nil {
+			if err := w.recordStored(ctx, provider, botID, chatID, image.ID, result); err != nil {
 				return provider, err
 			}
 			_ = os.Remove(path)
@@ -376,11 +381,7 @@ func (w *Worker) uploadImage(ctx context.Context, provider storage.Provider, pos
 }
 
 // recordStored 记录存图结果；提供方带身份时把这张图记到实际发送的 Bot 名下。
-func (w *Worker) recordStored(ctx context.Context, provider storage.Provider, imageID int64, result storage.UploadResult) error {
-	botID, chatID := int64(0), ""
-	if origin, ok := provider.(storage.Origin); ok {
-		botID, chatID = origin.Origin()
-	}
+func (w *Worker) recordStored(ctx context.Context, provider storage.Provider, botID int64, chatID string, imageID int64, result storage.UploadResult) error {
 	if botID > 0 {
 		return w.repo.MarkImageStoredWithOrigin(ctx, imageID, result.FileID, result.MessageID, provider.Name(), botID, chatID)
 	}

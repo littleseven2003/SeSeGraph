@@ -1602,6 +1602,27 @@ func (r *Repository) ImageFileRefs(ctx context.Context, imageID int64) ([]ImageF
 	return refs, nil
 }
 
+// CountImagesExclusiveToBot 统计只靠该 Bot 的引用才能读取的已存图片。
+// 这类图片在接管补齐之前不能删除对应 Bot，否则原图会彻底失联。
+func (r *Repository) CountImagesExclusiveToBot(ctx context.Context, botID int64) (int64, error) {
+	if botID <= 0 {
+		return 0, nil
+	}
+	var count int64
+	err := r.handle.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM post_images i
+		 WHERE i.status = ? AND i.remote_file_id <> ''
+		   AND i.source_bot_id = ?
+		   AND NOT EXISTS (
+		     SELECT 1 FROM image_file_refs f WHERE f.image_id = i.id AND f.bot_id <> ?
+		   )`,
+		ImageStatusStored, botID, botID).Scan(&count)
+	if err != nil {
+		return 0, errors.New("统计独占媒体失败")
+	}
+	return count, nil
+}
+
 // MarkImageFailed 记录单张图片的失败原因。
 func (r *Repository) MarkImageFailed(ctx context.Context, imageID int64, message string) error {
 	if _, err := r.handle.ExecContext(ctx,
