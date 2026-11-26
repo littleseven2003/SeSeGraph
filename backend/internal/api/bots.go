@@ -68,8 +68,21 @@ func verifyBotTokens(ctx context.Context, deps Deps, bots []botpool.Bot) ([]int6
 
 // verifyBotTokensWith 用给定的候选生效配置探测，供「频道与列表同次提交」复用。
 func verifyBotTokensWith(ctx context.Context, effective settings.Effective, bots []botpool.Bot) ([]int64, error) {
+	needed := make([]bool, len(bots))
+	for index := range needed {
+		needed[index] = true
+	}
+	return verifySelectedBotTokens(ctx, effective, bots, needed)
+}
+
+// verifySelectedBotTokens 只探测本次真的换了令牌、新加的、或从停用恢复到可写的条目。
+// 保留原样（含冻结或人工停用）的条目不再要求频道发布权限，否则冻结 A 时连加个备用 B 都做不到。
+func verifySelectedBotTokens(ctx context.Context, effective settings.Effective, bots []botpool.Bot, needed []bool) ([]int64, error) {
 	ids := make([]int64, len(bots))
-	for _, bot := range bots {
+	for index, bot := range bots {
+		if index < len(needed) && !needed[index] {
+			continue
+		}
 		token := strings.TrimSpace(bot.Token)
 		if token == "" {
 			continue
@@ -110,19 +123,9 @@ func verifyBotTokensWith(ctx context.Context, effective settings.Effective, bots
 		if idErr != nil {
 			return nil, errors.New(name + "：无法读取 Bot 身份")
 		}
-		ids[indexForBot(bots, bot)] = botID
+		ids[index] = botID
 	}
 	return ids, nil
-}
-
-// indexForBot 按令牌找到候选在列表中的位置，用于回填解析出的编号。
-func indexForBot(bots []botpool.Bot, target botpool.Bot) int {
-	for index, bot := range bots {
-		if bot.Token == target.Token {
-			return index
-		}
-	}
-	return 0
 }
 
 // maskToken 只保留令牌尾部四位，其余用圆点代替，避免明文回显。
@@ -213,6 +216,11 @@ func telegramSettingsHandler(deps Deps) gin.HandlerFunc {
 		candidate := effective
 		candidate.TelegramChannel.Value = channel
 
+		current, err := deps.Bots.List(ctx)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取 Bot 列表失败"})
+			return
+		}
 		candidates := make([]botpool.Bot, 0, len(request.Bots))
 		for _, item := range request.Bots {
 			candidates = append(candidates, botpool.Bot{
@@ -226,12 +234,19 @@ func telegramSettingsHandler(deps Deps) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		ids, err := verifyBotTokensWith(ctx, candidate, bots)
+		needed := botProbeNeeded(current, bots)
+		ids, err := verifySelectedBotTokens(ctx, candidate, bots, needed)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
+		probed := false
 		for index := range bots {
+			if !needed[index] {
+				// 保留原状的条目（含冻结或人工停用）不再探测，编号与令牌照旧。
+				continue
+			}
+			probed = true
 			if bots[index].BotID == 0 {
 				bots[index].BotID = ids[index]
 				continue
@@ -241,6 +256,13 @@ func telegramSettingsHandler(deps Deps) gin.HandlerFunc {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "第 " + strconv.Itoa(index+1) +
 					" 个 Bot 的令牌对应编号 " + strconv.FormatInt(ids[index], 10) +
 					"，与原行不一致，请删除后重新添加"})
+				return
+			}
+		}
+		// 改了频道但没有任何条目需要探测时，单独确认候选频道可读，避免写入一个连不上的频道。
+		if strings.TrimSpace(channel) != strings.TrimSpace(effective.TelegramChannel.Value) && !probed {
+			if err := verifyChannelReadable(ctx, candidate, bots); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 				return
 			}
 		}
@@ -281,6 +303,57 @@ func telegramSettingsHandler(deps Deps) gin.HandlerFunc {
 	}
 }
 
+// botProbeNeeded 判断候选条目是否需要重新探测：新加的、换了令牌的、
+// 以及从停用或冻结恢复到可写的条目才需要，保留原状的条目不再要求频道发布权限。
+func botProbeNeeded(current, bots []botpool.Bot) []bool {
+	byID := make(map[int64]botpool.Bot, len(current))
+	for _, bot := range current {
+		if bot.BotID > 0 {
+			byID[bot.BotID] = bot
+		}
+	}
+	needed := make([]bool, len(bots))
+	for index, bot := range bots {
+		old, ok := byID[bot.BotID]
+		switch {
+		case bot.BotID == 0 || !ok:
+			needed[index] = true
+		case old.Token != bot.Token:
+			needed[index] = true
+		case bot.Status == botpool.StatusOK && old.Status != "" && old.Status != botpool.StatusOK:
+			needed[index] = true
+		}
+	}
+	return needed
+}
+
+// verifyChannelReadable 用任一候选 Bot 读一次会话信息，确认候选频道存在且可访问。
+func verifyChannelReadable(ctx context.Context, effective settings.Effective, bots []botpool.Bot) error {
+	for _, bot := range bots {
+		token := strings.TrimSpace(bot.Token)
+		if token == "" {
+			continue
+		}
+		client, clientErr := netclient.NewClient(effective.ProxyConfig(), netclient.ServiceTelegram)
+		if clientErr != nil {
+			continue
+		}
+		provider, buildErr := storage.NewTelegram(storage.TelegramConfig{
+			Token:      token,
+			ChatID:     effective.TelegramChannel.Value,
+			APIBase:    effective.TelegramAPIBase.Value,
+			HTTPClient: client,
+		})
+		if buildErr != nil || provider == nil {
+			continue
+		}
+		if _, err := provider.ChatInfo(ctx); err == nil {
+			return nil
+		}
+	}
+	return errors.New("频道校验未通过")
+}
+
 // ensureRemovable 按整份保存后的保留列表检查：仍有媒体只能靠被移除的 Bot 读取时拒绝删除。
 func ensureRemovable(ctx context.Context, deps Deps, bots []botpool.Bot) error {
 	if deps.Posts == nil || deps.Bots == nil {
@@ -290,9 +363,11 @@ func ensureRemovable(ctx context.Context, deps Deps, bots []botpool.Bot) error {
 	if err != nil {
 		return nil
 	}
+	// 停用或冻结的条目不会参与读图，不能当作「已有其他 Bot 可读」的依据。
+	usable := botpool.Usable(bots)
 	keep := make(map[int64]bool, len(bots))
-	keepIDs := make([]int64, 0, len(bots))
-	for _, bot := range bots {
+	keepIDs := make([]int64, 0, len(usable))
+	for _, bot := range usable {
 		keep[bot.BotID] = true
 		if bot.BotID > 0 {
 			keepIDs = append(keepIDs, bot.BotID)

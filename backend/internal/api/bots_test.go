@@ -163,20 +163,38 @@ func TestTelegramSaveIsAtomicAndChecksBotID(t *testing.T) {
 		t.Fatalf("拒绝后列表 = %+v（err=%v），期望仍是 111 号", stored, err)
 	}
 
-	// 探测失败：频道同样不能被先写进去。
+	// 保留原状条目不再探测频道发布权限：冻结的 Bot 也能改频道并加备用 Bot。
 	original := probeBots
 	probeBots = func(context.Context, settings.ProbeOptions) settings.ProbeResult {
 		return settings.ProbeResult{Telegram: settings.ProbeTarget{Status: settings.ProbeFailed, Detail: "Bot 不是频道管理员，无法发布"}}
 	}
 	t.Cleanup(func() { probeBots = original })
-	body = fmt.Sprintf(`{"channel_id":"-100999","bots":[{"bot_id":111,"alias":"主力","token":%q,"priority":0}]}`, token)
+	if err := pool.MarkFrozen(ctx, 111, "上游拒绝，账号受限"); err != nil {
+		t.Fatalf("标记冻结失败: %v", err)
+	}
+	body = fmt.Sprintf(`{"channel_id":"-100999","bots":[{"bot_id":111,"alias":"主力","token":%q,"priority":0,"status":"frozen"}]}`, token)
 	rec = env.do(t, http.MethodPut, "/api/settings/telegram", body, cookie)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("探测失败状态码 = %d，期望 400，响应: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("保留冻结 Bot 时状态码 = %d，期望 200，响应: %s", rec.Code, rec.Body.String())
 	}
 	effective, err = resolver.Effective(ctx)
-	if err != nil || effective.TelegramChannel.Value != "-100777" {
-		t.Fatalf("探测失败后频道 = %q（err=%v），期望保持 -100777", effective.TelegramChannel.Value, err)
+	if err != nil || effective.TelegramChannel.Value != "-100999" {
+		t.Fatalf("频道 = %q（err=%v），期望 -100999", effective.TelegramChannel.Value, err)
+	}
+
+	// 重新启用必须复验权限：探测失败时状态与频道都不改。
+	body = fmt.Sprintf(`{"channel_id":"-100888","bots":[{"bot_id":111,"alias":"主力","token":%q,"priority":0,"status":"ok"}]}`, token)
+	rec = env.do(t, http.MethodPut, "/api/settings/telegram", body, cookie)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("重新启用探测失败状态码 = %d，期望 400，响应: %s", rec.Code, rec.Body.String())
+	}
+	effective, err = resolver.Effective(ctx)
+	if err != nil || effective.TelegramChannel.Value != "-100999" {
+		t.Fatalf("拒绝后频道 = %q（err=%v），期望保持 -100999", effective.TelegramChannel.Value, err)
+	}
+	stored, err = pool.List(ctx)
+	if err != nil || len(stored) != 1 || stored[0].Status != botpool.StatusFrozen {
+		t.Fatalf("拒绝后条目 = %+v（err=%v），期望仍为冻结", stored, err)
 	}
 }
 
