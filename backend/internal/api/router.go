@@ -81,6 +81,8 @@ type Deps struct {
 	Bots *botpool.Pool
 	// ReloadBots 在 Bot 列表保存后热替换运行配置，未装配时保持原状。
 	ReloadBots func(context.Context) error
+	// ResolveImage 按逐图来源挑选可读的图床与文件引用，未装配时读全局图床。
+	ResolveImage func(context.Context, *posts.PublicImage) (storage.StreamProvider, string, int64, bool)
 }
 
 // maxAuthBodyBytes 是登录与初始化请求体的上限，超出的请求不会被解码。
@@ -117,7 +119,13 @@ func NewRouter(deps Deps) *gin.Engine {
 
 	// 公开图片网关：短码即凭证，不经过管理会话。
 	gateway := newImageGateway(deps.Posts, deps.Streams, deps.ImageConcurrency,
-		deps.ImageQueueDepth, deps.ImageQueueWait, deps.Logger, deps.Traffic)
+		deps.ImageQueueDepth, deps.ImageQueueWait, deps.Logger, deps.Traffic,
+		func(ctx context.Context, image *posts.PublicImage) (storage.StreamProvider, string, int64, bool) {
+			if deps.ResolveImage == nil {
+				return nil, "", 0, false
+			}
+			return deps.ResolveImage(ctx, image)
+		})
 	router.GET("/i/:short_code", gateway.handle)
 	// HEAD 供浏览器与播放器探测长度和区间支持，不返回正文。
 	router.HEAD("/i/:short_code", gateway.handle)

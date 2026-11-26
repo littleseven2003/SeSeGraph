@@ -241,6 +241,8 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	botPool := botpool.New(settingsStore)
 	// reloadBotsFn 在队列装配完成后才有实现，路由先挂一个可延后填充的入口。
 	var reloadBotsFn func(context.Context) error
+	// resolveImageFn 由逐图来源与池内健康状态挑图床，未装配时网关读全局图床。
+	var resolveImageFn func(context.Context, *posts.PublicImage) (storage.StreamProvider, string, int64, bool)
 	router := api.NewRouter(api.Deps{
 		Version:           version,
 		Commit:            commit,
@@ -278,6 +280,12 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 				return nil
 			}
 			return reloadBotsFn(callCtx)
+		},
+		ResolveImage: func(callCtx context.Context, image *posts.PublicImage) (storage.StreamProvider, string, int64, bool) {
+			if resolveImageFn == nil {
+				return nil, "", 0, false
+			}
+			return resolveImageFn(callCtx, image)
 		},
 	})
 
@@ -370,6 +378,48 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		return nil
 	}
 	reloadBotsFn = reloadBots
+
+	// 读图按逐图引用与池内健康状态选 Bot：当前 Bot 可用时优先，否则用其他 Bot 已存的引用。
+	providerCache := struct {
+		mu sync.Mutex
+		m  map[int64]storage.StreamProvider
+	}{m: map[int64]storage.StreamProvider{}}
+	resolveImageFn = func(callCtx context.Context, image *posts.PublicImage) (storage.StreamProvider, string, int64, bool) {
+		refs, err := repository.ImageFileRefs(callCtx, image.ImageID)
+		if err != nil || len(refs) == 0 {
+			return nil, "", 0, false
+		}
+		bots, err := botPool.List(callCtx)
+		if err != nil {
+			return nil, "", 0, false
+		}
+		effective, err := resolver.Effective(callCtx)
+		if err != nil {
+			return nil, "", 0, false
+		}
+		for _, bot := range botpool.Usable(bots) {
+			for _, ref := range refs {
+				if ref.BotID != bot.BotID || strings.TrimSpace(bot.Token) == "" {
+					continue
+				}
+				providerCache.mu.Lock()
+				provider, cached := providerCache.m[bot.BotID]
+				providerCache.mu.Unlock()
+				if !cached {
+					built, buildErr := newProviderWithToken(effective, bot.Token)
+					if buildErr != nil || built == nil {
+						continue
+					}
+					provider = built
+					providerCache.mu.Lock()
+					providerCache.m[bot.BotID] = provider
+					providerCache.mu.Unlock()
+				}
+				return provider, ref.FileID, bot.BotID, true
+			}
+		}
+		return nil, "", 0, false
+	}
 	// 启动时先按现有列表装配；旧单 Token 配置在列表为空时并入列表，保证升级后行为不变。
 	go func() {
 		seedCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)

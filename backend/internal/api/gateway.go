@@ -136,10 +136,15 @@ type imageGateway struct {
 	logger *log.Logger
 	// meter 统计出站流量并判断月度硬上限，可为空。
 	meter *traffic.Recorder
+	// resolve 按逐图来源与池状态选出可读的提供方与文件引用；未装配时沿用全局图床。
+	resolve ImageResolver
 }
 
 // newImageGateway 创建网关，并发上限非正时使用默认值。
-func newImageGateway(repo *posts.Repository, streams storage.StreamProvider, concurrency, queueDepth int, wait time.Duration, logger *log.Logger, meter *traffic.Recorder) *imageGateway {
+// ImageResolver 返回这张图本次可用的取流来源；ok 为 false 时回落到全局图床。
+type ImageResolver func(ctx context.Context, image *posts.PublicImage) (storage.StreamProvider, string, int64, bool)
+
+func newImageGateway(repo *posts.Repository, streams storage.StreamProvider, concurrency, queueDepth int, wait time.Duration, logger *log.Logger, meter *traffic.Recorder, resolve ImageResolver) *imageGateway {
 	if concurrency <= 0 {
 		concurrency = DefaultImageConcurrency
 	}
@@ -152,6 +157,7 @@ func newImageGateway(repo *posts.Repository, streams storage.StreamProvider, con
 	return &imageGateway{
 		repo:        repo,
 		streams:     streams,
+		resolve:     resolve,
 		slots:       make(chan struct{}, concurrency),
 		concurrency: concurrency,
 		waiting:     make(chan struct{}, queueDepth),
@@ -295,6 +301,15 @@ func (g *imageGateway) handle(c *gin.Context) {
 	ctx := c.Request.Context()
 	// 每个请求固定一份图床视图，避免热切换期间 Size 与取流落到不同实例。
 	streams := g.streams
+	fileID := image.RemoteFileID
+	resolvedBotID := int64(0)
+	if g.resolve != nil {
+		if picked, pickedID, botID, ok := g.resolve(ctx, image); ok {
+			streams = picked
+			fileID = pickedID
+			resolvedBotID = botID
+		}
+	}
 	if snapshotter, ok := g.streams.(storage.Snapshotter); ok {
 		if fixed, ready := snapshotter.Snapshot(); ready {
 			streams = fixed
@@ -309,7 +324,7 @@ func (g *imageGateway) handle(c *gin.Context) {
 	if video {
 		if header := strings.TrimSpace(c.Request.Header.Get("Range")); header != "" {
 			if ranger, ok := streams.(storage.RangeStreamer); ok {
-				if size, sizeErr := ranger.Size(ctx, image.RemoteFileID); sizeErr == nil {
+				if size, sizeErr := ranger.Size(ctx, fileID); sizeErr == nil {
 					total = size
 					parsed, verdict := parseByteRange(header, size)
 					switch verdict {
@@ -346,7 +361,11 @@ func (g *imageGateway) handle(c *gin.Context) {
 		return
 	}
 
-	stream, partial, err := g.openStream(streams, ctx, image.RemoteFileID, requested, ranged)
+	// 通过其他 Bot 的引用读到后登记下来，下次可直接复用，也为删除保护提供依据。
+	if resolvedBotID > 0 && fileID != image.RemoteFileID {
+		defer func() { _ = g.repo.SetImageFileRef(context.WithoutCancel(ctx), image.ImageID, resolvedBotID, fileID) }()
+	}
+	stream, partial, err := g.openStream(streams, ctx, fileID, requested, ranged)
 	switch {
 	case errors.Is(err, storage.ErrFileUnavailable):
 		notFound(c)
