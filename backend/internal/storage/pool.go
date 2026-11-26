@@ -78,6 +78,19 @@ func (p *Pool) UploadWithOrigin(ctx context.Context, req UploadRequest) (UploadR
 	return result, origin, err
 }
 
+// CredentialVersion 返回当前生效条目的凭据指纹，供发送结果核对。
+func (p *Pool) CredentialVersion() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.active < 0 || p.active >= len(p.entries) {
+		return ""
+	}
+	if versioned, ok := p.entries[p.active].Provider.(interface{ CredentialVersion() string }); ok {
+		return versioned.CredentialVersion()
+	}
+	return ""
+}
+
 // Origin 返回当前生效条目的编号与原频道，供逐图来源记录。
 func (p *Pool) Origin() (int64, string) {
 	p.mu.Lock()
@@ -107,6 +120,23 @@ func (p *Pool) Failover(reason string) (failedBotID int64, next Provider, ok boo
 	}
 	p.active = nextIndex
 	return failedBotID, p.entries[nextIndex].Provider, true
+}
+
+// Block 把指定编号的 Bot 标为写入不可用并返回下一个可用提供方。
+// 与 Failover 不同，它不依赖“当前活动条目”，避免热切换或调序后封错对象。
+func (p *Pool) Block(botID int64) (Provider, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if botID <= 0 {
+		return nil, false
+	}
+	p.blocked[botID] = true
+	nextIndex := p.pickLocked(-1)
+	if nextIndex < 0 {
+		return nil, false
+	}
+	p.active = nextIndex
+	return p.entries[nextIndex].Provider, true
 }
 
 // pickLocked 从 start 之后找一个未停用的条目，-1 表示从头找。

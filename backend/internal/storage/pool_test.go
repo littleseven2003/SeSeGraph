@@ -105,3 +105,56 @@ func TestPoolReportsEmptyAfterAllFrozen(t *testing.T) {
 		t.Fatalf("无可用 Bot 时应返回明确错误，实际 %v", err)
 	}
 }
+
+// credentialFake 在池替身上补出凭据指纹，供动态提供方的身份转发测试使用。
+type credentialFake struct {
+	*poolFake
+	version string
+}
+
+func (f *credentialFake) CredentialVersion() string { return f.version }
+
+// TestDynamicUploadCarriesOriginAndBlocksByID 从运行配置入口验证：一次发送带回实际 Bot 与凭据版本，
+// 首 Bot 被上游拒绝后按编号切换，不会再落到已被冻结的条目上。
+func TestDynamicUploadCarriesOriginAndBlocksByID(t *testing.T) {
+	first := &credentialFake{poolFake: &poolFake{botID: 111}, version: "v1"}
+	second := &credentialFake{poolFake: &poolFake{botID: 222}, version: "v2"}
+	pool, err := NewPool([]PoolEntry{
+		{BotID: 111, ChatID: "-100777", Provider: first},
+		{BotID: 222, ChatID: "-100777", Provider: second},
+	})
+	if err != nil {
+		t.Fatalf("创建池失败: %v", err)
+	}
+	dynamic := NewDynamic(pool)
+	dynamic.Set(pool, pool)
+
+	req := UploadRequest{FileName: "a.jpg", Mode: ModePhoto, Reader: strings.NewReader("x")}
+	result, origin, err := dynamic.UploadWithOrigin(context.Background(), req)
+	if err != nil {
+		t.Fatalf("发送失败: %v", err)
+	}
+	if origin.BotID != 111 || origin.ChatID != "-100777" || origin.CredentialVersion != "v1" {
+		t.Fatalf("发送身份 = %+v，期望 111/-100777/v1", origin)
+	}
+	if result.FileID != "file-111-1" {
+		t.Fatalf("首次发送结果 = %+v", result)
+	}
+
+	next, ok := dynamic.FailoverBot(111)
+	if !ok || next == nil {
+		t.Fatalf("按编号切换失败: ok=%v", ok)
+	}
+	_, origin, err = dynamic.UploadWithOrigin(context.Background(), UploadRequest{
+		FileName: "b.jpg", Mode: ModePhoto, Reader: strings.NewReader("y"),
+	})
+	if err != nil {
+		t.Fatalf("切换后发送失败: %v", err)
+	}
+	if origin.BotID != 222 || origin.CredentialVersion != "v2" {
+		t.Fatalf("切换后身份 = %+v，期望 222/v2", origin)
+	}
+	if first.calls != 1 || second.calls != 1 {
+		t.Fatalf("调用次数 = %d/%d，期望各 1 次", first.calls, second.calls)
+	}
+}

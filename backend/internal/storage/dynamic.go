@@ -27,9 +27,13 @@ func (d *Dynamic) Set(provider Provider, pool *Pool) {
 }
 
 // Current 返回当前提供方，可能为 nil。
+// 多 Bot 模式下始终返回池本身：切换只改池内的活动条目，读侧拿到的仍是同一份运行配置。
 func (d *Dynamic) Current() Provider {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
+	if d.pool != nil {
+		return d.pool
+	}
 	return d.provider
 }
 
@@ -63,6 +67,27 @@ func (d *Dynamic) Upload(ctx context.Context, req UploadRequest) (UploadResult, 
 	return current.Upload(ctx, req)
 }
 
+// UploadWithOrigin 把本次发送连同实际使用的 Bot、频道与凭据指纹一起返回：
+// 多 Bot 模式下由池在选中条目的同一把锁内固定，单 Bot 模式由提供方自身给出。
+func (d *Dynamic) UploadWithOrigin(ctx context.Context, req UploadRequest) (UploadResult, SendOrigin, error) {
+	current := d.Current()
+	if current == nil {
+		return UploadResult{}, SendOrigin{}, &UploadError{Stage: "存图", Kind: KindAuth, Note: "尚未配置可写入的 Bot"}
+	}
+	if originProvider, ok := current.(OriginProvider); ok {
+		return originProvider.UploadWithOrigin(ctx, req)
+	}
+	origin := SendOrigin{}
+	if source, ok := current.(Origin); ok {
+		origin.BotID, origin.ChatID = source.Origin()
+	}
+	if versioned, ok := current.(interface{ CredentialVersion() string }); ok {
+		origin.CredentialVersion = versioned.CredentialVersion()
+	}
+	result, err := current.Upload(ctx, req)
+	return result, origin, err
+}
+
 // Origin 返回当前提供方的编号与频道，供逐图来源记录。
 func (d *Dynamic) Origin() (int64, string) {
 	current := d.Current()
@@ -78,6 +103,22 @@ func (d *Dynamic) CredentialVersion() string {
 		return versioned.CredentialVersion()
 	}
 	return ""
+}
+
+// FailoverBot 只把本次调用实际使用的 Bot 标为写入不可用并换到下一个可用条目。
+// 即使运行配置在发送途中被替换，也不会误伤新配置里的其他 Bot。
+func (d *Dynamic) FailoverBot(botID int64) (Provider, bool) {
+	d.mu.RLock()
+	pool := d.pool
+	d.mu.RUnlock()
+	if pool == nil || botID <= 0 {
+		return nil, false
+	}
+	next, ok := pool.Block(botID)
+	if !ok {
+		return nil, false
+	}
+	return next, true
 }
 
 func (d *Dynamic) Failover(reason string) (int64, Provider, bool) {
