@@ -160,6 +160,7 @@ func NewRouter(deps Deps) *gin.Engine {
 	admin.PUT("/settings/admin-credentials", limitBody(maxAccountBodyBytes), updateCredentialsHandler(deps))
 	admin.GET("/settings/bots", botsHandler(deps))
 	admin.PUT("/settings/bots", limitBody(maxSettingsBodyBytes), updateBotsHandler(deps))
+	admin.PUT("/settings/telegram", limitBody(maxSettingsBodyBytes), telegramSettingsHandler(deps))
 	admin.POST("/backup/trigger", backupTriggerHandler(deps))
 	admin.GET("/backup/download", backupDownloadHandler(deps))
 	admin.GET("/backup/status", backupStatusHandler(deps))

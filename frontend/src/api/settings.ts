@@ -348,6 +348,26 @@ export async function fetchBots(): Promise<BotsView> {
   return (await apiRequest('/api/settings/bots')).json() as Promise<BotsView>
 }
 
+// saveTelegram 把频道与 Bot 列表放在一次提交里：探测用候选频道，成功后一起生效。
+export async function saveTelegram(channelID: string, bots: BotInput[]): Promise<{ bots: BotEntry[]; pool_enabled: boolean }> {
+  const response = await apiRequest('/api/settings/telegram', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ channel_id: channelID, bots }),
+  })
+  if (!response.ok) {
+    let message = ''
+    try {
+      const parsed = (await response.json()) as { error?: string }
+      message = parsed.error ?? ''
+    } catch {
+      message = ''
+    }
+    throw new ApiError(response.status, message !== '' ? message : '保存 Telegram 配置失败')
+  }
+  return response.json() as Promise<{ bots: BotEntry[]; pool_enabled: boolean }>
+}
+
 // saveBots 覆盖保存 Bot 池；未填令牌的条目沿用服务端已有令牌。
 export async function saveBots(bots: BotInput[]): Promise<BotsView> {
   const response = await apiRequest('/api/settings/bots', {

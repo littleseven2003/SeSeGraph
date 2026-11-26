@@ -11,6 +11,7 @@ import {
   fetchSettings,
   fetchTraffic,
   saveBots,
+  saveTelegram,
   resetPostThumbs,
   saveSettings,
   testConnection,
@@ -679,13 +680,21 @@ async function save(): Promise<void> {
   // 记下保存前的输入：本次没提交的组要把草稿还原回去，避免被服务端结果覆盖。
   const pending = { ...form }
   try {
-    // Telegram 页把 Bot 列表和频道一起提交：列表失败就不保存频道，避免半套配置。
-    const savingBotsInTelegram = activeSection.value === 'telegram' && botDraftChanged()
-    if (savingBotsInTelegram) {
-      await saveBotPool()
-      if (botError.value !== '') return
+    if (activeSection.value === 'telegram') {
+      // 频道与 Bot 列表一次提交：候选频道参与探测，失败不会留下半套配置。
+      const saved = await saveTelegram(form.channelId.trim(), botDraft.value.map((bot, index) => ({
+        bot_id: bot.bot_id,
+        alias: bot.alias.trim(),
+        token: bot.token.trim(),
+        priority: index,
+        status: bot.status,
+      })))
+      applyBots(saved.bots)
+      botDraft.value = saved.bots.map((bot) => ({ bot_id: bot.bot_id, alias: bot.alias, token: '', status: bot.status }))
+      applyView(await fetchSettings())
+    } else {
+      applyView(await saveSettings(patch))
     }
-    applyView(await saveSettings(patch))
     restorePendingDraft(pending, patch)
     feedback.value = '设置已保存并立即生效'
     void loadTraffic()

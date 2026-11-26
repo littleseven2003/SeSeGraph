@@ -72,7 +72,14 @@ func (d *Dynamic) Origin() (int64, string) {
 	return 0, ""
 }
 
-// Failover 在当前为多 Bot 池时切换到下一个可写入的 Bot；返回失败条目编号。
+// CredentialVersion 返回当前提供方的凭据指纹，供发送结果核对。
+func (d *Dynamic) CredentialVersion() string {
+	if versioned, ok := d.Current().(interface{ CredentialVersion() string }); ok {
+		return versioned.CredentialVersion()
+	}
+	return ""
+}
+
 func (d *Dynamic) Failover(reason string) (int64, Provider, bool) {
 	d.mu.RLock()
 	pool := d.pool

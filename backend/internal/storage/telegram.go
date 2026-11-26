@@ -2,6 +2,8 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -58,6 +60,7 @@ type Telegram struct {
 	client   *http.Client
 	photoMax int64
 	docMax   int64
+	version  string
 
 	mu       sync.Mutex
 	botID    int64
@@ -67,6 +70,12 @@ type Telegram struct {
 }
 
 // NewTelegram 创建 Telegram 提供方。
+// CredentialVersion 用令牌与上游地址算出短指纹，用于核对迟到的发送结果属于哪一版凭据。
+func CredentialVersion(token, apiBase string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(token) + "|" + strings.TrimSpace(apiBase)))
+	return hex.EncodeToString(sum[:6])
+}
+
 func NewTelegram(cfg TelegramConfig) (*Telegram, error) {
 	token := strings.TrimSpace(cfg.Token)
 	chatID := strings.TrimSpace(cfg.ChatID)
@@ -106,6 +115,7 @@ func NewTelegram(cfg TelegramConfig) (*Telegram, error) {
 		token:    token,
 		chatID:   chatID,
 		apiBase:  base,
+		version:  CredentialVersion(token, base),
 		client:   client,
 		photoMax: photoMax,
 		docMax:   docMax,
@@ -170,6 +180,14 @@ func (t *Telegram) BotID(ctx context.Context) (int64, error) {
 	t.botKnown = true
 	t.mu.Unlock()
 	return payload.Result.ID, nil
+}
+
+// CredentialVersion 返回本实例所用凭据的短指纹。
+func (t *Telegram) CredentialVersion() string {
+	if t == nil {
+		return ""
+	}
+	return t.version
 }
 
 // BotIDValue 返回已确认的 Bot 编号，未确认时为 0；供逐图来源记录使用。

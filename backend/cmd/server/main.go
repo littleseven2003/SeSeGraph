@@ -322,13 +322,35 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		if origin, ok := failed.(storage.Origin); ok {
 			actualID, _ = origin.Origin()
 		}
+		failedVersion := ""
+		if versioned, ok := failed.(interface{ CredentialVersion() string }); ok {
+			failedVersion = versioned.CredentialVersion()
+		}
 		failedBotID, next, ok := runtime.Failover(uploadFrozenNote)
 		if actualID > 0 {
 			failedBotID = actualID
 		}
+		// 只有失败请求所用凭据仍是列表里的那一版时才标冻结，避免把刚轮换的新令牌误标。
 		if failedBotID > 0 {
-			if err := botPool.MarkFrozen(callCtx, failedBotID, uploadFrozenNote); err != nil {
-				log.Print("记录 Bot 冻结状态失败")
+			current, listErr := botPool.List(callCtx)
+			freeze := true
+			if listErr == nil && failedVersion != "" {
+				freeze = false
+				effective, resolveErr := resolver.Effective(callCtx)
+				for _, bot := range current {
+					if err := resolveErr; err != nil {
+						break
+					}
+					if bot.BotID == failedBotID && storage.CredentialVersion(bot.Token, effective.TelegramAPIBase.Value) == failedVersion {
+						freeze = true
+						break
+					}
+				}
+			}
+			if freeze {
+				if err := botPool.MarkFrozen(callCtx, failedBotID, uploadFrozenNote); err != nil {
+					log.Print("记录 Bot 冻结状态失败")
+				}
 			}
 		}
 		if !ok {

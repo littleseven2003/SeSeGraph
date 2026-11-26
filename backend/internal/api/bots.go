@@ -63,6 +63,12 @@ func verifyBotTokens(ctx context.Context, deps Deps, bots []botpool.Bot) ([]int6
 	if err != nil {
 		return nil, errors.New("读取图床配置失败")
 	}
+	return verifyBotTokensWith(ctx, effective, bots)
+}
+
+// verifyBotTokensWith 用给定的候选生效配置探测，供「频道与列表同次提交」复用。
+func verifyBotTokensWith(ctx context.Context, effective settings.Effective, bots []botpool.Bot) ([]int64, error) {
+	ids := make([]int64, len(bots))
 	for _, bot := range bots {
 		token := strings.TrimSpace(bot.Token)
 		if token == "" {
@@ -163,6 +169,137 @@ func botsHandler(deps Deps) gin.HandlerFunc {
 	}
 }
 
+// telegramRequest 是一次提交的 Telegram 配置：频道与 Bot 列表一起校验、一起落库。
+type telegramRequest struct {
+	ChannelID string           `json:"channel_id"`
+	Bots      []botsRequestBot `json:"bots"`
+}
+
+// botsRequestBot 是单条 Bot 的提交结构。
+type botsRequestBot struct {
+	BotID    int64  `json:"bot_id"`
+	Alias    string `json:"alias"`
+	Token    string `json:"token"`
+	Priority int    `json:"priority"`
+	Status   string `json:"status"`
+}
+
+// telegramSettingsHandler 用同一份候选配置校验频道与 Bot 列表：
+// 候选频道参与令牌探测，全部通过后先写频道再写列表并热替换运行配置。
+func telegramSettingsHandler(deps Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if deps.Bots == nil || deps.Settings == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "图床配置未启用"})
+			return
+		}
+		var request telegramRequest
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式不正确"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), botSaveTimeout)
+		defer cancel()
+
+		effective, err := deps.Settings.Effective(ctx)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取图床配置失败"})
+			return
+		}
+		channel := strings.TrimSpace(request.ChannelID)
+		if channel == "" {
+			channel = effective.TelegramChannel.Value
+		}
+		// 候选频道参与探测：换频道与换令牌一次完成，不会用旧频道验证新令牌。
+		candidate := effective
+		candidate.TelegramChannel.Value = channel
+
+		bots := make([]botpool.Bot, 0, len(request.Bots))
+		for _, item := range request.Bots {
+			bots = append(bots, botpool.Bot{
+				BotID: item.BotID, Alias: item.Alias, Token: item.Token,
+				Priority: item.Priority, Status: item.Status,
+			})
+		}
+		ids, err := verifyBotTokensWith(ctx, candidate, bots)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		for index := range bots {
+			if bots[index].BotID == 0 {
+				bots[index].BotID = ids[index]
+			}
+		}
+		seen := make(map[int64]string, len(bots))
+		for _, bot := range bots {
+			if bot.BotID == 0 {
+				continue
+			}
+			if previous, ok := seen[bot.BotID]; ok {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "同一个 Bot 不能重复添加（" + previous + "）"})
+				return
+			}
+			seen[bot.BotID] = bot.Alias
+		}
+		if err := ensureRemovable(ctx, deps, bots); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		channelValue := channel
+		if err := deps.Settings.Update(ctx, settings.Patch{TelegramChannel: &channelValue}); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "频道校验未通过"})
+			return
+		}
+		if err := deps.Bots.Replace(ctx, bots); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if deps.ReloadBots != nil {
+			if err := deps.ReloadBots(ctx); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "已保存，但运行配置切换失败，请重新保存"})
+				return
+			}
+		}
+		botsHandler(deps)(c)
+	}
+}
+
+// ensureRemovable 按整份保存后的保留列表检查：仍有媒体只能靠被移除的 Bot 读取时拒绝删除。
+func ensureRemovable(ctx context.Context, deps Deps, bots []botpool.Bot) error {
+	if deps.Posts == nil || deps.Bots == nil {
+		return nil
+	}
+	existing, err := deps.Bots.List(ctx)
+	if err != nil {
+		return nil
+	}
+	keep := make(map[int64]bool, len(bots))
+	keepIDs := make([]int64, 0, len(bots))
+	for _, bot := range bots {
+		keep[bot.BotID] = true
+		if bot.BotID > 0 {
+			keepIDs = append(keepIDs, bot.BotID)
+		}
+	}
+	for _, old := range existing {
+		if old.BotID == 0 || keep[old.BotID] {
+			continue
+		}
+		count, countErr := deps.Posts.CountImagesExclusiveToRemoval(ctx, old.BotID, keepIDs)
+		if countErr != nil {
+			return errors.New("检查媒体归属失败")
+		}
+		if count > 0 {
+			name := strings.TrimSpace(old.Alias)
+			if name == "" {
+				name = "该 Bot"
+			}
+			return errors.New(name + "：仍有 " + strconv.FormatInt(count, 10) + " 张图只能由它读取，请先完成接管再移除")
+		}
+	}
+	return nil
+}
+
 // updateBotsHandler 保存 Bot 池；未提交令牌的条目按编号沿用原值。
 func updateBotsHandler(deps Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -207,37 +344,9 @@ func updateBotsHandler(deps Deps) gin.HandlerFunc {
 			}
 			seen[bot.BotID] = bot.Alias
 		}
-		// 删除保护：仍有媒体只能靠被移除的 Bot 读取时，先接管再删。
-		if deps.Posts != nil {
-			existing, _ := deps.Bots.List(ctx)
-			keep := make(map[int64]bool, len(bots))
-			for _, bot := range bots {
-				keep[bot.BotID] = true
-			}
-			keepIDs := make([]int64, 0, len(bots))
-			for _, bot := range bots {
-				if bot.BotID > 0 {
-					keepIDs = append(keepIDs, bot.BotID)
-				}
-			}
-			for _, old := range existing {
-				if old.BotID == 0 || keep[old.BotID] {
-					continue
-				}
-				count, countErr := deps.Posts.CountImagesExclusiveToRemoval(ctx, old.BotID, keepIDs)
-				if countErr != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "检查媒体归属失败"})
-					return
-				}
-				if count > 0 {
-					name := strings.TrimSpace(old.Alias)
-					if name == "" {
-						name = "该 Bot"
-					}
-					c.JSON(http.StatusBadRequest, gin.H{"error": name + "：仍有 " + strconv.FormatInt(count, 10) + " 张图只能由它读取，请先完成接管再移除"})
-					return
-				}
-			}
+		if err := ensureRemovable(ctx, deps, bots); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
 		}
 		if err := deps.Bots.Replace(ctx, bots); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
