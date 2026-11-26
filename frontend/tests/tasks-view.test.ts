@@ -98,7 +98,8 @@ test('任务页复用同一套四阶段与控制判定', () => {
 })
 
 test('任务默认只有一行，展开后才出现四阶段进度与操作', () => {
-  assert.ok(source.includes('<TaskStageBar :stages="stagesOf(task)" />'), '展开区复用四阶段组件')
+  assert.ok(source.includes('<TaskStageBar :stages="stagesOf(task)" layout="pairs" />'), '展开区复用四阶段组件并按两列各两段排布')
+  assert.ok(source.includes('lg:grid-cols-[3fr_3fr_1fr]'), '主体按 3:3:1 分栏')
   assert.ok(source.includes('v-if="isExpanded(task.id)"'), '默认收起')
   assert.ok(source.includes(':aria-expanded="isExpanded(task.id)"'), '展开状态对读屏可见')
   assert.ok(source.includes('toggleExpanded(task.id, task.status)'), '整行可点开，失败任务展开时补读逐图原因')

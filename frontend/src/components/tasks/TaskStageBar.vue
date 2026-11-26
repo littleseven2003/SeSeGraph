@@ -3,8 +3,10 @@ import type { TaskTone } from '../../utils/tasks.ts'
 import { stagePercent, type StageKey, type StageView } from '../../utils/stages.ts'
 
 // 四阶段进度条：桌面四等分，390px 折成 2×2；工作台与任务页共用同一份结构与色板。
-defineProps<{
+const props = defineProps<{
   stages: StageView[]
+  /** 列对布局把四段拆成两列各两段，供任务页 3:3:1 主体使用；缺省仍是四等分一行。 */
+  layout?: 'row' | 'pairs'
 }>()
 
 // 每段用自己的字标色，失败改红、暂停降透明度；未开始时用中性底色。
@@ -38,7 +40,43 @@ const VALUE_TEXT: Record<TaskTone, string> = {
 </script>
 
 <template>
+  <div
+    v-if="props.layout === 'pairs'"
+    class="grid grid-cols-1 gap-2.5 sm:grid-cols-2 sm:gap-3"
+    :aria-label="`四阶段进度：${props.stages.map((item) => item.index + '. ' + item.label + ' ' + item.value).join('，')}`"
+  >
+    <ol class="space-y-2.5">
+      <li v-for="item in [props.stages[0], props.stages[2]]" :key="item.key" class="min-w-0">
+        <div class="flex items-baseline justify-between gap-2">
+          <span class="truncate text-xs">
+            <span class="tnum text-muted/75">{{ item.index }}.</span>
+            <span class="ml-0.5 font-medium">{{ item.label }}</span>
+          </span>
+          <span class="tnum shrink-0 text-xs" :class="VALUE_TEXT[item.tone]">{{ item.value }}</span>
+        </div>
+        <div class="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-canvas" role="progressbar" :aria-label="`${item.label}进度`" :aria-valuenow="stagePercent(item.ratio)" aria-valuemin="0" aria-valuemax="100">
+          <div class="h-full rounded-full transition-[width] duration-300" :class="fillClass(item)" :style="fillStyle(item)"></div>
+        </div>
+      </li>
+    </ol>
+    <ol class="space-y-2.5">
+      <li v-for="item in [props.stages[1], props.stages[3]]" :key="item.key" class="min-w-0">
+        <div class="flex items-baseline justify-between gap-2">
+          <span class="truncate text-xs">
+            <span class="tnum text-muted/75">{{ item.index }}.</span>
+            <span class="ml-0.5 font-medium">{{ item.label }}</span>
+          </span>
+          <span class="tnum shrink-0 text-xs" :class="VALUE_TEXT[item.tone]">{{ item.value }}</span>
+        </div>
+        <div class="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-canvas" role="progressbar" :aria-label="`${item.label}进度`" :aria-valuenow="stagePercent(item.ratio)" aria-valuemin="0" aria-valuemax="100">
+          <div class="h-full rounded-full transition-[width] duration-300" :class="fillClass(item)" :style="fillStyle(item)"></div>
+        </div>
+      </li>
+    </ol>
+  </div>
+
   <ol
+    v-else
     class="grid grid-cols-2 gap-2.5 sm:grid-cols-4 sm:gap-3"
     :aria-label="`四阶段进度：${stages.map((item) => item.index + '. ' + item.label + ' ' + item.value).join('，')}`"
   >

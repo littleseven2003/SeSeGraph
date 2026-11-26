@@ -480,7 +480,65 @@ onBeforeUnmount(() => {
           </button>
 
           <div v-if="isExpanded(task.id)" :id="`task-stages-${task.id}`" class="border-t border-line/70 px-4 py-3 sm:px-5">
-            <TaskStageBar :stages="stagesOf(task)" />
+            <div class="grid gap-3 lg:grid-cols-[3fr_3fr_1fr]">
+              <div class="min-w-0 lg:col-span-2">
+                <TaskStageBar :stages="stagesOf(task)" layout="pairs" />
+              </div>
+            <div class="flex flex-col gap-1.5 lg:justify-start">
+              <router-link
+                v-if="task.status === 'completed'"
+                :to="{ name: 'post', params: { id: String(task.id) }, hash: '#progress' }"
+                class="inline-flex h-9 items-center justify-center rounded-lg border border-line bg-surface px-4 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink sm:h-9"
+              >
+                查看图集
+              </router-link>
+              <button
+                v-if="task.status === 'failed' && task.control_state === 'running'"
+                type="button"
+                class="inline-flex h-9 items-center justify-center rounded-lg border border-danger/35 bg-surface px-4 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-60 sm:h-9"
+                :disabled="busyId !== 0"
+                @click="retryTask(task)"
+              >
+                重试
+              </button>
+              <button
+                v-if="canResume(task)"
+                type="button"
+                class="inline-flex h-9 items-center justify-center rounded-lg border border-brand/30 bg-brand-soft px-4 text-xs font-medium text-brand-strong transition hover:border-brand/50 disabled:opacity-60 sm:h-9"
+                :disabled="busyId !== 0"
+                @click="control(task, 'resume')"
+              >
+                继续
+              </button>
+              <router-link
+                v-else-if="canContinueUpload(task)"
+                :to="{ name: 'workbench', query: { resume: task.id } }"
+                class="inline-flex h-9 items-center justify-center rounded-lg border border-line bg-surface px-4 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink sm:h-9"
+              >
+                继续上传
+              </router-link>
+              <button
+                v-if="canPause(task)"
+                type="button"
+                class="inline-flex h-9 items-center justify-center rounded-lg border border-line bg-surface px-4 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60 sm:h-9"
+                :disabled="busyId !== 0"
+                @click="control(task, 'pause')"
+              >
+                暂停
+              </button>
+              <button
+                v-if="canStop(task)"
+                type="button"
+                class="inline-flex h-9 items-center justify-center rounded-lg border border-danger/35 bg-surface px-4 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-60 sm:h-9"
+                :disabled="busyId !== 0"
+                @click="control(task, 'stop')"
+              >
+                停止
+              </button>
+              <p v-if="task.control_state === 'paused'" class="text-xs text-brand-strong">已暂停，继续只补缺项</p>
+              <p v-else-if="task.control_state === 'stopped'" class="text-xs text-danger">已停止，不再上传或发布</p>
+            </div>            </div>
+
             <!-- 顶行已经给过更新时间，这里只留阶段概况，不重复同一时间。 -->
             <p class="mt-2 text-xs text-muted">{{ summaryOf(task) }}</p>
             <!-- 失败时把可读原因写在这里，不再只显示笼统的「存图失败」。 -->
@@ -496,60 +554,7 @@ onBeforeUnmount(() => {
               </ul>
             </div>
             <p v-if="progressError !== '' && isExpanded(task.id)" class="mt-1 text-xs text-muted">{{ progressError }}</p>
-            <div class="mt-3 flex flex-wrap items-center gap-2">
-              <router-link
-                v-if="task.status === 'completed'"
-                :to="{ name: 'post', params: { id: String(task.id) }, hash: '#progress' }"
-                class="inline-flex h-11 items-center rounded-lg border border-line bg-surface px-4 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink sm:h-9"
-              >
-                查看图集
-              </router-link>
-              <button
-                v-if="task.status === 'failed' && task.control_state === 'running'"
-                type="button"
-                class="inline-flex h-11 items-center rounded-lg border border-danger/35 bg-surface px-4 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-60 sm:h-9"
-                :disabled="busyId !== 0"
-                @click="retryTask(task)"
-              >
-                重试
-              </button>
-              <button
-                v-if="canResume(task)"
-                type="button"
-                class="inline-flex h-11 items-center rounded-lg border border-brand/30 bg-brand-soft px-4 text-xs font-medium text-brand-strong transition hover:border-brand/50 disabled:opacity-60 sm:h-9"
-                :disabled="busyId !== 0"
-                @click="control(task, 'resume')"
-              >
-                继续
-              </button>
-              <router-link
-                v-else-if="canContinueUpload(task)"
-                :to="{ name: 'workbench', query: { resume: task.id } }"
-                class="inline-flex h-11 items-center rounded-lg border border-line bg-surface px-4 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink sm:h-9"
-              >
-                继续上传
-              </router-link>
-              <button
-                v-if="canPause(task)"
-                type="button"
-                class="inline-flex h-11 items-center rounded-lg border border-line bg-surface px-4 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60 sm:h-9"
-                :disabled="busyId !== 0"
-                @click="control(task, 'pause')"
-              >
-                暂停
-              </button>
-              <button
-                v-if="canStop(task)"
-                type="button"
-                class="inline-flex h-11 items-center rounded-lg border border-danger/35 bg-surface px-4 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-60 sm:h-9"
-                :disabled="busyId !== 0"
-                @click="control(task, 'stop')"
-              >
-                停止
-              </button>
-              <p v-if="task.control_state === 'paused'" class="text-xs text-brand-strong">已暂停，继续只补缺项</p>
-              <p v-else-if="task.control_state === 'stopped'" class="text-xs text-danger">已停止，不再上传或发布</p>
-            </div>
+
           </div>
         </li>
       </ul>
