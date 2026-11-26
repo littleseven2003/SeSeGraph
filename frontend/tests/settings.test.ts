@@ -382,22 +382,40 @@ test('流量与备份受环境变量托管时不提交', () => {
   assert.equal(patch.backup, undefined)
 })
 
-test('设置页按七栏单组显示，旧锚点静默映射', () => {
+test('设置页四组十项常驻渲染，旧锚点静默映射', () => {
   const view = readFileSync(new URL('../src/views/SettingsView.vue', import.meta.url), 'utf8')
   for (const [id, label] of [
     ['telegram', 'Telegram 图床'],
-    ['network', '代理与自检'],
     ['telegraph', 'Telegraph 发布'],
-    ['upload', '上传默认值'],
+    ['proxy', '网络代理'],
+    ['check', '连通性自检'],
+    ['meta', '元信息解析'],
+    ['upload', '上传默认'],
     ['traffic', '流量看护'],
     ['maintenance', '备份与缓存'],
-    ['appearance', '外观与安全'],
+    ['account', '账号安全'],
+    ['theme', '颜色模式'],
   ]) {
     assert.ok(view.includes(`{ id: '${id}', label: '${label}'`), `分组 ${label}`)
   }
-  assert.ok(view.includes("v-show=\"activeSection === 'telegram'\""), '单组显示')
+  // 全页平铺：所有区块常驻，滚动只改高亮。
+  assert.equal(view.includes('v-show="activeSection'), false, '不再互斥隐藏')
+  assert.ok(view.includes('scrollIntoView({ behavior: \'smooth\''), '点菜单平滑定位')
+  assert.ok(view.includes('function syncActiveFromScroll'), '滚动更新高亮')
   assert.ok(view.includes('LEGACY_ANCHORS'), '旧锚点映射表')
-  for (const [old, target] of [['upstream', 'telegram'], ['channel', 'telegram'], ['check', 'network'], ['defaults', 'upload'], ['media', 'upload'], ['ops', 'traffic'], ['storage', 'traffic'], ['account', 'appearance']]) {
+  // 四组顺序：连接与发布、上传配置、运维与安全、外观配置。
+  const navStart = view.indexOf('const SETTING_NAV')
+  const nav = view.slice(navStart, view.indexOf('// LEGACY_ANCHORS'))
+  const groups = ["group: '连接与发布'", "group: '上传配置'", "group: '运维与安全'", "group: '外观配置'"]
+  let last = -1
+  for (const group of groups) {
+    const at = nav.indexOf(group)
+    assert.ok(at > last, `分组顺序不符：${group}`)
+    last = at
+  }
+  assert.ok(nav.includes("{ id: 'meta', label: '元信息解析', group: '上传配置'"), '元信息解析归入上传配置')
+  assert.ok(nav.includes("{ id: 'theme', label: '颜色模式', group: '外观配置'"), '颜色模式归入外观配置')
+  for (const [old, target] of [['upstream', 'telegram'], ['channel', 'telegram'], ['network', 'proxy'], ['check', 'check'], ['defaults', 'upload'], ['media', 'meta'], ['ops', 'traffic'], ['storage', 'traffic'], ['account', 'account'], ['security', 'account'], ['appearance', 'theme']]) {
     assert.ok(view.includes(`${old}: '${target}'`), `旧锚点 ${old} 映射到 ${target}`)
   }
   assert.ok(view.includes('aria-label="主题模式"'), '外观与安全内有主题三态')

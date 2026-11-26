@@ -147,34 +147,45 @@ const credentialNote = ref('')
 const router = useRouter()
 let reloginTimer = 0
 const result = ref<ConnectionResult | null>(null)
-// activeSection 记录当前展开的分组；四组一次只显示一组，避免长滚屏。
+// activeSection 是滚动高亮项；页面全量平铺，不再隐藏未激活的分组。
 const activeSection = ref('telegram')
 
-// 分组导航：桌面左侧目录与手机顶部横向目录共用同一份分组。
-const SETTING_NAV = [
-  { id: 'telegram', label: 'Telegram 图床', group: '上游连接' },
-  { id: 'network', label: '代理与自检' },
-  { id: 'telegraph', label: 'Telegraph 发布', group: '内容与运维' },
-  { id: 'upload', label: '上传默认值' },
-  { id: 'traffic', label: '流量看护' },
-  { id: 'maintenance', label: '备份与缓存' },
-  { id: 'appearance', label: '外观与安全', group: '系统与偏好' },
+// 四组十项：桌面侧栏与手机横滑导航共用同一份顺序，锚点即区块 id。
+const SETTING_NAV: { id: string; label: string; group?: string; target: string }[] = [
+  { id: 'telegram', label: 'Telegram 图床', group: '连接与发布', target: 'telegram' },
+  { id: 'telegraph', label: 'Telegraph 发布', target: 'telegraph' },
+  { id: 'proxy', label: '网络代理', target: 'proxy' },
+  { id: 'check', label: '连通性自检', target: 'check' },
+  { id: 'meta', label: '元信息解析', group: '上传配置', target: 'meta' },
+  { id: 'upload', label: '上传默认', target: 'upload' },
+  { id: 'traffic', label: '流量看护', group: '运维与安全', target: 'traffic' },
+  { id: 'maintenance', label: '备份与缓存', target: 'backup' },
+  { id: 'account', label: '账号安全', target: 'account' },
+  { id: 'theme', label: '颜色模式', group: '外观配置', target: 'theme' },
 ]
 
-// LEGACY_ANCHORS 让旧地址里的分区锚点安静落到新分组，不报错也不丢定位。
+// LEGACY_ANCHORS 让旧地址里的锚点落到新区块，直达具体卡片的位置另行映射。
 const LEGACY_ANCHORS: Record<string, string> = {
   channel: 'telegram',
   upstream: 'telegram',
-  check: 'network',
-  media: 'upload',
+  network: 'proxy',
+  check: 'check',
+  media: 'meta',
   defaults: 'upload',
   storage: 'traffic',
   ops: 'traffic',
   backup: 'maintenance',
   cache: 'maintenance',
-  account: 'appearance',
-  security: 'appearance',
-  theme: 'appearance',
+  account: 'account',
+  security: 'account',
+  theme: 'theme',
+  appearance: 'theme',
+}
+
+// CARD_ANCHORS 指向同一栏内的具体卡片，刷新直达时滚到卡片本身。
+const CARD_ANCHORS: Record<string, string> = {
+  backup: 'backup',
+  cache: 'cache',
 }
 
 // fieldErrorText 给字段就近的报错文案，避免只在底部提示。
@@ -728,76 +739,74 @@ async function check(): Promise<void> {
   }
 }
 
-// hashSection 取出地址里的有效分组锚点；刷新直达时浏览器早于分组渲染尝试定位，需自己补一次。
-function hashSection(): string {
-  const raw = window.location.hash.replace(/^#/, '')
-  if (SETTING_NAV.some((item) => item.id === raw)) return raw
-  return LEGACY_ANCHORS[raw] ?? ''
-}
-
-// pendingJump 保护主动跳转的选中项：桌面端尾部分组滚不到顶部时，
-// 位置判定会把选中项让给上一组，这里保留到用户自己滚动为止。
+// pendingJump 短暂锁定主动跳转的选中项，防止平滑滚动途中高亮被沿途区块抢走。
 let pendingJump = ''
 let pendingTimer = 0
 
-function jumpToSection(id: string): void {
-  if (!SETTING_NAV.some((item) => item.id === id)) return
-  activeSection.value = id
+// anchorTarget 把地址里的锚点解析成实际元素 id：卡片锚点优先，其次是导航项与旧映射。
+function anchorTarget(raw: string): string {
+  if (raw === '') return ''
+  if (CARD_ANCHORS[raw] !== undefined) return CARD_ANCHORS[raw]
+  const item = SETTING_NAV.find((entry) => entry.id === raw)
+  if (item !== undefined) return item.target
+  const legacy = LEGACY_ANCHORS[raw]
+  if (legacy === undefined) return ''
+  return SETTING_NAV.find((entry) => entry.id === legacy)?.target ?? legacy
 }
 
-// followHash 在分组渲染后补一次定位，刷新、前进后退和直接打开都能落到同一分组。
-// CARD_ANCHORS 指向同一栏内的具体卡片，切到对应菜单后再滚到卡片位置。
-const CARD_ANCHORS: Record<string, string> = {
-  backup: 'backup',
-  cache: 'cache',
-  theme: 'theme',
-  security: 'account',
-  account: 'account',
+// navForTarget 找出元素所属的导航项，用于旧锚点与卡片锚点的高亮。
+function navForTarget(target: string): string {
+  const item = SETTING_NAV.find((entry) => entry.target === target)
+  return item?.id ?? ''
 }
 
+// followHash 在页面渲染后按地址定位一次，刷新、前进后退和旧链接都能落到同一位置。
 function followHash(): void {
   const raw = window.location.hash.replace(/^#/, '')
-  const id = hashSection()
-  if (id === '') return
-  jumpToSection(id)
-  const card = CARD_ANCHORS[raw]
-  if (card === undefined) return
+  const target = anchorTarget(raw)
+  if (target === '') return
+  const nav = navForTarget(target)
+  if (nav !== '') activeSection.value = nav
+  pendingJump = nav
+  window.clearTimeout(pendingTimer)
+  pendingTimer = window.setTimeout(() => {
+    pendingJump = ''
+    syncActiveFromScroll()
+  }, 600)
   void nextTick(() => {
-    document.getElementById(card)?.scrollIntoView({ block: 'start' })
+    document.getElementById(target)?.scrollIntoView({ block: 'start' })
   })
 }
 
-// syncActiveFromScroll 以顶栏下沿为准判定当前分组；滚到底部时直接取最后一组，
-// 尾部分组比视口高时观察器算不出比例，按位置判定不会再漏。
-function syncActiveFromScroll(): void {
-  // 单组显示后不再按滚动位置改分组，翻到下一组只能手动点选。
-  if (pendingJump !== '') {
-    activeSection.value = pendingJump
-    return
-  }
+// selectSection 让点按立即更新高亮，并平滑定位到对应区块、写入地址锚点。
+function selectSection(id: string): void {
+  if (!SETTING_NAV.some((item) => item.id === id)) return
+  activeSection.value = id
+  pendingJump = id
+  window.clearTimeout(pendingTimer)
+  pendingTimer = window.setTimeout(() => {
+    pendingJump = ''
+    syncActiveFromScroll()
+  }, 600)
+  window.history.replaceState(null, '', '#' + id)
+  const target = SETTING_NAV.find((item) => item.id === id)?.target ?? id
+  document.getElementById(target)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
-onBeforeUnmount(() => {
-  rebuildAbort?.abort()
-})
-
-onMounted(() => {
-  window.addEventListener('scroll', syncActiveFromScroll, { passive: true })
-  window.addEventListener('hashchange', followHash)
-  void load()
-})
-
-// 设置读完、分组真正渲染出来之后才读地址：applyView 早于 loading 结束，此时节点还不存在。
-watch(loading, async (busy) => {
-  if (busy || view.value === null) return
-  await nextTick()
-  followHash()
-  syncActiveFromScroll()
-})
-
-// selectSection 让点按立即更新色点，不依赖滚动的下一帧。
-function selectSection(id: string): void {
-  activeSection.value = id
+// syncActiveFromScroll 以顶栏下沿为准选出当前区块；滚到底部时兜底最后一项。
+function syncActiveFromScroll(): void {
+  if (pendingJump !== '') return
+  const offset = 120
+  let current = SETTING_NAV[0]?.id ?? ''
+  for (const item of SETTING_NAV) {
+    const element = document.getElementById(item.target)
+    if (element === null) continue
+    if (element.getBoundingClientRect().top - offset <= 0) current = item.id
+  }
+  if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2) {
+    current = SETTING_NAV[SETTING_NAV.length - 1]?.id ?? current
+  }
+  activeSection.value = current
 }
 
 onBeforeUnmount(() => {
@@ -859,16 +868,8 @@ onBeforeUnmount(() => {
           <p class="text-xs leading-relaxed" aria-live="polite">
             <span v-if="saveError !== ''" class="text-danger">{{ saveError }}</span>
             <span v-else-if="feedback !== ''" class="text-accent">{{ feedback }}</span>
-            <span v-else class="text-muted">已发布帖会保留原页面路径，修改作者名只影响后续发布。</span>
+            <span v-else class="text-muted">每张卡片单独保存；滚动切换不会改变提交范围。</span>
           </p>
-          <button
-            type="button"
-            :disabled="saving"
-            class="mt-3 h-11 w-full rounded-xl bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
-            @click="save()"
-          >
-            {{ saving ? '保存中…' : '保存设置' }}
-          </button>
         </div>
       </nav>
 
@@ -888,17 +889,17 @@ onBeforeUnmount(() => {
 
         <template v-else-if="view !== null">
           <div class="space-y-8">
-            <div v-show="activeSection === 'telegram' || activeSection === 'network'" class="space-y-8">
-            <section id="upstream" class="scroll-mt-36">
+            <div class="space-y-8">
+            <section id="telegram" class="scroll-mt-36">
               <div class="flex items-center gap-2">
-                <h2 v-show="activeSection === 'telegram'" class="text-base font-semibold tracking-tight">Telegram 图床</h2>
-                <h2 v-show="activeSection === 'network'" class="text-base font-semibold tracking-tight">代理与自检</h2>
+                <h2 class="text-base font-semibold tracking-tight">Telegram 图床</h2>
+                <h2 class="text-base font-semibold tracking-tight">代理与自建</h2>
               </div>
-              <p v-show="activeSection === 'telegram'" class="mt-1 text-xs text-muted">Bot 凭据与频道地址，保存后上传队列与图片网关立即使用新配置。</p>
-              <p v-show="activeSection === 'network'" class="mt-1 text-xs text-muted">代理走向与上游连通性检测，保存后立即重建传输层。</p>
+              <p class="mt-1 text-xs text-muted">Bot 凭据与频道地址，保存后上传队列与图片网关立即使用新配置。</p>
+              <p class="mt-1 text-xs text-muted">代理走向、自建上游与连通性检测，保存后立即重建传输层。</p>
 
               <div class="mt-3 space-y-3">
-                <div v-show="activeSection === 'telegram'" class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+                <div class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
                   <div class="border-b border-line/70 px-5 py-4">
                     <h3 class="text-sm font-semibold">Telegram 图床</h3>
                     <p class="mt-1 text-xs text-muted">Bot 凭据统一在下方「Bot 列表」维护；这里只保留频道与上游地址。</p>
@@ -930,7 +931,7 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
 
-                <div v-show="activeSection === 'telegram'" class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+                <div class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
                   <div class="border-b border-line/70 px-5 py-4">
                     <div class="flex flex-wrap items-center justify-between gap-2">
                       <div>
@@ -1028,7 +1029,7 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
 
-                <div v-show="activeSection === 'network'" class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+                <div id="proxy" class="scroll-mt-36 rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
                   <div class="border-b border-line/70 px-5 py-4">
                     <h3 class="text-sm font-semibold">网络代理</h3>
                     <p class="mt-1 text-xs text-muted">
@@ -1120,12 +1121,23 @@ onBeforeUnmount(() => {
                     <p class="text-xs text-muted">
                       直连模式忽略上面的开关；跟随系统模式读取进程环境变量 HTTP_PROXY / HTTPS_PROXY / ALL_PROXY。
                     </p>
+                    <div class="flex flex-wrap items-center justify-between gap-3 border-t border-line/60 pt-3">
+                      <span class="text-xs text-muted">保存后立即重建传输层，已发布内容不受影响。</span>
+                      <button
+                        type="button"
+                        class="h-9 rounded-lg bg-brand px-3 text-xs font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+                        :disabled="saving"
+                        @click="save(['proxy'])"
+                      >
+                        保存代理
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
             </section>
 
-            <section id="check" v-show="activeSection === 'network'" class="scroll-mt-36">
+            <section id="check" class="scroll-mt-36">
               <div class="flex items-center gap-2">
                 <h2 class="text-base font-semibold tracking-tight">连通性自检</h2>
               </div>
@@ -1175,8 +1187,8 @@ onBeforeUnmount(() => {
             </section>
             </div>
 
-            <div v-show="activeSection === 'telegraph' || activeSection === 'upload'" class="space-y-8">
-            <section id="defaults" v-show="activeSection === 'upload'" class="scroll-mt-36">
+            <div class="space-y-8">
+            <section id="defaults" class="scroll-mt-36">
               <div class="flex items-center gap-2">
                 <h2 class="text-base font-semibold tracking-tight">发帖默认值</h2>
               </div>
@@ -1184,6 +1196,7 @@ onBeforeUnmount(() => {
 
               <div class="mt-3 rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
                 <div class="space-y-4 px-5 py-4">
+                  <div id="meta" class="scroll-mt-36 space-y-4">
                   <div>
                     <label class="block text-xs font-medium text-muted" for="meta-filenames">说明文件名</label>
                     <input
@@ -1206,6 +1219,20 @@ onBeforeUnmount(() => {
                       <option value="key-value">键值匹配</option>
                     </select>
                   </div>
+                  <div class="flex flex-wrap items-center justify-between gap-3 border-t border-line/60 pt-3">
+                    <span class="text-xs text-muted">只影响说明文件解析，不改动已发布内容。</span>
+                    <button
+                      type="button"
+                      class="h-9 rounded-lg bg-brand px-3 text-xs font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+                      :disabled="saving"
+                      @click="save(['meta'])"
+                    >
+                      保存元信息
+                    </button>
+                  </div>
+                  </div>
+
+                  <div id="upload" class="scroll-mt-36 space-y-4 border-t border-line/60 pt-4">
                   <fieldset>
                     <legend class="text-xs font-medium text-muted">默认画质</legend>
                     <div class="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -1242,11 +1269,23 @@ onBeforeUnmount(() => {
                       每轮同时上传的图片数，范围 {{ UPLOAD_CONCURRENCY_MIN }}–{{ UPLOAD_CONCURRENCY_MAX }} 路，默认 2 路；服务端上限 {{ uploadCap }} 路，超出时按上限派发，调整后下一轮上传生效。
                     </p>
                   </label>
+                  <div class="flex flex-wrap items-center justify-between gap-3 border-t border-line/60 pt-3">
+                    <span class="text-xs text-muted">默认画质保存后影响新任务；同时上传数本机即时生效。</span>
+                    <button
+                      type="button"
+                      class="h-9 rounded-lg bg-brand px-3 text-xs font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+                      :disabled="saving"
+                      @click="save(['upload'])"
+                    >
+                      保存上传默认
+                    </button>
+                  </div>
+                  </div>
                 </div>
               </div>
             </section>
 
-                <div v-show="activeSection === 'telegraph'" class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+                <div id="telegraph" class="scroll-mt-36 rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
                   <div class="border-b border-line/70 px-5 py-4">
                     <h3 class="text-sm font-semibold">Telegraph 发布</h3>
                     <p class="mt-1 text-xs text-muted">发布页面的作者名由这里提供，令牌通过「申请账户」或环境变量写入。</p>
@@ -1323,26 +1362,32 @@ onBeforeUnmount(() => {
                         {{ telegraphSubmitting ? '申请中…' : '申请账户' }}
                       </button>
                     </div>
+                    <div class="flex flex-wrap items-center justify-between gap-3 border-t border-line/60 pt-3">
+                      <span class="text-xs text-muted">只影响之后发起的发布。</span>
+                      <button
+                        type="button"
+                        class="h-9 rounded-lg bg-brand px-3 text-xs font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+                        :disabled="saving"
+                        @click="save(['telegraph'])"
+                      >
+                        保存发布配置
+                      </button>
+                    </div>
                   </div>
                 </div>
 
             </div>
 
 
-
-
-
-            <div v-show="activeSection === 'traffic' || activeSection === 'maintenance'" class="space-y-8">
-            <section id="ops" class="scroll-mt-36">
+            <div class="space-y-8">
+            <section id="traffic" class="scroll-mt-36">
               <div class="flex items-center gap-2">
-                <h2 v-show="activeSection === 'traffic'" class="text-base font-semibold tracking-tight">流量看护</h2>
-                <h2 v-show="activeSection === 'maintenance'" class="text-base font-semibold tracking-tight">备份与缓存</h2>
+                <h2 class="text-base font-semibold tracking-tight">流量看护</h2>
               </div>
-              <p v-show="activeSection === 'traffic'" class="mt-1 text-xs text-muted">按自然月统计图片出站流量，达到阈值提醒或熔断。</p>
-              <p v-show="activeSection === 'maintenance'" class="mt-1 text-xs text-muted">每日快照与逐图小图缓存，各自独立保存与维护。</p>
+              <p class="mt-1 text-xs text-muted">按自然月统计图片出站流量，达到阈值提醒或熔断。</p>
 
               <div class="mt-3 space-y-3">
-                <div v-show="activeSection === 'traffic'" class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+                <div class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
                   <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3.5">
                     <h3 class="text-sm font-semibold">流量看护</h3>
                     <button
@@ -1353,8 +1398,8 @@ onBeforeUnmount(() => {
                       刷新
                     </button>
                   </div>
-                  <div class="px-5 py-4">
-                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div class="space-y-4 px-5 py-4">
+                    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <label class="block">
                         <span class="text-xs font-medium text-muted">月流量预警（GB）</span>
                         <input
@@ -1367,7 +1412,8 @@ onBeforeUnmount(() => {
                           class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface disabled:opacity-60"
                           :class="fieldErrors.includes(FIELD_TRAFFIC_ALERT) ? 'border-danger' : ''"
                         />
-                        <p v-if="managed(FIELD_TRAFFIC_ALERT)" class="mt-1 text-xs text-muted">{{ ENV_MANAGED_HINT }}</p>
+                        <p v-if="managed(FIELD_TRAFFIC_ALERT)" class="mt-2 text-xs leading-relaxed text-muted">{{ ENV_MANAGED_HINT }}</p>
+                        <p v-else class="mt-2 text-xs leading-relaxed text-muted">达到预警值只提醒，不断开图片访问。</p>
                       </label>
                       <label class="block">
                         <span class="text-xs font-medium text-muted">月流量硬上限（GB）</span>
@@ -1381,10 +1427,11 @@ onBeforeUnmount(() => {
                           class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface disabled:opacity-60"
                           :class="fieldErrors.includes(FIELD_TRAFFIC_LIMIT) ? 'border-danger' : ''"
                         />
-                        <p v-if="managed(FIELD_TRAFFIC_LIMIT)" class="mt-1 text-xs text-muted">{{ ENV_MANAGED_HINT }}</p>
+                        <p v-if="managed(FIELD_TRAFFIC_LIMIT)" class="mt-2 text-xs leading-relaxed text-muted">{{ ENV_MANAGED_HINT }}</p>
+                        <p v-else class="mt-2 text-xs leading-relaxed text-muted">达到硬上限后图片网关返回 503，次月自动恢复。</p>
                       </label>
                     </div>
-                    <p class="mt-1 text-xs text-muted">保存后立即生效，当前月份计数保持不变；硬上限触发后图片网关返回 503。</p>
+                    <p class="mt-2 text-xs leading-relaxed text-muted">保存后立即生效，当前月份计数保持不变。</p>
 
                     <p v-if="trafficError !== ''" class="text-xs text-danger">{{ trafficError }}</p>
                     <p v-else-if="traffic === null" class="text-xs text-muted">尚未读取。</p>
@@ -1408,12 +1455,32 @@ onBeforeUnmount(() => {
                           </p>
                         </div>
                       </div>
-                      <p class="mt-2 text-xs text-muted">{{ trafficSummary(traffic) }}</p>
+                      <p class="mt-2 text-xs leading-relaxed text-muted">{{ trafficSummary(traffic) }}</p>
                     </template>
+                    <div class="flex flex-wrap items-center justify-between gap-3 border-t border-line/60 pt-3">
+                      <span class="text-xs text-muted">只提交流量阈值，备份与缓存的草稿保持原样。</span>
+                      <button
+                        type="button"
+                        class="h-9 rounded-lg bg-brand px-3 text-xs font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+                        :disabled="saving"
+                        @click="save(['traffic'])"
+                      >
+                        保存流量阈值
+                      </button>
+                    </div>
                   </div>
                 </div>
+              </div>
+            </section>
 
-                <div id="backup" v-show="activeSection === 'maintenance'" class="scroll-mt-36 rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+            <section id="maintenance" class="scroll-mt-36">
+              <div class="flex items-center gap-2">
+                <h2 class="text-base font-semibold tracking-tight">备份与缓存</h2>
+              </div>
+              <p class="mt-1 text-xs text-muted">每日快照与逐图小图缓存，各自独立保存与维护。</p>
+
+              <div class="mt-3 space-y-3">
+                <div id="backup" class="scroll-mt-36 rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
                   <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3.5">
                     <h3 class="text-sm font-semibold">自动备份</h3>
                     <div class="flex shrink-0 items-center gap-2">
@@ -1497,7 +1564,7 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
 
-                <div id="cache" v-show="activeSection === 'maintenance'" class="scroll-mt-36 rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+                <div id="cache" class="scroll-mt-36 rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
                   <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3.5">
                     <h3 class="text-sm font-semibold">媒体缩略图缓存</h3>
                     <button
@@ -1508,47 +1575,52 @@ onBeforeUnmount(() => {
                       刷新占用
                     </button>
                   </div>
-                  <div class="space-y-3 px-5 py-4">
-                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <label class="block">
-                      <span class="text-xs font-medium text-muted">缓存上限（GB）</span>
-                      <input
-                        v-model="form.thumbGB"
-                        type="number"
-                        min="0.0625"
-                        max="50"
-                        step="0.5"
-                        :disabled="saving || managed(FIELD_MEDIA_THUMBS_LIMIT)"
-                        class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface disabled:opacity-60"
-                      />
-                      <p v-if="managed(FIELD_MEDIA_THUMBS_LIMIT)" class="mt-1 text-xs text-muted">{{ ENV_MANAGED_HINT }}</p>
-                    </label>
-                    <div class="grid grid-cols-2 gap-3 rounded-xl bg-canvas px-3 py-2.5">
-                      <div>
+                  <div class="space-y-4 px-5 py-4">
+                    <div class="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                      <div class="rounded-xl bg-canvas px-3 py-2.5">
                         <p class="text-xs text-muted">已占用</p>
                         <p class="mt-0.5 text-sm font-medium tnum">{{ formatTrafficBytes(view?.media_thumbs.used_bytes ?? 0) }}</p>
                       </div>
-                      <div>
-                        <p class="text-xs text-muted">条目数</p>
+                      <div class="rounded-xl bg-canvas px-3 py-2.5">
+                        <p class="text-xs text-muted">缓存条目</p>
                         <p class="mt-0.5 text-sm font-medium tnum">{{ view?.media_thumbs.count ?? 0 }}</p>
                       </div>
-                    </div>
-                    </div>
-                    <p class="text-xs text-muted">每项媒体保存一份最长边 512px 的 WebP，行内小图与放大气泡共用；保存后按最近最少使用淘汰到新上限，磁盘余量不足时暂停写入新的小图。</p>
-
-                    <div class="flex flex-wrap items-center gap-3">
-                      <button
-                        type="button"
-                        class="h-9 rounded-lg border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
-                        :disabled="thumbBusy || saving"
-                        @click="clearThumbs"
-                      >
-                        清空缓存
-                      </button>
-                      <span class="text-xs text-muted">只删小图，原图与已发布内容不受影响。</span>
+                      <div class="rounded-xl bg-canvas px-3 py-2.5">
+                        <p class="text-xs text-muted">当前上限</p>
+                        <p class="mt-0.5 text-sm font-medium tnum">{{ form.thumbGB }} GB</p>
+                      </div>
                     </div>
 
-                    <div class="flex flex-wrap items-center gap-3">
+                    <div class="sm:max-w-[220px]">
+                      <label class="block">
+                        <span class="text-xs font-medium text-muted">缓存上限（GB）</span>
+                        <input
+                          v-model="form.thumbGB"
+                          type="number"
+                          min="0.0625"
+                          max="50"
+                          step="0.5"
+                          :disabled="saving || managed(FIELD_MEDIA_THUMBS_LIMIT)"
+                          class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface disabled:opacity-60"
+                        />
+                        <p v-if="managed(FIELD_MEDIA_THUMBS_LIMIT)" class="mt-2 text-xs leading-relaxed text-muted">{{ ENV_MANAGED_HINT }}</p>
+                      </label>
+                    </div>
+
+                    <p class="text-xs leading-relaxed text-muted">每项媒体保存一份最长边 512px 的 WebP，行内小图与放大气泡共用；保存后按最近最少使用淘汰到新上限，磁盘余量不足时暂停写入新的小图。</p>
+
+                    <div class="flex flex-wrap items-center justify-between gap-3 border-t border-line/60 pt-3">
+                      <div class="min-w-0">
+                        <button
+                          type="button"
+                          class="h-9 rounded-lg border border-line px-3 text-xs font-medium text-muted transition hover:border-danger/40 hover:bg-danger-soft hover:text-danger disabled:opacity-60"
+                          :disabled="thumbBusy || saving"
+                          @click="clearThumbs"
+                        >
+                          清空缓存
+                        </button>
+                        <p class="mt-1 text-xs text-muted">只删小图，原图与已发布内容不受影响。</p>
+                      </div>
                       <button
                         type="button"
                         class="h-9 rounded-lg bg-brand px-3 text-xs font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
@@ -1557,10 +1629,9 @@ onBeforeUnmount(() => {
                       >
                         保存缓存上限
                       </button>
-                      <span class="text-xs text-muted">只提交缓存上限，备份计划的草稿保持原样。</span>
                     </div>
 
-                    <div class="space-y-2 rounded-xl bg-canvas px-3 py-3">
+                    <div class="space-y-2 rounded-xl bg-canvas p-3.5">
                       <p class="text-xs font-medium text-muted">按图集重建</p>
                       <div class="flex flex-wrap items-center gap-2">
                         <select
@@ -1598,18 +1669,19 @@ onBeforeUnmount(() => {
                       <p v-else class="text-xs text-muted">重建会清掉该图集的小图并换新内容版本，再在浏览器内逐项回源生成，避免同时展开多张大图。</p>
                     </div>
 
-                    <p v-if="thumbError !== ''" class="text-xs text-danger">{{ thumbError }}</p>
+                    
+<p v-if="thumbError !== ''" class="text-xs text-danger">{{ thumbError }}</p>
                     <p v-else-if="thumbNote !== ''" class="text-xs text-accent">{{ thumbNote }}</p>
                   </div>
                 </div>
               </div>
-            </section>            </div>
+            </section>
+            </div>
 
-
-            <div v-show="activeSection === 'appearance'" class="space-y-8">
+            <div class="space-y-8">
             <div id="theme" class="scroll-mt-36 rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
               <div class="border-b border-line/70 px-5 py-4">
-                <h3 class="text-sm font-semibold">外观主题</h3>
+                <h3 class="text-sm font-semibold">颜色模式</h3>
                 <p class="mt-1 text-xs text-muted">跟随系统会随设备日夜自动切换；主题只记在本机，不影响媒体遮罩开关。</p>
               </div>
               <div class="px-5 py-4">
@@ -1730,7 +1802,8 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
               </div>
-            </section>            </div>
+            </section>
+            </div>
 
           </div>
 
@@ -1745,16 +1818,8 @@ onBeforeUnmount(() => {
           <div class="min-w-0 flex-1 text-xs" aria-live="polite">
             <p v-if="saveError !== ''" class="text-danger">{{ saveError }}</p>
             <p v-else-if="feedback !== ''" class="text-accent">{{ feedback }}</p>
-            <p v-else class="text-muted">已发布帖会保留原页面路径，修改作者名只影响后续发布。</p>
+            <p v-else class="text-muted">每张卡片单独保存；滚动切换不会改变提交范围。</p>
           </div>
-          <button
-            type="button"
-            :disabled="saving"
-            class="h-11 shrink-0 rounded-xl bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
-            @click="save()"
-          >
-            {{ saving ? '保存中…' : '保存设置' }}
-          </button>
         </div>
       </div>
     </main>
