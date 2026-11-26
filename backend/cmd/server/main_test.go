@@ -404,3 +404,41 @@ func TestPickImageSourceFallsBackToSourceBot(t *testing.T) {
 		t.Fatal("没有可用 Bot 时不应选出 Bot")
 	}
 }
+
+// TestNextProviderSkipsRotatedCredential 验证发送在途时换过配置的旧请求失败后，
+// 既不会切换当前池，也不会把新令牌标成冻结；同一版凭据才执行切换。
+func TestNextProviderSkipsRotatedCredential(t *testing.T) {
+	oldVersion := storage.CredentialVersion("111:old", "https://api.telegram.org")
+	next := &storage.Telegram{}
+	failovers, frozen := 0, 0
+	deps := failoverDeps{
+		list: func(context.Context) ([]botpool.Bot, error) {
+			// 列表里已是新令牌，旧请求携带的是旧版本。
+			return []botpool.Bot{{BotID: 111, Token: "111:new"}}, nil
+		},
+		apiBase:    func(context.Context) (string, error) { return "https://api.telegram.org", nil },
+		failover:   func() (int64, storage.Provider, bool) { failovers++; return 111, next, true },
+		markFrozen: func(context.Context, int64, string) error { frozen++; return nil },
+	}
+	provider, ok := newNextProvider(deps)(context.Background(),
+		storage.SendOrigin{BotID: 111, CredentialVersion: oldVersion}, nil)
+	if ok || provider != nil {
+		t.Fatal("换过令牌后不应切换或返回新提供方")
+	}
+	if failovers != 0 || frozen != 0 {
+		t.Fatalf("换过令牌后不应动运行态：failover=%d frozen=%d", failovers, frozen)
+	}
+
+	// 同一版凭据：先切换运行态，再落冻结标记。
+	deps.list = func(context.Context) ([]botpool.Bot, error) {
+		return []botpool.Bot{{BotID: 111, Token: "111:old"}}, nil
+	}
+	provider, ok = newNextProvider(deps)(context.Background(),
+		storage.SendOrigin{BotID: 111, CredentialVersion: oldVersion}, nil)
+	if !ok || provider != next {
+		t.Fatalf("同一版凭据应切换到下一个 Bot，实际 ok=%v", ok)
+	}
+	if failovers != 1 || frozen != 1 {
+		t.Fatalf("切换次数 = %d/%d，期望各 1 次", failovers, frozen)
+	}
+}

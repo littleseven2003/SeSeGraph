@@ -324,33 +324,18 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	}
 
 	// 故障切换始终挂上：运行中加入第二个 Bot 后无需重启即可生效。
-	nextProvider := func(callCtx context.Context, origin storage.SendOrigin, _ error) (storage.Provider, bool) {
-		if origin.BotID <= 0 {
-			return nil, false
-		}
-		// 先核对本次发送所用凭据是否仍是列表里的那一版：换过令牌就既不动运行态，
-		// 也不把刚轮换的 Bot 标成冻结，迟到的旧请求失败只按库里的逐图结果记录。
-		current, listErr := botPool.List(callCtx)
-		if listErr != nil {
-			return nil, false
-		}
-		effective, resolveErr := resolver.Effective(callCtx)
-		if resolveErr != nil {
-			return nil, false
-		}
-		if !matchBotCredential(current, origin.BotID, origin.CredentialVersion, effective.TelegramAPIBase.Value) {
-			return nil, false
-		}
-		// 凭据核对通过后才切换运行态并落冻结标记，两步都只针对本次实际发送的 Bot。
-		_, next, ok := runtime.Failover(uploadFrozenNote)
-		if err := botPool.MarkFrozen(callCtx, origin.BotID, uploadFrozenNote); err != nil {
-			log.Print("记录 Bot 冻结状态失败")
-		}
-		if !ok {
-			return nil, false
-		}
-		return next, true
-	}
+	nextProvider := newNextProvider(failoverDeps{
+		list: botPool.List,
+		apiBase: func(callCtx context.Context) (string, error) {
+			effective, resolveErr := resolver.Effective(callCtx)
+			if resolveErr != nil {
+				return "", resolveErr
+			}
+			return effective.TelegramAPIBase.Value, nil
+		},
+		failover:   func() (int64, storage.Provider, bool) { return runtime.Failover(uploadFrozenNote) },
+		markFrozen: botPool.MarkFrozen,
+	})
 	uploadQ := startUploadQueue(ctx, repository, cfg.DataDir, runtime, gate, lookupEnv, publishReady(telegraphManager, cfg.PublicURL), nextProvider)
 	defer uploadQ.Stop()
 
@@ -472,6 +457,43 @@ func bootstrapAdmin(ctx context.Context, service *auth.Service, lookupEnv func(s
 		return errAdminEnv
 	default:
 		return errDatabase
+	}
+}
+
+// failoverDeps 汇总故障切换需要的外部动作，便于在测试里替换成可观测的替身。
+type failoverDeps struct {
+	list       func(context.Context) ([]botpool.Bot, error)
+	apiBase    func(context.Context) (string, error)
+	failover   func() (int64, storage.Provider, bool)
+	markFrozen func(context.Context, int64, string) error
+}
+
+// newNextProvider 生成故障切换回调：只有失败请求所用凭据仍是列表里那一版时，
+// 才切换运行态并落冻结标记，迟到的旧请求失败不会动到刚轮换的新配置。
+func newNextProvider(deps failoverDeps) func(context.Context, storage.SendOrigin, error) (storage.Provider, bool) {
+	return func(callCtx context.Context, origin storage.SendOrigin, _ error) (storage.Provider, bool) {
+		if origin.BotID <= 0 {
+			return nil, false
+		}
+		current, listErr := deps.list(callCtx)
+		if listErr != nil {
+			return nil, false
+		}
+		apiBase, baseErr := deps.apiBase(callCtx)
+		if baseErr != nil {
+			return nil, false
+		}
+		if !matchBotCredential(current, origin.BotID, origin.CredentialVersion, apiBase) {
+			return nil, false
+		}
+		_, next, ok := deps.failover()
+		if err := deps.markFrozen(callCtx, origin.BotID, uploadFrozenNote); err != nil {
+			log.Print("记录 Bot 冻结状态失败")
+		}
+		if !ok {
+			return nil, false
+		}
+		return next, true
 	}
 }
 
