@@ -955,86 +955,6 @@ onBeforeUnmount(() => {
 
                 <div class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
                   <div class="border-b border-line/70 px-5 py-4">
-                    <h3 class="text-sm font-semibold">Telegraph 发布</h3>
-                    <p class="mt-1 text-xs text-muted">发布页面的作者名由这里提供，令牌通过「申请账户」或环境变量写入。</p>
-                  </div>
-                  <div class="space-y-4 px-5 py-4">
-                    <label class="block">
-                      <span class="text-xs font-medium text-muted">作者名</span>
-                      <input
-                        v-model="form.authorName"
-                        type="text"
-                        autocomplete="off"
-                        :disabled="saving || managed(FIELD_TELEGRAPH_AUTHOR)"
-                        placeholder="留空则使用 Telegraph 默认作者"
-                        class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface disabled:opacity-60"
-                        :class="fieldErrors.includes(FIELD_TELEGRAPH_AUTHOR) ? 'border-danger' : ''"
-                      />
-                      <p v-if="fieldErrorText(FIELD_TELEGRAPH_AUTHOR) !== ''" class="mt-1 text-xs text-danger">
-                        {{ fieldErrorText(FIELD_TELEGRAPH_AUTHOR) }}
-                      </p>
-                      <p v-else-if="managed(FIELD_TELEGRAPH_AUTHOR)" class="mt-1 text-xs text-muted">
-                        {{ ENV_MANAGED_HINT }}
-                      </p>
-                    </label>
-
-                    <fieldset>
-                      <legend class="text-xs font-medium text-muted">链接生成方式</legend>
-                      <div class="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                        <label
-                          v-for="option in PATH_MODES"
-                          :key="option.value"
-                          class="flex min-h-11 cursor-pointer items-center gap-2.5 rounded-xl border border-line bg-canvas px-3 py-2.5 text-sm transition hover:border-ink/25 focus-within:border-ink"
-                          :class="form.pathMode === option.value ? 'border-accent bg-accent-soft' : ''"
-                        >
-                          <input
-                            v-model="form.pathMode"
-                            type="radio"
-                            name="path-mode"
-                            :value="option.value"
-                            :disabled="saving || managed(FIELD_TELEGRAPH_PATH_MODE)"
-                            class="h-6 w-6 shrink-0 accent-accent"
-                          />
-                          <span>{{ option.label }}</span>
-                        </label>
-                      </div>
-                      <p class="mt-1 text-xs text-muted">
-                        只影响之后发起的发布，页面仍显示原标题；已发布页面链接不会改变。
-                      </p>
-                      <p v-if="managed(FIELD_TELEGRAPH_PATH_MODE)" class="mt-1 text-xs text-muted">{{ ENV_MANAGED_HINT }}</p>
-                    </fieldset>
-
-                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <div class="rounded-xl bg-canvas px-3 py-2.5">
-                        <p class="text-xs text-muted">访问令牌</p>
-                        <p class="mt-0.5 text-sm">{{ view.telegraph.token_set ? '已配置' : '未配置' }}</p>
-                      </div>
-                      <div class="rounded-xl bg-canvas px-3 py-2.5">
-                        <p class="text-xs text-muted">上游地址</p>
-                        <p class="mt-0.5 text-sm">{{ endpointText(view.telegraph.api_base_source) }}</p>
-                      </div>
-                    </div>
-
-                    <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-canvas px-3 py-2.5">
-                      <div class="min-w-0">
-                        <p class="text-xs text-muted">{{ telegraphAccountHint(telegraphState(), telegraphSubmitting) }}</p>
-                        <p v-if="telegraphError !== ''" class="mt-1 text-xs text-danger">{{ telegraphError }}</p>
-                        <p v-else-if="telegraphNote !== ''" class="mt-1 text-xs text-accent">{{ telegraphNote }}</p>
-                      </div>
-                      <button
-                        type="button"
-                        :disabled="telegraphAccountDisabled(telegraphState()) || telegraphSubmitting"
-                        class="h-11 shrink-0 rounded-xl border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-surface hover:text-ink disabled:opacity-60"
-                        @click="requestTelegraphAccount"
-                      >
-                        {{ telegraphSubmitting ? '申请中…' : '申请账户' }}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
-                  <div class="border-b border-line/70 px-5 py-4">
                     <h3 class="text-sm font-semibold">网络代理</h3>
                     <p class="mt-1 text-xs text-muted">
                       分别控制两项上游是否经代理访问，保存后立即重建传输层。自定义地址可带账密，不会回显。
@@ -1130,6 +1050,56 @@ onBeforeUnmount(() => {
               </div>
             </section>
 
+            <section id="check" class="scroll-mt-36">
+              <div class="flex items-center gap-2">
+                <h2 class="text-base font-semibold tracking-tight">连通性自检</h2>
+              </div>
+              <p class="mt-1 text-xs text-muted">并行检测 Bot 与频道权限、Telegraph 账户，只读请求，不发送任何内容。</p>
+
+              <div class="mt-3 rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+                <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3.5">
+                  <p class="text-xs text-muted">保存设置后再检测，读到的是最新上游配置。</p>
+                  <button
+                    type="button"
+                    :disabled="checking"
+                    class="h-11 shrink-0 rounded-xl border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
+                    @click="check"
+                  >
+                    {{ checking ? '检测中…' : '开始检测' }}
+                  </button>
+                </div>
+                <div class="px-5 py-4">
+                  <p v-if="checkError !== ''" class="text-xs text-danger">{{ checkError }}</p>
+                  <p v-else-if="result === null" class="text-xs text-muted">尚未检测。</p>
+                  <template v-else>
+                    <div class="space-y-2">
+                      <div
+                        v-for="item in [
+                          { name: 'Telegram', target: result.telegram },
+                          { name: 'Telegraph', target: result.telegraph },
+                        ]"
+                        :key="item.name"
+                        class="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-canvas px-3 py-2.5"
+                      >
+                        <div class="min-w-0">
+                          <p class="text-sm font-medium">{{ item.name }}</p>
+                          <p class="mt-0.5 text-xs text-muted">{{ item.target.detail }}</p>
+                        </div>
+                        <div class="flex items-center gap-3 text-xs">
+                          <span class="font-medium" :class="connectionTone(item.target.status)">
+                            {{ connectionLabel(item.target.status) }}
+                          </span>
+                          <span class="text-muted tnum">{{ connectionLatency(item.target) }}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <p class="mt-2 text-xs text-muted">{{ connectionSummary(result) }}</p>
+                  </template>
+                </div>
+              </div>
+            </section>
+            </div>
+
             <div v-show="activeSection === 'media'" class="space-y-8">
             <section id="defaults" class="scroll-mt-36">
               <div class="flex items-center gap-2">
@@ -1199,57 +1169,92 @@ onBeforeUnmount(() => {
                   </label>
                 </div>
               </div>
-            </section>            </div>
+            </section>
 
+                <div class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+                  <div class="border-b border-line/70 px-5 py-4">
+                    <h3 class="text-sm font-semibold">Telegraph 发布</h3>
+                    <p class="mt-1 text-xs text-muted">发布页面的作者名由这里提供，令牌通过「申请账户」或环境变量写入。</p>
+                  </div>
+                  <div class="space-y-4 px-5 py-4">
+                    <label class="block">
+                      <span class="text-xs font-medium text-muted">作者名</span>
+                      <input
+                        v-model="form.authorName"
+                        type="text"
+                        autocomplete="off"
+                        :disabled="saving || managed(FIELD_TELEGRAPH_AUTHOR)"
+                        placeholder="留空则使用 Telegraph 默认作者"
+                        class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface disabled:opacity-60"
+                        :class="fieldErrors.includes(FIELD_TELEGRAPH_AUTHOR) ? 'border-danger' : ''"
+                      />
+                      <p v-if="fieldErrorText(FIELD_TELEGRAPH_AUTHOR) !== ''" class="mt-1 text-xs text-danger">
+                        {{ fieldErrorText(FIELD_TELEGRAPH_AUTHOR) }}
+                      </p>
+                      <p v-else-if="managed(FIELD_TELEGRAPH_AUTHOR)" class="mt-1 text-xs text-muted">
+                        {{ ENV_MANAGED_HINT }}
+                      </p>
+                    </label>
 
-            <section id="check" class="scroll-mt-36">
-              <div class="flex items-center gap-2">
-                <h2 class="text-base font-semibold tracking-tight">连通性自检</h2>
-              </div>
-              <p class="mt-1 text-xs text-muted">并行检测 Bot 与频道权限、Telegraph 账户，只读请求，不发送任何内容。</p>
+                    <fieldset>
+                      <legend class="text-xs font-medium text-muted">链接生成方式</legend>
+                      <div class="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <label
+                          v-for="option in PATH_MODES"
+                          :key="option.value"
+                          class="flex min-h-11 cursor-pointer items-center gap-2.5 rounded-xl border border-line bg-canvas px-3 py-2.5 text-sm transition hover:border-ink/25 focus-within:border-ink"
+                          :class="form.pathMode === option.value ? 'border-accent bg-accent-soft' : ''"
+                        >
+                          <input
+                            v-model="form.pathMode"
+                            type="radio"
+                            name="path-mode"
+                            :value="option.value"
+                            :disabled="saving || managed(FIELD_TELEGRAPH_PATH_MODE)"
+                            class="h-6 w-6 shrink-0 accent-accent"
+                          />
+                          <span>{{ option.label }}</span>
+                        </label>
+                      </div>
+                      <p class="mt-1 text-xs text-muted">
+                        只影响之后发起的发布，页面仍显示原标题；已发布页面链接不会改变。
+                      </p>
+                      <p v-if="managed(FIELD_TELEGRAPH_PATH_MODE)" class="mt-1 text-xs text-muted">{{ ENV_MANAGED_HINT }}</p>
+                    </fieldset>
 
-              <div class="mt-3 rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
-                <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3.5">
-                  <p class="text-xs text-muted">保存设置后再检测，读到的是最新上游配置。</p>
-                  <button
-                    type="button"
-                    :disabled="checking"
-                    class="h-11 shrink-0 rounded-xl border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
-                    @click="check"
-                  >
-                    {{ checking ? '检测中…' : '开始检测' }}
-                  </button>
-                </div>
-                <div class="px-5 py-4">
-                  <p v-if="checkError !== ''" class="text-xs text-danger">{{ checkError }}</p>
-                  <p v-else-if="result === null" class="text-xs text-muted">尚未检测。</p>
-                  <template v-else>
-                    <div class="space-y-2">
-                      <div
-                        v-for="item in [
-                          { name: 'Telegram', target: result.telegram },
-                          { name: 'Telegraph', target: result.telegraph },
-                        ]"
-                        :key="item.name"
-                        class="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-canvas px-3 py-2.5"
-                      >
-                        <div class="min-w-0">
-                          <p class="text-sm font-medium">{{ item.name }}</p>
-                          <p class="mt-0.5 text-xs text-muted">{{ item.target.detail }}</p>
-                        </div>
-                        <div class="flex items-center gap-3 text-xs">
-                          <span class="font-medium" :class="connectionTone(item.target.status)">
-                            {{ connectionLabel(item.target.status) }}
-                          </span>
-                          <span class="text-muted tnum">{{ connectionLatency(item.target) }}</span>
-                        </div>
+                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div class="rounded-xl bg-canvas px-3 py-2.5">
+                        <p class="text-xs text-muted">访问令牌</p>
+                        <p class="mt-0.5 text-sm">{{ view.telegraph.token_set ? '已配置' : '未配置' }}</p>
+                      </div>
+                      <div class="rounded-xl bg-canvas px-3 py-2.5">
+                        <p class="text-xs text-muted">上游地址</p>
+                        <p class="mt-0.5 text-sm">{{ endpointText(view.telegraph.api_base_source) }}</p>
                       </div>
                     </div>
-                    <p class="mt-2 text-xs text-muted">{{ connectionSummary(result) }}</p>
-                  </template>
+
+                    <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-canvas px-3 py-2.5">
+                      <div class="min-w-0">
+                        <p class="text-xs text-muted">{{ telegraphAccountHint(telegraphState(), telegraphSubmitting) }}</p>
+                        <p v-if="telegraphError !== ''" class="mt-1 text-xs text-danger">{{ telegraphError }}</p>
+                        <p v-else-if="telegraphNote !== ''" class="mt-1 text-xs text-accent">{{ telegraphNote }}</p>
+                      </div>
+                      <button
+                        type="button"
+                        :disabled="telegraphAccountDisabled(telegraphState()) || telegraphSubmitting"
+                        class="h-11 shrink-0 rounded-xl border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-surface hover:text-ink disabled:opacity-60"
+                        @click="requestTelegraphAccount"
+                      >
+                        {{ telegraphSubmitting ? '申请中…' : '申请账户' }}
+                      </button>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </section>            </div>
+
+            </div>
+
+
+
 
 
             <div v-show="activeSection === 'storage'" class="space-y-8">
