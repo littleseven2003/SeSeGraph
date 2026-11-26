@@ -95,3 +95,27 @@ func TestTelegramTakeoverRejectsBadPayload(t *testing.T) {
 		t.Fatal("转发结果没有文件编号时应报错")
 	}
 }
+
+// TestTelegramTakeoverFailsWhenCleanupFails 验证清理临时消息失败时按错误返回，
+// 调用方不会据此登记可解除删除保护的引用。
+func TestTelegramTakeoverFailsWhenCleanupFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+		w.Header().Set("Content-Type", "application/json")
+		if method == "forwardMessage" {
+			_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":88,"document":{"file_id":"own-file","file_size":10}}}`))
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"ok":false,"error_code":400,"description":"message can't be deleted"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	provider, err := NewTelegram(TelegramConfig{Token: "111:token", ChatID: "-100777", APIBase: server.URL})
+	if err != nil {
+		t.Fatalf("创建提供方失败: %v", err)
+	}
+	if _, err := provider.TakeoverFile(context.Background(), "-100999", "-100777", 55); err == nil {
+		t.Fatal("清理失败时应返回错误")
+	}
+}

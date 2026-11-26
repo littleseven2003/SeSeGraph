@@ -38,9 +38,8 @@ type takeoverQueue struct {
 	deps  takeoverDeps
 	queue chan *posts.PublicImage
 
-	mu       sync.Mutex
-	pending  map[int64]bool
-	verified bool
+	mu      sync.Mutex
+	pending map[int64]bool
 }
 
 // newTakeoverQueue 创建后台接管队列。
@@ -128,7 +127,7 @@ func (q *takeoverQueue) takeOver(ctx context.Context, image *posts.PublicImage) 
 		if provider == nil {
 			continue
 		}
-		if err := q.verifyDestination(ctx, provider, effective.TelegramChannel.Value); err != nil {
+		if err := q.verifyDestination(ctx, provider, effective.TelegramChannel.Value, image.SourceChatID); err != nil {
 			return err
 		}
 		fileID, takeErr := takeOverImage(ctx, provider, q.deps.chatID, image)
@@ -144,20 +143,12 @@ func (q *takeoverQueue) takeOver(ctx context.Context, image *posts.PublicImage) 
 	return nil
 }
 
-// verifyDestination 确认维护频道独立于图床频道且为私有会话；通过一次后不再重复查询。
-func (q *takeoverQueue) verifyDestination(ctx context.Context, provider storage.StreamProvider, galleryChat string) error {
+// verifyDestination 用 Telegram 返回的真实会话 ID 确认维护频道独立且为私有会话：
+// 每次转发前都重新校验，频道状态变化（改为公开、或与图床/来源频道重合）能及时拦住。
+func (q *takeoverQueue) verifyDestination(ctx context.Context, provider storage.StreamProvider, galleryChat, sourceChat string) error {
 	dest := strings.TrimSpace(q.deps.chatID)
 	if dest == "" {
 		return errors.New("未配置维护频道")
-	}
-	if dest == strings.TrimSpace(galleryChat) {
-		return errors.New("维护频道不能与图床频道相同")
-	}
-	q.mu.Lock()
-	verified := q.verified
-	q.mu.Unlock()
-	if verified {
-		return nil
 	}
 	inspector, ok := provider.(interface {
 		ChatInfoOf(context.Context, string) (storage.ChatInfo, error)
@@ -172,21 +163,46 @@ func (q *takeoverQueue) verifyDestination(ctx context.Context, provider storage.
 	if !info.Private() {
 		return errors.New("维护频道必须是私有会话")
 	}
-	q.mu.Lock()
-	q.verified = true
-	q.mu.Unlock()
+	destID := info.ID
+	for _, other := range []struct {
+		name string
+		chat string
+	}{{"图床频道", galleryChat}, {"原图来源频道", sourceChat}} {
+		chat := strings.TrimSpace(other.chat)
+		if chat == "" {
+			continue
+		}
+		if sameChatID(inspector, ctx, dest, destID, chat) {
+			return errors.New("维护频道不能与" + other.name + "相同")
+		}
+	}
 	return nil
 }
 
-// readBack 由新 Bot 实际取一次流，确认临时消息清掉后文件仍可读取。
+// sameChatID 先按 Telegram 返回的会话 ID 比较，取不到时退回规范化后的配置串比较。
+func sameChatID(inspector interface {
+	ChatInfoOf(context.Context, string) (storage.ChatInfo, error)
+}, ctx context.Context, dest string, destID int64, other string) bool {
+	if otherInfo, err := inspector.ChatInfoOf(ctx, other); err == nil && otherInfo.ID != 0 && destID != 0 {
+		return otherInfo.ID == destID
+	}
+	return strings.TrimSpace(dest) == strings.TrimSpace(other)
+}
+
+// readBack 由新 Bot 实际读到至少一个字节，确认临时消息清掉后文件仍可读。
+// 零字节就结束视为失败：这样的引用不足以支撑解除原 Bot 的删除保护。
 func readBack(ctx context.Context, provider storage.StreamProvider, fileID string) error {
 	stream, err := provider.OpenStream(ctx, fileID)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = stream.Body.Close() }()
-	if _, err := io.CopyN(io.Discard, stream.Body, 1); err != nil && !errors.Is(err, io.EOF) {
-		return err
+	written, readErr := io.CopyN(io.Discard, stream.Body, 1)
+	if written < 1 {
+		return errors.New("回读没有取得内容")
+	}
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return readErr
 	}
 	return nil
 }

@@ -469,10 +469,13 @@ func (f *takeoverFake) OpenStream(_ context.Context, fileID string) (storage.Str
 }
 
 func (f *takeoverFake) ChatInfoOf(_ context.Context, chatID string) (storage.ChatInfo, error) {
-	if chatID != "-100999" {
-		return storage.ChatInfo{}, errors.New("维护频道不符")
+	switch strings.TrimSpace(chatID) {
+	case "-100999":
+		return storage.ChatInfo{ID: -100999, Type: "channel", Title: "维护"}, nil
+	case "-100777":
+		return storage.ChatInfo{ID: -100777, Type: "channel", Title: "图床"}, nil
 	}
-	return storage.ChatInfo{ID: -100999, Type: "channel", Title: "维护"}, nil
+	return storage.ChatInfo{}, errors.New("会话不符")
 }
 
 func (f *takeoverFake) TakeoverFile(_ context.Context, destChatID, fromChatID string, messageID int64) (string, error) {
@@ -612,10 +615,13 @@ func (f *dualBotFake) Upload(context.Context, storage.UploadRequest) (storage.Up
 }
 
 func (f *dualBotFake) ChatInfoOf(_ context.Context, chatID string) (storage.ChatInfo, error) {
-	if chatID != "-100999" {
-		return storage.ChatInfo{}, errors.New("维护频道不符")
+	switch strings.TrimSpace(chatID) {
+	case "-100999":
+		return storage.ChatInfo{ID: -100999, Type: "channel", Title: "维护"}, nil
+	case "-100777":
+		return storage.ChatInfo{ID: -100777, Type: "channel", Title: "图床"}, nil
 	}
-	return storage.ChatInfo{ID: -100999, Type: "channel", Title: "维护"}, nil
+	return storage.ChatInfo{}, errors.New("会话不符")
 }
 
 func (f *dualBotFake) TakeoverFile(_ context.Context, destChatID, fromChatID string, messageID int64) (string, error) {
@@ -840,9 +846,10 @@ func TestTakeoverQueueCoalescesSameImage(t *testing.T) {
 
 // takeoverProbeFake 可按需返回公开会话或读取失败，用于验证接管的前置条件与登记条件。
 type takeoverProbeFake struct {
-	public   bool
-	failRead bool
-	taken    int
+	public    bool
+	failRead  bool
+	emptyRead bool
+	taken     int
 }
 
 func (f *takeoverProbeFake) Name() string { return "takeover-probe" }
@@ -852,11 +859,17 @@ func (f *takeoverProbeFake) Upload(context.Context, storage.UploadRequest) (stor
 }
 
 func (f *takeoverProbeFake) ChatInfoOf(_ context.Context, chatID string) (storage.ChatInfo, error) {
-	info := storage.ChatInfo{ID: -100888, Type: "channel", Title: "维护"}
-	if f.public {
-		info.Username = "public_channel"
+	switch strings.TrimSpace(chatID) {
+	case "-100888":
+		info := storage.ChatInfo{ID: -100888, Type: "channel", Title: "维护"}
+		if f.public {
+			info.Username = "public_channel"
+		}
+		return info, nil
+	case "-100777":
+		return storage.ChatInfo{ID: -100777, Type: "channel", Title: "图床"}, nil
 	}
-	return info, nil
+	return storage.ChatInfo{}, errors.New("会话不符")
 }
 
 func (f *takeoverProbeFake) TakeoverFile(context.Context, string, string, int64) (string, error) {
@@ -867,6 +880,9 @@ func (f *takeoverProbeFake) TakeoverFile(context.Context, string, string, int64)
 func (f *takeoverProbeFake) OpenStream(context.Context, string) (storage.Stream, error) {
 	if f.failRead {
 		return storage.Stream{}, storage.ErrFileUnavailable
+	}
+	if f.emptyRead {
+		return storage.Stream{Body: io.NopCloser(strings.NewReader("")), ContentType: "image/jpeg", Size: 0}, nil
 	}
 	return storage.Stream{Body: io.NopCloser(strings.NewReader("ok")), ContentType: "image/jpeg", Size: 2}, nil
 }
@@ -902,22 +918,21 @@ func TestTakeoverRequiresPrivateIndependentChannel(t *testing.T) {
 	if err := repository.MarkImageStoredWithOrigin(ctx, imageID, "file-a", 55, "telegram", 7, "-100777"); err != nil {
 		t.Fatalf("写入逐图来源失败: %v", err)
 	}
-	image := &posts.PublicImage{
-		ImageID: imageID, RemoteFileID: "file-a", MIMEType: "image/jpeg",
-		UploadMode: storage.ModePhoto, SourceBotID: 7, SourceChatID: "-100777", SourceMessageID: 55,
-	}
-
 	cases := []struct {
 		name        string
 		chatID      string
 		fake        *takeoverProbeFake
 		gallery     string
+		sourceChat  string
 		wantForward int
 	}{
-		{"公开会话", "-100888", &takeoverProbeFake{public: true}, "-100777", 0},
-		{"与图床频道相同", "-100777", &takeoverProbeFake{}, "-100777", 0},
+		{"公开会话", "-100888", &takeoverProbeFake{public: true}, "-100777", "-100777", 0},
+		{"与图床频道相同", "-100777", &takeoverProbeFake{}, "-100777", "-100777", 0},
+		{"与来源频道相同", "-100888", &takeoverProbeFake{}, "-100777", "-100888", 0},
 		// 先转发才做回读校验：这里允许一次转发，但不能留下可作删除依据的引用。
-		{"读不到文件", "-100888", &takeoverProbeFake{failRead: true}, "-100777", 1},
+		{"读不到文件", "-100888", &takeoverProbeFake{failRead: true}, "-100777", "-100777", 1},
+		// 回读零字节同样不算读到内容。
+		{"回读零字节", "-100888", &takeoverProbeFake{emptyRead: true}, "-100777", "-100777", 1},
 	}
 	for _, item := range cases {
 		queue := newTakeoverQueue(takeoverDeps{
@@ -931,6 +946,10 @@ func TestTakeoverRequiresPrivateIndependentChannel(t *testing.T) {
 			},
 			provider: func(botpool.Bot, settings.Effective) storage.StreamProvider { return item.fake },
 		})
+		image := &posts.PublicImage{
+			ImageID: imageID, RemoteFileID: "file-a", MIMEType: "image/jpeg",
+			UploadMode: storage.ModePhoto, SourceBotID: 7, SourceChatID: item.sourceChat, SourceMessageID: 55,
+		}
 		queue.handle(ctx, image)
 		if item.fake.taken != item.wantForward {
 			t.Errorf("%s：转发次数 = %d，期望 %d", item.name, item.fake.taken, item.wantForward)

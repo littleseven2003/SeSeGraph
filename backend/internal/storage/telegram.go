@@ -603,7 +603,7 @@ func (t *Telegram) resultFrom(raw json.RawMessage, mode string) (UploadResult, e
 const takeoverDeleteTimeout = 10 * time.Second
 
 // TakeoverFile 借用本 Bot 把原消息转发到指定维护频道，取得属于本 Bot 的文件编号，
-// 再删掉这条临时消息。转发目标与图床频道分开，避免公开图集里出现临时消息。
+// 删除临时消息并确认成功后才返回。转发目标与图床频道分开，公开图集不受影响。
 func (t *Telegram) TakeoverFile(ctx context.Context, destChatID, fromChatID string, messageID int64) (string, error) {
 	if t == nil {
 		return "", ErrNotConfigured
@@ -617,17 +617,17 @@ func (t *Telegram) TakeoverFile(ctx context.Context, destChatID, fromChatID stri
 	if err != nil {
 		return "", err
 	}
-	// 清理单独设时限，并脱离请求取消：客户端断开也要把临时消息收掉。
-	defer func() {
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), takeoverDeleteTimeout)
-		defer cancel()
-		_, _ = t.callAPI(cleanupCtx, "deleteMessage", url.Values{
-			"chat_id":    {dest},
-			"message_id": {strconv.FormatInt(forwarded.MessageID, 10)},
-		})
-	}()
-	if forwarded.FileID == "" {
+	if forwarded.FileID == "" || forwarded.MessageID <= 0 {
 		return "", ErrUpstream
+	}
+	// 清理单独设时限并脱离请求取消；删除失败按错误返回，临时消息状态不明时不能当作可删除依据。
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), takeoverDeleteTimeout)
+	defer cancel()
+	if _, err := t.callAPI(cleanupCtx, "deleteMessage", url.Values{
+		"chat_id":    {dest},
+		"message_id": {strconv.FormatInt(forwarded.MessageID, 10)},
+	}); err != nil {
+		return "", err
 	}
 	return forwarded.FileID, nil
 }
