@@ -526,21 +526,55 @@ func TestImageResolverTakesOverMissingRef(t *testing.T) {
 		ImageID: imageID, RemoteFileID: "file-a", MIMEType: "image/jpeg",
 		UploadMode: storage.ModePhoto, SourceBotID: 7, SourceChatID: "-100777", SourceMessageID: 55,
 	}
-	source, ok := resolver(ctx, image)
-	if !ok || source.BotID != 8 || source.FileID != "file-b" || source.FromRef {
-		t.Fatalf("选源 = %+v ok=%v，期望 8/file-b 且标记为未登记", source, ok)
+	// 公开读图只登记接管，不同步转发；第一次选源因此返回 false。
+	queued := 0
+	queue := newTakeoverQueue(takeoverDeps{
+		repo: repository,
+		bots: func(context.Context) ([]botpool.Bot, error) {
+			return []botpool.Bot{{BotID: 8, Token: "888:ok", Status: botpool.StatusOK}}, nil
+		},
+		effective: func(context.Context) (settings.Effective, error) { return settings.Effective{}, nil },
+		provider: func(bot botpool.Bot, _ settings.Effective) storage.StreamProvider {
+			if bot.BotID != 8 {
+				return nil
+			}
+			return taker
+		},
+	})
+	resolveWithQueue := newImageResolver(imageResolverDeps{
+		repo: repository,
+		bots: func(context.Context) ([]botpool.Bot, error) {
+			return []botpool.Bot{{BotID: 8, Token: "888:ok", Status: botpool.StatusOK}}, nil
+		},
+		effective: func(context.Context) (settings.Effective, error) { return settings.Effective{}, nil },
+		provider: func(bot botpool.Bot, _ settings.Effective) storage.StreamProvider {
+			if bot.BotID != 8 {
+				return nil
+			}
+			return taker
+		},
+		queue: func(*posts.PublicImage) { queued++ },
+	})
+	if _, ok := resolveWithQueue(ctx, image); ok {
+		t.Fatal("来源 Bot 不在池里时公开读图不应同步接管")
 	}
-	if taker.taken != 1 {
-		t.Fatalf("接管次数 = %d，期望 1", taker.taken)
+	if queued != 1 {
+		t.Fatalf("后台接管登记次数 = %d，期望 1", queued)
+	}
+	if taker.taken != 0 {
+		t.Fatalf("公开读图阶段不应转发，实际 %d 次", taker.taken)
 	}
 	if count, err := repository.CountImagesExclusiveToRemoval(ctx, 7, []int64{8}); err != nil || count != 1 {
 		t.Fatalf("接管前独占计数 = %d（err=%v），期望 1", count, err)
 	}
 
-	if err := repository.SetImageFileRef(ctx, imageID, 8, "file-b"); err != nil {
-		t.Fatalf("登记引用失败: %v", err)
+	// 后台接管完成后才有引用；此后的读取直接复用，不再转发。
+	queue.handle(ctx, image)
+	if taker.taken != 1 {
+		t.Fatalf("接管次数 = %d，期望 1", taker.taken)
 	}
-	source, ok = resolver(ctx, image)
+
+	source, ok := resolver(ctx, image)
 	if !ok || source.BotID != 8 || source.FileID != "file-b" || !source.FromRef {
 		t.Fatalf("再次选源 = %+v ok=%v，期望直接复用已登记引用", source, ok)
 	}
@@ -692,12 +726,40 @@ func TestGatewayTakeoverServesAfterSourceRemoved(t *testing.T) {
 		return response, payload
 	}
 
+	// 首次读取只登记后台接管，公开路径不同步转发。
+	response, _ := request(http.MethodGet, "")
+	if response.StatusCode == http.StatusOK {
+		t.Fatal("缺引用且来源已移除时首次读取不应同步转发")
+	}
+	if taker.taken != 0 {
+		t.Fatalf("公开 GET 阶段不应转发，实际 %d 次", taker.taken)
+	}
+
+	// 后台接管按合并队列执行一次，随后的读取走已登记引用。
+	queue := newTakeoverQueue(takeoverDeps{
+		repo: repository,
+		bots: func(context.Context) ([]botpool.Bot, error) {
+			return []botpool.Bot{{BotID: 8, Token: "888:ok", Status: botpool.StatusOK}}, nil
+		},
+		effective: func(context.Context) (settings.Effective, error) { return settings.Effective{}, nil },
+		provider: func(bot botpool.Bot, _ settings.Effective) storage.StreamProvider {
+			if bot.BotID != 8 {
+				return nil
+			}
+			return taker
+		},
+	})
+	image := &posts.PublicImage{
+		ImageID: imageID, RemoteFileID: "file-a", MIMEType: posts.MimeVideoMP4,
+		UploadMode: storage.ModeDocument, SourceBotID: 7, SourceChatID: "-100777", SourceMessageID: 55,
+	}
+	queue.handle(ctx, image)
+	if taker.taken != 1 {
+		t.Fatalf("接管次数 = %d，期望 1", taker.taken)
+	}
 	response, payload := request(http.MethodGet, "")
 	if response.StatusCode != http.StatusOK || string(payload) != string(body) {
 		t.Fatalf("接管后 GET = %d/%q，期望 200 与完整内容", response.StatusCode, payload)
-	}
-	if taker.taken != 1 {
-		t.Fatalf("接管次数 = %d，期望 1", taker.taken)
 	}
 
 	response, _ = request(http.MethodHead, "bytes=2-5")
@@ -715,5 +777,44 @@ func TestGatewayTakeoverServesAfterSourceRemoved(t *testing.T) {
 	}
 	if count, err := repository.CountImagesExclusiveToRemoval(ctx, 7, []int64{8}); err != nil || count != 0 {
 		t.Fatalf("独占计数 = %d（err=%v），期望 0", count, err)
+	}
+}
+
+// TestTakeoverQueueCoalescesSameImage 验证后台接管的合并与有界：
+// 同一张图在排队期间只保留一条，队列满时丢弃并可再次登记。
+func TestTakeoverQueueCoalescesSameImage(t *testing.T) {
+	queue := newTakeoverQueue(takeoverDeps{})
+	image := &posts.PublicImage{ImageID: 5, SourceChatID: "-100777", SourceMessageID: 9}
+	queue.Enqueue(image)
+	queue.Enqueue(image)
+	if got := len(queue.queue); got != 1 {
+		t.Fatalf("同一张图的排队条目 = %d，期望 1", got)
+	}
+	// 缺少原消息位置的条目不入队。
+	queue.Enqueue(&posts.PublicImage{ImageID: 6})
+	if got := len(queue.queue); got != 1 {
+		t.Fatalf("缺少位置时排队条目 = %d，期望仍为 1", got)
+	}
+
+	// 填满队列后多余的条目被丢弃，排队标记也一并清掉，下次读取可再次登记。
+	for id := int64(100); id < 100+takeoverLimit+5; id++ {
+		queue.Enqueue(&posts.PublicImage{ImageID: id, SourceChatID: "-100777", SourceMessageID: 1})
+	}
+	if got := len(queue.queue); got != takeoverLimit {
+		t.Fatalf("排队条目 = %d，期望上限 %d", got, takeoverLimit)
+	}
+	dropped := int64(100 + takeoverLimit + 4)
+	queue.mu.Lock()
+	stillPending := queue.pending[dropped]
+	queue.mu.Unlock()
+	if stillPending {
+		t.Fatal("被丢弃的条目不应留在排队标记里")
+	}
+	queue.Enqueue(&posts.PublicImage{ImageID: dropped, SourceChatID: "-100777", SourceMessageID: 1})
+	queue.mu.Lock()
+	retried := queue.pending[dropped]
+	queue.mu.Unlock()
+	if retried {
+		t.Fatal("队列仍满时再次登记应被丢弃")
 	}
 }

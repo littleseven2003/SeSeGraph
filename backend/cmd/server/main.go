@@ -377,11 +377,20 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		providerCache.mu.Unlock()
 		return built
 	}
+	takeover := newTakeoverQueue(takeoverDeps{
+		repo:      repository,
+		bots:      botPool.List,
+		effective: resolver.Effective,
+		provider:  streamProviderFor,
+		logger:    log.Default(),
+	})
+	takeover.Start(ctx)
 	resolveImageFn = newImageResolver(imageResolverDeps{
 		repo:      repository,
 		bots:      botPool.List,
 		effective: resolver.Effective,
 		provider:  streamProviderFor,
+		queue:     takeover.Enqueue,
 	})
 	// 启动时先按现有列表装配；旧单 Token 配置在列表为空时并入列表，保证升级后行为不变。
 	go func() {
@@ -492,6 +501,8 @@ type imageResolverDeps struct {
 	bots      func(context.Context) ([]botpool.Bot, error)
 	effective func(context.Context) (settings.Effective, error)
 	provider  func(botpool.Bot, settings.Effective) storage.StreamProvider
+	// queue 把缺引用的图交给后台接管，公开读图路径不等待转发结果。
+	queue func(*posts.PublicImage)
 }
 
 // newImageResolver 生成读图选源：已有引用用持有引用的 Bot，没有引用时回到来源 Bot，
@@ -543,20 +554,15 @@ func (d imageResolverDeps) resolve(callCtx context.Context, image *posts.PublicI
 			return api.ImageSource{Provider: provider, FileID: fileID, BotID: botID}, true
 		}
 	}
-	// 来源 Bot 已不可用：让池内另一个 Bot 转发原消息，取得属于自己的文件编号。
-	for _, bot := range usable {
-		if bot.BotID == image.SourceBotID {
-			continue
+	// 来源 Bot 已不可用：只登记到后台接管，公开读图不在这里同步转发。
+	if d.queue != nil && strings.TrimSpace(image.SourceChatID) != "" && image.SourceMessageID > 0 {
+		for _, bot := range usable {
+			if bot.BotID == image.SourceBotID {
+				continue
+			}
+			d.queue(image)
+			break
 		}
-		provider := d.provider(bot, effective)
-		if provider == nil {
-			continue
-		}
-		fileID, takeErr := takeOverImage(callCtx, provider, image)
-		if takeErr != nil {
-			continue
-		}
-		return api.ImageSource{Provider: provider, FileID: fileID, BotID: bot.BotID}, true
 	}
 	return api.ImageSource{}, false
 }
