@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -115,4 +116,92 @@ func TestUpdateBotsRejectsWhenProbeFails(t *testing.T) {
 	if len(stored) != 0 {
 		t.Fatalf("探测失败不应落库，实际 %+v", stored)
 	}
+}
+
+// TestTelegramSaveIsAtomicAndChecksBotID 验证频道与 Bot 列表一次提交：
+// 探测失败或令牌对应的实际编号与原行不一致时，频道与列表都不会被改动。
+func TestTelegramSaveIsAtomicAndChecksBotID(t *testing.T) {
+	tg := fakeTelegramByToken(t)
+	var pool *botpool.Pool
+	var resolver *settings.Resolver
+	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
+		store := settings.NewStore(handle)
+		pool = botpool.New(store)
+		resolver = settings.NewResolver(store, settings.Env{TelegramAPIBase: tg.URL})
+		deps.Bots = pool
+		deps.Settings = resolver
+	})
+	cookie := env.setup(t)
+	ctx := context.Background()
+
+	token := "111:" + strings.Repeat("d", 24)
+	body := fmt.Sprintf(`{"channel_id":"-100777","bots":[{"bot_id":111,"alias":"主力","token":%q,"priority":0}]}`, token)
+	rec := env.do(t, http.MethodPut, "/api/settings/telegram", body, cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("首次保存状态码 = %d，期望 200，响应: %s", rec.Code, rec.Body.String())
+	}
+	effective, err := resolver.Effective(ctx)
+	if err != nil || effective.TelegramChannel.Value != "-100777" {
+		t.Fatalf("频道 = %q（err=%v），期望 -100777", effective.TelegramChannel.Value, err)
+	}
+
+	// 换令牌但编号与原行不一致：整笔拒绝，频道与列表都保持原样。
+	body = fmt.Sprintf(`{"channel_id":"-100888","bots":[{"bot_id":222,"alias":"主力","token":%q,"priority":0}]}`, token)
+	rec = env.do(t, http.MethodPut, "/api/settings/telegram", body, cookie)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("编号不一致状态码 = %d，期望 400，响应: %s", rec.Code, rec.Body.String())
+	}
+	if !contains(rec.Body.String(), "不一致") {
+		t.Fatalf("失败原因未说明编号不一致: %s", rec.Body.String())
+	}
+	effective, err = resolver.Effective(ctx)
+	if err != nil || effective.TelegramChannel.Value != "-100777" {
+		t.Fatalf("拒绝后频道 = %q（err=%v），期望保持 -100777", effective.TelegramChannel.Value, err)
+	}
+	stored, err := pool.List(ctx)
+	if err != nil || len(stored) != 1 || stored[0].BotID != 111 {
+		t.Fatalf("拒绝后列表 = %+v（err=%v），期望仍是 111 号", stored, err)
+	}
+
+	// 探测失败：频道同样不能被先写进去。
+	original := probeBots
+	probeBots = func(context.Context, settings.ProbeOptions) settings.ProbeResult {
+		return settings.ProbeResult{Telegram: settings.ProbeTarget{Status: settings.ProbeFailed, Detail: "Bot 不是频道管理员，无法发布"}}
+	}
+	t.Cleanup(func() { probeBots = original })
+	body = fmt.Sprintf(`{"channel_id":"-100999","bots":[{"bot_id":111,"alias":"主力","token":%q,"priority":0}]}`, token)
+	rec = env.do(t, http.MethodPut, "/api/settings/telegram", body, cookie)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("探测失败状态码 = %d，期望 400，响应: %s", rec.Code, rec.Body.String())
+	}
+	effective, err = resolver.Effective(ctx)
+	if err != nil || effective.TelegramChannel.Value != "-100777" {
+		t.Fatalf("探测失败后频道 = %q（err=%v），期望保持 -100777", effective.TelegramChannel.Value, err)
+	}
+}
+
+// fakeTelegramByToken 让 getMe 回传令牌前缀里的真实编号，供轮换核对使用。
+func fakeTelegramByToken(t *testing.T) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/getMe"):
+			rest := strings.TrimPrefix(r.URL.Path, "/bot")
+			id := rest
+			if index := strings.Index(rest, ":"); index > 0 {
+				id = rest[:index]
+			}
+			_, _ = w.Write([]byte(`{"ok":true,"result":{"id":` + id + `,"username":"sese_bot"}}`))
+		case strings.HasSuffix(r.URL.Path, "/getChat"):
+			_, _ = w.Write([]byte(`{"ok":true,"result":{"id":-100123,"type":"channel","title":"测试频道"}}`))
+		case strings.HasSuffix(r.URL.Path, "/getChatMember"):
+			_, _ = w.Write([]byte(`{"ok":true,"result":{"status":"administrator","can_post_messages":true}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"ok":false,"description":"not found"}`))
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server
 }

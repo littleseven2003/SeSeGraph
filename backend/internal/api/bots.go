@@ -213,12 +213,18 @@ func telegramSettingsHandler(deps Deps) gin.HandlerFunc {
 		candidate := effective
 		candidate.TelegramChannel.Value = channel
 
-		bots := make([]botpool.Bot, 0, len(request.Bots))
+		candidates := make([]botpool.Bot, 0, len(request.Bots))
 		for _, item := range request.Bots {
-			bots = append(bots, botpool.Bot{
+			candidates = append(candidates, botpool.Bot{
 				BotID: item.BotID, Alias: item.Alias, Token: item.Token,
 				Priority: item.Priority, Status: item.Status,
 			})
+		}
+		// 先规范化再探测：未提交令牌的条目沿用原值，轮换时探测的是新令牌。
+		bots, err := deps.Bots.Normalize(ctx, candidates)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
 		}
 		ids, err := verifyBotTokensWith(ctx, candidate, bots)
 		if err != nil {
@@ -228,6 +234,14 @@ func telegramSettingsHandler(deps Deps) gin.HandlerFunc {
 		for index := range bots {
 			if bots[index].BotID == 0 {
 				bots[index].BotID = ids[index]
+				continue
+			}
+			// 轮换令牌时探测到的编号必须与原行一致，否则会把媒体归属写到另一个 Bot 名下。
+			if ids[index] != 0 && ids[index] != bots[index].BotID {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "第 " + strconv.Itoa(index+1) +
+					" 个 Bot 的令牌对应编号 " + strconv.FormatInt(ids[index], 10) +
+					"，与原行不一致，请删除后重新添加"})
+				return
 			}
 		}
 		seen := make(map[int64]string, len(bots))
@@ -245,13 +259,16 @@ func telegramSettingsHandler(deps Deps) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		channelValue := channel
-		if err := deps.Settings.Update(ctx, settings.Patch{TelegramChannel: &channelValue}); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "频道校验未通过"})
+		// 频道与列表在同一个事务里落库：任何一项失败都不会留下半套配置。
+		_, encoded, err := deps.Bots.Encode(ctx, bots)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		if err := deps.Bots.Replace(ctx, bots); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		channelValue := channel
+		if err := deps.Settings.UpdateAtomic(ctx, settings.Patch{TelegramChannel: &channelValue},
+			map[string]string{botpool.KeyBots: encoded}); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "频道或 Bot 列表校验未通过"})
 			return
 		}
 		if deps.ReloadBots != nil {

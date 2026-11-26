@@ -475,13 +475,12 @@ func matchBotCredential(bots []botpool.Bot, botID int64, version, apiBase string
 const uploadFrozenNote = "上游拒绝，账号受限"
 
 // seedBotPool 把升级前的单 Bot 配置幂等并入列表：列表为空且环境里有令牌时才写入。
-// 编号用 getMe 的真实结果，重复启动不会产生第二条。
+// 编号用 getMe 的真实结果，重复启动不会产生第二条；迁移失败不写完成标记，下次启动继续重试。
 func seedBotPool(ctx context.Context, pool *botpool.Pool, resolver *settings.Resolver, store *settings.Store) error {
 	// 迁移只做一次：用户把旧 Bot 从列表移除后，重启不会再被加回来。
 	if _, done, err := store.Get(ctx, "telegram.bots.migrated"); err == nil && done {
 		return nil
 	}
-	defer func() { _ = store.Set(ctx, "telegram.bots.migrated", "1") }()
 	existing, err := pool.List(ctx)
 	if err != nil {
 		return err
@@ -496,7 +495,8 @@ func seedBotPool(ctx context.Context, pool *botpool.Pool, resolver *settings.Res
 	}
 	for _, bot := range existing {
 		if bot.Token == token {
-			return nil
+			// 旧令牌已经在列表里，并入事实上完成，记下标记即可。
+			return store.Set(ctx, "telegram.bots.migrated", "1")
 		}
 	}
 	provider, err := newProviderWithToken(effective, token)
@@ -508,7 +508,11 @@ func seedBotPool(ctx context.Context, pool *botpool.Pool, resolver *settings.Res
 		return nil
 	}
 	bots := append(existing, botpool.Bot{BotID: botID, Alias: "默认", Token: token, Status: botpool.StatusOK})
-	return pool.Replace(ctx, bots)
+	if err := pool.Replace(ctx, bots); err != nil {
+		return err
+	}
+	// 写入成功后才记迁移完成，失败时保留重试机会。
+	return store.Set(ctx, "telegram.bots.migrated", "1")
 }
 
 // buildBotPool 把配置里的可写入 Bot 装配成提供方池；少于两个时返回 nil，保持单 Bot 行为。

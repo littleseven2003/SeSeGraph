@@ -478,6 +478,26 @@ func (r *Resolver) UpdateWithBot(ctx context.Context, patch Patch, botID int64) 
 	return r.store.Replace(ctx, values, removes)
 }
 
+// UpdateAtomic 校验补丁并把额外键值写进同一事务，供频道与 Bot 列表一次提交：
+// 任一项校验或写入失败时全部回滚，不会留下半套图床配置。
+func (r *Resolver) UpdateAtomic(ctx context.Context, patch Patch, extra map[string]string) error {
+	if r.store == nil {
+		return errors.New("配置存储不可用")
+	}
+	stored, err := r.snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	_, values, removes, err := r.classify(stored, patch)
+	if err != nil {
+		return err
+	}
+	for key, value := range extra {
+		values[key] = value
+	}
+	return r.store.Replace(ctx, values, removes)
+}
+
 // classify 把补丁归类为写入项、清理项，并返回应用后的生效配置。
 func (r *Resolver) classify(stored map[string]string, patch Patch) (Effective, map[string]string, []string, error) {
 	current := r.effectiveFrom(stored)

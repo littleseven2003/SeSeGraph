@@ -116,3 +116,36 @@ func TestFreezeSkipsBotAndKeepsTokenOnResubmit(t *testing.T) {
 		t.Fatalf("恢复后可用数量 = %d，期望 2", len(Usable(bots)))
 	}
 }
+
+// TestNormalizeReturnsEncodedListWithoutWriting 验证规范化与编码只返回结果不落库，
+// 供频道与列表在一个事务里一起提交。
+func TestNormalizeReturnsEncodedListWithoutWriting(t *testing.T) {
+	store := newMemStore()
+	pool := New(store)
+	ctx := context.Background()
+	if err := pool.Replace(ctx, []Bot{{BotID: 111, Alias: "主力", Token: "111:old", Status: StatusFrozen}}); err != nil {
+		t.Fatalf("写入初始列表失败: %v", err)
+	}
+	before, _, _ := store.Get(ctx, KeyBots)
+
+	// 只改别名、令牌留空：沿用旧令牌与冻结状态，但优先级按提交顺序重排。
+	normalized, encoded, err := pool.Encode(ctx, []Bot{{BotID: 111, Alias: " 主力二 ", Token: ""}})
+	if err != nil {
+		t.Fatalf("规范化失败: %v", err)
+	}
+	if len(normalized) != 1 || normalized[0].Alias != "主力二" || normalized[0].Token != "111:old" ||
+		normalized[0].Status != StatusFrozen || normalized[0].Priority != 0 {
+		t.Fatalf("规范化结果 = %+v", normalized)
+	}
+	if encoded == "" {
+		t.Fatal("编码结果为空")
+	}
+	after, _, _ := store.Get(ctx, KeyBots)
+	if after != before {
+		t.Fatalf("规范化不应写库：%q -> %q", before, after)
+	}
+
+	if _, _, err := pool.Encode(ctx, []Bot{{BotID: 111, Token: "bad-token"}}); err == nil {
+		t.Fatal("非法令牌应被拒绝")
+	}
+}

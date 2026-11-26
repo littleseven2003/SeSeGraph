@@ -72,9 +72,26 @@ func (p *Pool) List(ctx context.Context) ([]Bot, error) {
 // Replace 用新列表覆盖池配置；未提交令牌的条目沿用旧令牌，健康状态按编号延续。
 // 调用方传入的 BotID 为 0 时视为尚未自检，仍可保存，待探测后回填。
 func (p *Pool) Replace(ctx context.Context, bots []Bot) error {
-	current, err := p.List(ctx)
+	normalized, err := p.Normalize(ctx, bots)
 	if err != nil {
 		return err
+	}
+	encoded, err := encodeBots(normalized)
+	if err != nil {
+		return err
+	}
+	if err := p.store.Set(ctx, KeyBots, encoded); err != nil {
+		return errors.New("保存 Bot 池失败")
+	}
+	return nil
+}
+
+// Normalize 校验并规范化候选列表，不写库：未提交令牌的条目沿用旧值，
+// 令牌对应的健康状态按令牌延续，优先级按提交顺序重排。
+func (p *Pool) Normalize(ctx context.Context, bots []Bot) ([]Bot, error) {
+	current, err := p.List(ctx)
+	if err != nil {
+		return nil, err
 	}
 	byID := make(map[int64]Bot, len(current))
 	byToken := make(map[string]Bot, len(current))
@@ -88,7 +105,7 @@ func (p *Pool) Replace(ctx context.Context, bots []Bot) error {
 	}
 
 	if len(bots) > MaxBots {
-		return errors.New("Bot 数量超出上限")
+		return nil, errors.New("Bot 数量超出上限")
 	}
 	seenID := make(map[int64]bool, len(bots))
 	seenToken := make(map[string]bool, len(bots))
@@ -102,15 +119,15 @@ func (p *Pool) Replace(ctx context.Context, bots []Bot) error {
 			}
 		}
 		if !validToken(bot.Token) {
-			return errors.New("Bot 令牌格式不正确")
+			return nil, errors.New("Bot 令牌格式不正确")
 		}
 		if seenToken[bot.Token] {
-			return errors.New("Bot 令牌重复")
+			return nil, errors.New("Bot 令牌重复")
 		}
 		seenToken[bot.Token] = true
 		if bot.BotID > 0 {
 			if seenID[bot.BotID] {
-				return errors.New("Bot 编号重复")
+				return nil, errors.New("Bot 编号重复")
 			}
 			seenID[bot.BotID] = true
 		}
@@ -132,15 +149,29 @@ func (p *Pool) Replace(ctx context.Context, bots []Bot) error {
 		}
 		normalized = append(normalized, bot)
 	}
+	return normalized, nil
+}
 
-	encoded, err := json.Marshal(normalized)
+// Encode 返回规范化列表与它的 JSON 值，供与频道合并成一次事务写入。
+func (p *Pool) Encode(ctx context.Context, bots []Bot) ([]Bot, string, error) {
+	normalized, err := p.Normalize(ctx, bots)
 	if err != nil {
-		return errors.New("保存 Bot 池失败")
+		return nil, "", err
 	}
-	if err := p.store.Set(ctx, KeyBots, string(encoded)); err != nil {
-		return errors.New("保存 Bot 池失败")
+	encoded, err := encodeBots(normalized)
+	if err != nil {
+		return nil, "", err
 	}
-	return nil
+	return normalized, encoded, nil
+}
+
+// encodeBots 把列表序列化成写库用的 JSON。
+func encodeBots(bots []Bot) (string, error) {
+	encoded, err := json.Marshal(bots)
+	if err != nil {
+		return "", errors.New("保存 Bot 池失败")
+	}
+	return string(encoded), nil
 }
 
 // MarkFrozen 把某个 Bot 标为冻结并记录脱敏原因，之后的挑选会跳过它。
