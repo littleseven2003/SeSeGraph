@@ -7,9 +7,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -1605,18 +1607,33 @@ func (r *Repository) ImageFileRefs(ctx context.Context, imageID int64) ([]ImageF
 // CountImagesExclusiveToBot 统计只靠该 Bot 的引用才能读取的已存图片。
 // 这类图片在接管补齐之前不能删除对应 Bot，否则原图会彻底失联。
 func (r *Repository) CountImagesExclusiveToBot(ctx context.Context, botID int64) (int64, error) {
+	return r.CountImagesExclusiveToRemoval(ctx, botID, nil)
+}
+
+// CountImagesExclusiveToRemoval 按整份保存后的保留列表判断：只有当已存图片的来源是被移除的 Bot，
+// 且它在保留下来的 Bot 名下都没有可用引用时才算依赖。keep 为空表示没有其他 Bot 可接管。
+func (r *Repository) CountImagesExclusiveToRemoval(ctx context.Context, botID int64, keep []int64) (int64, error) {
 	if botID <= 0 {
 		return 0, nil
 	}
-	var count int64
-	err := r.handle.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM post_images i
+	query := `SELECT COUNT(*) FROM post_images i
 		 WHERE i.status = ? AND i.remote_file_id <> ''
 		   AND i.source_bot_id = ?
 		   AND NOT EXISTS (
-		     SELECT 1 FROM image_file_refs f WHERE f.image_id = i.id AND f.bot_id <> ?
-		   )`,
-		ImageStatusStored, botID, botID).Scan(&count)
+		     SELECT 1 FROM image_file_refs f WHERE f.image_id = i.id AND f.bot_id IN (%s)
+		   )`
+	args := []any{ImageStatusStored, botID}
+	placeholders := "0"
+	if len(keep) > 0 {
+		parts := make([]string, 0, len(keep))
+		for _, id := range keep {
+			parts = append(parts, "?")
+			args = append(args, id)
+		}
+		placeholders = strings.Join(parts, ",")
+	}
+	var count int64
+	err := r.handle.QueryRowContext(ctx, fmt.Sprintf(query, placeholders), args...).Scan(&count)
 	if err != nil {
 		return 0, errors.New("统计独占媒体失败")
 	}

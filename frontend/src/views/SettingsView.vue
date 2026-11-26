@@ -21,6 +21,7 @@ import {
   type BotEntry,
   type ConnectionResult,
   type SettingsPatch,
+  type SettingsPatchKey,
   type SettingsView,
   type TrafficStats,
 } from '../api/settings.ts'
@@ -147,7 +148,7 @@ const router = useRouter()
 let reloginTimer = 0
 const result = ref<ConnectionResult | null>(null)
 // activeSection 记录当前展开的分组；四组一次只显示一组，避免长滚屏。
-const activeSection = ref('channel')
+const activeSection = ref('telegram')
 
 // 分组导航：桌面左侧目录与手机顶部横向目录共用同一份分组。
 const SETTING_NAV = [
@@ -172,6 +173,7 @@ const LEGACY_ANCHORS: Record<string, string> = {
   backup: 'maintenance',
   cache: 'maintenance',
   account: 'appearance',
+  security: 'appearance',
   theme: 'appearance',
 }
 
@@ -614,13 +616,24 @@ function botDraftChanged(): boolean {
   })
 }
 
+// MENU_PATCH_KEYS 把七栏映射到各自可提交的字段组。
+const MENU_PATCH_KEYS: Record<string, SettingsPatchKey[]> = {
+  telegram: ['telegram'],
+  network: ['proxy'],
+  telegraph: ['telegraph'],
+  upload: ['upload', 'meta'],
+  traffic: ['traffic'],
+  maintenance: ['backup', 'media_thumbs'],
+  appearance: [],
+}
+
 async function save(): Promise<void> {
   if (view.value === null || saving.value) return
   saveError.value = ''
   fieldErrors.value = []
   feedback.value = ''
 
-  const patch = changedPatch(view.value, form)
+  const patch = changedPatch(view.value, form, MENU_PATCH_KEYS[activeSection.value] ?? [])
   if (!hasPatch(patch)) {
     feedback.value = '没有需要保存的改动'
     return
@@ -755,6 +768,7 @@ const CARD_ANCHORS: Record<string, string> = {
   cache: 'cache',
   theme: 'theme',
   security: 'account',
+  account: 'account',
 }
 
 function followHash(): void {

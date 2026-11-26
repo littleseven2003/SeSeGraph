@@ -214,11 +214,17 @@ func updateBotsHandler(deps Deps) gin.HandlerFunc {
 			for _, bot := range bots {
 				keep[bot.BotID] = true
 			}
+			keepIDs := make([]int64, 0, len(bots))
+			for _, bot := range bots {
+				if bot.BotID > 0 {
+					keepIDs = append(keepIDs, bot.BotID)
+				}
+			}
 			for _, old := range existing {
 				if old.BotID == 0 || keep[old.BotID] {
 					continue
 				}
-				count, countErr := deps.Posts.CountImagesExclusiveToBot(ctx, old.BotID)
+				count, countErr := deps.Posts.CountImagesExclusiveToRemoval(ctx, old.BotID, keepIDs)
 				if countErr != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "检查媒体归属失败"})
 					return

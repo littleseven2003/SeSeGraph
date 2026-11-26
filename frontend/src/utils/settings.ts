@@ -4,6 +4,7 @@ import type {
   ConnectionResult,
   ConnectionTarget,
   SettingsPatch,
+  SettingsPatchKey,
   SettingsView,
   TrafficStats,
 } from '../api/settings.ts'
@@ -205,7 +206,7 @@ export function splitMetaFilenames(raw: string): string[] {
 }
 
 /** changedPatch 只提交改动且非环境变量托管的字段。 */
-export function changedPatch(view: SettingsView, form: SettingsForm): SettingsPatch {
+export function changedPatch(view: SettingsView, form: SettingsForm, only: SettingsPatchKey[] = []): SettingsPatch {
   const patch: SettingsPatch = {}
   const telegram: { token?: string; channel_id?: string } = {}
   const telegraph: { author_name?: string; path_mode?: string } = {}
@@ -287,7 +288,14 @@ export function changedPatch(view: SettingsView, form: SettingsForm): SettingsPa
   if (Object.keys(telegraph).length > 0) patch.telegraph = telegraph
   if (Object.keys(proxy).length > 0) patch.proxy = proxy
   if (Object.keys(meta).length > 0) patch.meta = meta
-  return patch
+  if (only.length === 0) return patch
+  // 按当前菜单限定字段：隐藏组的无效输入与改动不参与本次提交。
+  const scoped: Record<string, unknown> = {}
+  for (const key of only) {
+    const value = (patch as Record<string, unknown>)[key]
+    if (value !== undefined) scoped[key] = value
+  }
+  return scoped as SettingsPatch
 }
 
 /** hasPatch 判断补丁是否包含任何字段。 */

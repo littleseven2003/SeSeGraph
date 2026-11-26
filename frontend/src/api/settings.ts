@@ -103,6 +103,9 @@ export interface SettingsPatch {
   }
 }
 
+/** SettingsPatchKey 是补丁里可单独提交的组名，用于按当前菜单限定保存范围。 */
+export type SettingsPatchKey = keyof SettingsPatch
+
 /** TrafficStats 是当月出站流量统计与阈值。 */
 export interface TrafficStats {
   month: string
