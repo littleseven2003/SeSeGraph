@@ -106,6 +106,13 @@ func New(opts Options) (*Worker, error) {
 	}, nil
 }
 
+// providerOf 读取当前提供方；与 SetProvider 共用同一把锁，避免热替换时读到半新半旧。
+func (w *Worker) providerOf() storage.Provider {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.provider
+}
+
 // SetProvider 在配置保存后热替换发送所用的提供方；在途请求继续用自己持有的实例。
 func (w *Worker) SetProvider(provider storage.Provider) {
 	if provider == nil {
@@ -176,7 +183,8 @@ type readiness interface {
 // 图床尚未配置时直接返回，避免把排队中的图片判为失败。
 // 领取任务与处理全程持有协调点名额，跨 Bot 切换必须等这一帖结束才能确认图片归属。
 func (w *Worker) ProcessOnce(ctx context.Context) (bool, error) {
-	if probe, ok := w.provider.(readiness); ok && !probe.Ready() {
+	provider := w.providerOf()
+	if probe, ok := provider.(readiness); ok && !probe.Ready() {
 		return false, nil
 	}
 	release, ok := w.gate.EnterUpload()
@@ -202,8 +210,8 @@ func (w *Worker) Process(ctx context.Context, postID int64) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	provider := w.provider
-	if fixed, ok := w.fixedProvider(); ok {
+	provider := w.providerOf()
+	if fixed, ok := w.fixedProvider(provider); ok {
 		provider = fixed
 	}
 	post, err := w.repo.Get(ctx, postID)
@@ -289,8 +297,8 @@ func (w *Worker) checkPublishReady(ctx context.Context) error {
 }
 
 // fixedProvider 在提供方支持快照时取一份固定视图，保证整帖使用同一配置。
-func (w *Worker) fixedProvider() (storage.Provider, bool) {
-	snapshotter, ok := w.provider.(storage.Snapshotter)
+func (w *Worker) fixedProvider(provider storage.Provider) (storage.Provider, bool) {
+	snapshotter, ok := provider.(storage.Snapshotter)
 	if !ok {
 		return nil, false
 	}

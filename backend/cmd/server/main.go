@@ -281,15 +281,8 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		},
 	})
 
-	enqueueProvider := storage.Provider(switcher)
-	var poolProvider *storage.Pool
-	if effective, resolveErr := resolver.Effective(ctx); resolveErr == nil {
-		if pool, buildErr := buildBotPool(ctx, botPool, effective); buildErr == nil && pool != nil {
-			poolProvider = pool
-			enqueueProvider = pool
-			log.Print("多 Bot 池已启用")
-		}
-	}
+	runtime := storage.NewDynamic(switcher)
+
 	// buildEnqueue 按当前 Bot 列表给出上传所用的提供方：零个可用保持等待，一个直接使用，多个按序切换。
 	buildEnqueue := func(callCtx context.Context) (storage.Provider, *storage.Pool, error) {
 		effective, resolveErr := resolver.Effective(callCtx)
@@ -302,12 +295,13 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		}
 		usable := botpool.Usable(bots)
 		if len(usable) == 0 {
-			return switcher, nil, nil
+			// 列表为空或全部不可写：保持等待，不回退旧令牌，避免停用后仍在发送。
+			return nil, nil, nil
 		}
 		if len(usable) == 1 {
 			provider, buildErr := newProviderWithToken(effective, usable[0].Token)
 			if buildErr != nil || provider == nil {
-				return switcher, nil, nil
+				return nil, nil, buildErr
 			}
 			return provider, nil, nil
 		}
@@ -316,27 +310,25 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 			return nil, nil, buildErr
 		}
 		if pool == nil {
-			return switcher, nil, nil
+			return nil, nil, nil
 		}
 		return pool, pool, nil
 	}
 
-	var nextProvider func(ctx context.Context, failed storage.Provider, cause error) (storage.Provider, bool)
-	if poolProvider != nil {
-		nextProvider = func(callCtx context.Context, _ storage.Provider, _ error) (storage.Provider, bool) {
-			failedBotID, next, ok := poolProvider.Failover(uploadFrozenNote)
-			if failedBotID > 0 {
-				if err := botPool.MarkFrozen(callCtx, failedBotID, uploadFrozenNote); err != nil {
-					log.Print("记录 Bot 冻结状态失败")
-				}
+	// 故障切换始终挂上：运行中加入第二个 Bot 后无需重启即可生效。
+	nextProvider := func(callCtx context.Context, _ storage.Provider, _ error) (storage.Provider, bool) {
+		failedBotID, next, ok := runtime.Failover(uploadFrozenNote)
+		if failedBotID > 0 {
+			if err := botPool.MarkFrozen(callCtx, failedBotID, uploadFrozenNote); err != nil {
+				log.Print("记录 Bot 冻结状态失败")
 			}
-			if !ok {
-				return nil, false
-			}
-			return next, true
 		}
+		if !ok {
+			return nil, false
+		}
+		return next, true
 	}
-	uploadQ := startUploadQueue(ctx, repository, cfg.DataDir, enqueueProvider, gate, lookupEnv, publishReady(telegraphManager, cfg.PublicURL), nextProvider)
+	uploadQ := startUploadQueue(ctx, repository, cfg.DataDir, runtime, gate, lookupEnv, publishReady(telegraphManager, cfg.PublicURL), nextProvider)
 	defer uploadQ.Stop()
 
 	reloadBots := func(callCtx context.Context) error {
@@ -344,11 +336,21 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		if buildErr != nil {
 			return buildErr
 		}
-		poolProvider = pool
-		uploadQ.SetProvider(provider)
+		runtime.Set(provider, pool)
 		return nil
 	}
 	reloadBotsFn = reloadBots
+	// 启动时先按现有列表装配；旧单 Token 配置在列表为空时并入列表，保证升级后行为不变。
+	go func() {
+		seedCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+		defer cancel()
+		if err := seedBotPool(seedCtx, botPool, resolver); err != nil {
+			log.Print("旧 Bot 配置并入列表失败")
+		}
+		if err := reloadBots(seedCtx); err != nil {
+			log.Print("按 Bot 列表装配运行配置失败")
+		}
+	}()
 
 	stopPublisher := startPublisher(ctx, repository, telegraphManager, cfg.PublicURL)
 	defer stopPublisher()
@@ -391,6 +393,38 @@ func bootstrapAdmin(ctx context.Context, service *auth.Service, lookupEnv func(s
 
 // uploadFrozenNote 是多 Bot 池里某个 Bot 被上游拒绝时的冻结说明，只写固定说法。
 const uploadFrozenNote = "上游拒绝，账号受限"
+
+// seedBotPool 把升级前的单 Bot 配置幂等并入列表：列表为空且环境里有令牌时才写入。
+// 编号用 getMe 的真实结果，重复启动不会产生第二条。
+func seedBotPool(ctx context.Context, pool *botpool.Pool, resolver *settings.Resolver) error {
+	existing, err := pool.List(ctx)
+	if err != nil {
+		return err
+	}
+	effective, err := resolver.Effective(ctx)
+	if err != nil {
+		return err
+	}
+	token := strings.TrimSpace(effective.TelegramToken.Value)
+	if token == "" {
+		return nil
+	}
+	for _, bot := range existing {
+		if bot.Token == token {
+			return nil
+		}
+	}
+	provider, err := newProviderWithToken(effective, token)
+	if err != nil || provider == nil {
+		return nil
+	}
+	botID, err := provider.BotID(ctx)
+	if err != nil {
+		return nil
+	}
+	bots := append(existing, botpool.Bot{BotID: botID, Alias: "默认", Token: token, Status: botpool.StatusOK})
+	return pool.Replace(ctx, bots)
+}
 
 // buildBotPool 把配置里的可写入 Bot 装配成提供方池；少于两个时返回 nil，保持单 Bot 行为。
 // 令牌只用于构建客户端，不写日志、不回显。

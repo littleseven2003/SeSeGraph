@@ -38,6 +38,7 @@ type botsRequest struct {
 		Alias    string `json:"alias"`
 		Token    string `json:"token"`
 		Priority int    `json:"priority"`
+		Status   string `json:"status"`
 	} `json:"bots"`
 }
 
@@ -176,7 +177,8 @@ func updateBotsHandler(deps Deps) gin.HandlerFunc {
 		bots := make([]botpool.Bot, 0, len(request.Bots))
 		for _, item := range request.Bots {
 			bots = append(bots, botpool.Bot{
-				BotID: item.BotID, Alias: item.Alias, Token: item.Token, Priority: item.Priority,
+				BotID: item.BotID, Alias: item.Alias, Token: item.Token,
+				Priority: item.Priority, Status: item.Status,
 			})
 		}
 		ctx, cancel := context.WithTimeout(c.Request.Context(), botSaveTimeout)
