@@ -972,3 +972,75 @@ func TestProcessSwitchesBotWhenAccountLimited(t *testing.T) {
 		t.Fatalf("文件引用 = %+v，期望记在 222 名下", refs)
 	}
 }
+
+// TestProcessRecordsIdentityForIdentifiedProvider 验证单 Bot 装配带上已验明编号后，
+// 首张图就按真实来源落库并登记引用，不会留下 Bot 编号为 0 的回执。
+func TestProcessRecordsIdentityForIdentifiedProvider(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.worker.provider = storage.Identify(&fakeProvider{}, 111, "-100777")
+
+	postID := e.queuedPost(t, 1, "photo")
+	if err := e.worker.Process(ctx, postID); err != nil {
+		t.Fatalf("处理任务失败: %v", err)
+	}
+	images, err := e.repo.ListImages(ctx, postID)
+	if err != nil || len(images) != 1 {
+		t.Fatalf("读取图片失败: %v", err)
+	}
+	refs, err := e.repo.ImageFileRefs(ctx, images[0].ID)
+	if err != nil {
+		t.Fatalf("读取引用失败: %v", err)
+	}
+	if len(refs) != 1 || refs[0].BotID != 111 || refs[0].FileID != "file-1" {
+		t.Fatalf("引用 = %+v，期望记在 111 名下", refs)
+	}
+	// 来源编号同时落到逐图记录上，删除保护才有依据。
+	image, err := e.repo.PublicImage(ctx, images[0].ShortCode)
+	if err == nil && image.SourceBotID != 111 {
+		t.Fatalf("来源编号 = %d，期望 111", image.SourceBotID)
+	}
+}
+
+// TestProcessFailoverKeepsIdentity 验证 A 冻结后换到 B 重试，B 的发送仍带自己的编号，
+// 下一张图继续走 B，不会因为切换丢了归属。
+func TestProcessFailoverKeepsIdentity(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	primary := storage.Identify(&fakeProvider{failures: []error{
+		&storage.UploadError{Stage: "存图", Kind: storage.KindAccount, Status: 400},
+	}}, 111, "-100777")
+	secondary := storage.Identify(&fakeProvider{}, 222, "-100777")
+	e.worker.provider = primary
+	e.worker.nextProvider = func(_ context.Context, origin storage.SendOrigin, cause error) (storage.Provider, bool) {
+		if origin.BotID != 111 || !storage.IsAccountLimited(cause) {
+			t.Errorf("换 Bot 参数不符：origin=%+v", origin)
+		}
+		return secondary, true
+	}
+
+	postID := e.queuedPost(t, 2, "photo")
+	if err := e.worker.Process(ctx, postID); err != nil {
+		t.Fatalf("处理任务失败: %v", err)
+	}
+	images, err := e.repo.ListImages(ctx, postID)
+	if err != nil || len(images) != 2 {
+		t.Fatalf("读取图片失败: %v", err)
+	}
+	// 第 1 张由 A 失败后由 B 补发，第 2 张直接用 B。
+	for index, image := range images {
+		refs, err := e.repo.ImageFileRefs(ctx, image.ID)
+		if err != nil {
+			t.Fatalf("读取引用失败: %v", err)
+		}
+		found := false
+		for _, ref := range refs {
+			if ref.BotID == 222 {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("第 %d 张的引用 = %+v，期望记在 222 名下", index+1, refs)
+		}
+	}
+}

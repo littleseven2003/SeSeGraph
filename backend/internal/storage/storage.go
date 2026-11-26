@@ -87,6 +87,41 @@ type OriginProvider interface {
 	UploadWithOrigin(ctx context.Context, req UploadRequest) (UploadResult, SendOrigin, error)
 }
 
+// Identify 给提供方补上池里已验明的编号与频道：单 Bot 装配或切换后仍能记录逐图归属，
+// 不必等第一次 getMe。botID 非正时原样返回，保持旧行为。
+func Identify(provider Provider, botID int64, chatID string) Provider {
+	if provider == nil || botID <= 0 {
+		return provider
+	}
+	return &identifiedProvider{Provider: provider, botID: botID, chatID: chatID}
+}
+
+// identifiedProvider 在提供方之上固定身份，发送回执与逐图来源都取这里的值。
+type identifiedProvider struct {
+	Provider
+	botID  int64
+	chatID string
+}
+
+func (p *identifiedProvider) Origin() (int64, string) { return p.botID, p.chatID }
+
+func (p *identifiedProvider) CredentialVersion() string {
+	if versioned, ok := p.Provider.(interface{ CredentialVersion() string }); ok {
+		return versioned.CredentialVersion()
+	}
+	return ""
+}
+
+func (p *identifiedProvider) UploadWithOrigin(ctx context.Context, req UploadRequest) (UploadResult, SendOrigin, error) {
+	origin := SendOrigin{BotID: p.botID, ChatID: p.chatID, CredentialVersion: p.CredentialVersion()}
+	if originProvider, ok := p.Provider.(OriginProvider); ok {
+		result, _, err := originProvider.UploadWithOrigin(ctx, req)
+		return result, origin, err
+	}
+	result, err := p.Provider.Upload(ctx, req)
+	return result, origin, err
+}
+
 // Stream 是一次流式下载的句柄。Body 由调用方负责关闭，读取不整块载入内存。
 type Stream struct {
 	Body        io.ReadCloser

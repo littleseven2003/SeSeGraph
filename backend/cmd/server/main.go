@@ -311,7 +311,8 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 			if buildErr != nil || provider == nil {
 				return nil, nil, buildErr
 			}
-			return provider, nil, nil
+			// 单 Bot 装配也带上已验明的编号，首张图就能按真实来源落库。
+			return storage.Identify(provider, usable[0].BotID, effective.TelegramChannel.Value), nil, nil
 		}
 		pool, buildErr := buildBotPool(callCtx, botPool, effective)
 		if buildErr != nil {
@@ -668,10 +669,11 @@ func buildBotPool(ctx context.Context, pool *botpool.Pool, effective settings.Ef
 			continue
 		}
 		entries = append(entries, storage.PoolEntry{
-			BotID:    bot.BotID,
-			ChatID:   effective.TelegramChannel.Value,
-			Alias:    bot.Alias,
-			Provider: provider,
+			BotID:  bot.BotID,
+			ChatID: effective.TelegramChannel.Value,
+			Alias:  bot.Alias,
+			// 条目里的提供方同样带上编号：冻结切换后交给 Worker 的仍是可记录归属的实例。
+			Provider: storage.Identify(provider, bot.BotID, effective.TelegramChannel.Value),
 		})
 	}
 	if len(entries) < 2 {
