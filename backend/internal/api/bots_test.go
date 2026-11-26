@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/littleseven2003/SeSeGraph/backend/internal/botpool"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/settings"
 )
 
@@ -222,4 +223,74 @@ func fakeTelegramByToken(t *testing.T) *httptest.Server {
 	}))
 	t.Cleanup(server.Close)
 	return server
+}
+
+// TestTelegramKeepsFrozenBotWithExclusiveMedia 验证仍保留的冻结 Bot 不会被当成移除：
+// 有它独占的已存图时也能加入备用 Bot，真正移除它才被删除保护拦住。
+func TestTelegramKeepsFrozenBotWithExclusiveMedia(t *testing.T) {
+	tg := fakeTelegramByToken(t)
+	var pool *botpool.Pool
+	var repository *posts.Repository
+	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
+		store := settings.NewStore(handle)
+		pool = botpool.New(store)
+		deps.Bots = pool
+		deps.Settings = settings.NewResolver(store, settings.Env{TelegramAPIBase: tg.URL})
+		repository = posts.NewRepository(handle)
+		deps.Posts = repository
+	})
+	cookie := env.setup(t)
+	ctx := context.Background()
+
+	original := probeBots
+	probeBots = func(context.Context, settings.ProbeOptions) settings.ProbeResult {
+		return settings.ProbeResult{Telegram: settings.ProbeTarget{Status: settings.ProbeOK}}
+	}
+	t.Cleanup(func() { probeBots = original })
+
+	tokenA := "111:" + strings.Repeat("a", 24)
+	if err := pool.Replace(ctx, []botpool.Bot{{BotID: 111, Alias: "A", Token: tokenA, Status: botpool.StatusFrozen}}); err != nil {
+		t.Fatalf("写入冻结 A 失败: %v", err)
+	}
+	// A 独占一张已存图，且没有任何其他 Bot 的引用。
+	postID, err := repository.Create(ctx, posts.Post{Title: "旧图", ImageCount: 1, UploadMode: "photo"})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+	if _, err := repository.AttachImage(ctx, posts.Image{
+		PostID: postID, SortOrder: 1, Status: posts.ImageStatusUploaded,
+		MimeType: "image/jpeg", FileSize: 10, TempFilePath: "tmp/a.part",
+	}); err != nil {
+		t.Fatalf("保存图片失败: %v", err)
+	}
+	images, err := repository.ListImages(ctx, postID)
+	if err != nil || len(images) != 1 {
+		t.Fatalf("读取图片失败: %v", err)
+	}
+	if err := repository.MarkImageStoredWithOrigin(ctx, images[0].ID, "file-a", 11, "telegram", 111, "-100777"); err != nil {
+		t.Fatalf("写入逐图来源失败: %v", err)
+	}
+
+	tokenB := "222:" + strings.Repeat("b", 24)
+	body := fmt.Sprintf(`{"channel_id":"-100777","bots":[`+
+		`{"bot_id":111,"alias":"A","token":"","priority":0,"status":"frozen"},`+
+		`{"bot_id":222,"alias":"B","token":%q,"priority":1,"status":"ok"}]}`, tokenB)
+	rec := env.do(t, http.MethodPut, "/api/settings/telegram", body, cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("保留冻结 A 并加入 B 状态码 = %d，期望 200，响应: %s", rec.Code, rec.Body.String())
+	}
+	stored, err := pool.List(ctx)
+	if err != nil || len(stored) != 2 {
+		t.Fatalf("列表 = %+v（err=%v），期望 A 与 B 共两条", stored, err)
+	}
+
+	// 真正移除 A：它独占的旧图还没接管，删除应被拒。
+	body = fmt.Sprintf(`{"channel_id":"-100777","bots":[{"bot_id":222,"alias":"B","token":"","priority":0,"status":"ok"}]}`)
+	rec = env.do(t, http.MethodPut, "/api/settings/telegram", body, cookie)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("移除独占 A 状态码 = %d，期望 400，响应: %s", rec.Code, rec.Body.String())
+	}
+	if !contains(rec.Body.String(), "只能由它读取") {
+		t.Fatalf("失败原因未说明独占媒体: %s", rec.Body.String())
+	}
 }

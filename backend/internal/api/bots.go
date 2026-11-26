@@ -363,18 +363,24 @@ func ensureRemovable(ctx context.Context, deps Deps, bots []botpool.Bot) error {
 	if err != nil {
 		return nil
 	}
+	// 只有真的从提交里消失的条目才算移除；保留但冻结或停用的 A 不算移除，
+	// 否则「保留冻结 A、加入 B」会被误判成删掉 A 而无法保存。
+	present := make(map[int64]bool, len(bots))
+	for _, bot := range bots {
+		if bot.BotID > 0 {
+			present[bot.BotID] = true
+		}
+	}
 	// 停用或冻结的条目不会参与读图，不能当作「已有其他 Bot 可读」的依据。
 	usable := botpool.Usable(bots)
-	keep := make(map[int64]bool, len(bots))
 	keepIDs := make([]int64, 0, len(usable))
 	for _, bot := range usable {
-		keep[bot.BotID] = true
 		if bot.BotID > 0 {
 			keepIDs = append(keepIDs, bot.BotID)
 		}
 	}
 	for _, old := range existing {
-		if old.BotID == 0 || keep[old.BotID] {
+		if old.BotID == 0 || present[old.BotID] {
 			continue
 		}
 		count, countErr := deps.Posts.CountImagesExclusiveToRemoval(ctx, old.BotID, keepIDs)
