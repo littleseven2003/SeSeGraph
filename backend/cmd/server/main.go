@@ -242,7 +242,7 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	// reloadBotsFn 在队列装配完成后才有实现，路由先挂一个可延后填充的入口。
 	var reloadBotsFn func(context.Context) error
 	// resolveImageFn 由逐图来源与池内健康状态挑图床，未装配时网关读全局图床。
-	var resolveImageFn func(context.Context, *posts.PublicImage) (storage.StreamProvider, string, int64, bool)
+	var resolveImageFn api.ImageResolver
 	router := api.NewRouter(api.Deps{
 		Version:           version,
 		Commit:            commit,
@@ -281,9 +281,9 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 			}
 			return reloadBotsFn(callCtx)
 		},
-		ResolveImage: func(callCtx context.Context, image *posts.PublicImage) (storage.StreamProvider, string, int64, bool) {
+		ResolveImage: func(callCtx context.Context, image *posts.PublicImage) (api.ImageSource, bool) {
 			if resolveImageFn == nil {
-				return nil, "", 0, false
+				return api.ImageSource{}, false
 			}
 			return resolveImageFn(callCtx, image)
 		},
@@ -333,7 +333,7 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 			}
 			return effective.TelegramAPIBase.Value, nil
 		},
-		failover:   func() (int64, storage.Provider, bool) { return runtime.Failover(uploadFrozenNote) },
+		failover:   runtime.FailoverBot,
 		markFrozen: botPool.MarkFrozen,
 	})
 	uploadQ := startUploadQueue(ctx, repository, cfg.DataDir, runtime, gate, lookupEnv, publishReady(telegraphManager, cfg.PublicURL), nextProvider)
@@ -376,39 +376,12 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		providerCache.mu.Unlock()
 		return built
 	}
-	resolveImageFn = func(callCtx context.Context, image *posts.PublicImage) (storage.StreamProvider, string, int64, bool) {
-		bots, err := botPool.List(callCtx)
-		if err != nil {
-			return nil, "", 0, false
-		}
-		effective, err := resolver.Effective(callCtx)
-		if err != nil {
-			return nil, "", 0, false
-		}
-		usable := botpool.Usable(bots)
-		if len(usable) == 0 {
-			return nil, "", 0, false
-		}
-		refs, err := repository.ImageFileRefs(callCtx, image.ImageID)
-		if err != nil {
-			refs = nil
-		}
-		botID, fileID, ok := pickImageSource(usable, refs, image.SourceBotID, image.RemoteFileID)
-		if !ok {
-			return nil, "", 0, false
-		}
-		for _, bot := range usable {
-			if bot.BotID != botID {
-				continue
-			}
-			provider := streamProviderFor(bot, effective)
-			if provider == nil {
-				return nil, "", 0, false
-			}
-			return provider, fileID, botID, true
-		}
-		return nil, "", 0, false
-	}
+	resolveImageFn = newImageResolver(imageResolverDeps{
+		repo:      repository,
+		bots:      botPool.List,
+		effective: resolver.Effective,
+		provider:  streamProviderFor,
+	})
 	// 启动时先按现有列表装配；旧单 Token 配置在列表为空时并入列表，保证升级后行为不变。
 	go func() {
 		seedCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
@@ -464,7 +437,7 @@ func bootstrapAdmin(ctx context.Context, service *auth.Service, lookupEnv func(s
 type failoverDeps struct {
 	list       func(context.Context) ([]botpool.Bot, error)
 	apiBase    func(context.Context) (string, error)
-	failover   func() (int64, storage.Provider, bool)
+	failover   func(int64) (storage.Provider, bool)
 	markFrozen func(context.Context, int64, string) error
 }
 
@@ -486,7 +459,7 @@ func newNextProvider(deps failoverDeps) func(context.Context, storage.SendOrigin
 		if !matchBotCredential(current, origin.BotID, origin.CredentialVersion, apiBase) {
 			return nil, false
 		}
-		_, next, ok := deps.failover()
+		next, ok := deps.failover(origin.BotID)
 		if err := deps.markFrozen(callCtx, origin.BotID, uploadFrozenNote); err != nil {
 			log.Print("记录 Bot 冻结状态失败")
 		}
@@ -510,6 +483,96 @@ func matchBotCredential(bots []botpool.Bot, botID int64, version, apiBase string
 		return storage.CredentialVersion(bot.Token, apiBase) == version
 	}
 	return false
+}
+
+// imageResolverDeps 汇总读图选源需要的外部依赖，便于在测试里换成替身。
+type imageResolverDeps struct {
+	repo      *posts.Repository
+	bots      func(context.Context) ([]botpool.Bot, error)
+	effective func(context.Context) (settings.Effective, error)
+	provider  func(botpool.Bot, settings.Effective) storage.StreamProvider
+}
+
+// newImageResolver 生成读图选源：已有引用用持有引用的 Bot，没有引用时回到来源 Bot，
+// 来源不可用则让池内其他 Bot 转发原消息接管，最终才回落到全局图床。
+func newImageResolver(deps imageResolverDeps) api.ImageResolver {
+	return deps.resolve
+}
+
+func (d imageResolverDeps) resolve(callCtx context.Context, image *posts.PublicImage) (api.ImageSource, bool) {
+	bots, err := d.bots(callCtx)
+	if err != nil {
+		return api.ImageSource{}, false
+	}
+	effective, err := d.effective(callCtx)
+	if err != nil {
+		return api.ImageSource{}, false
+	}
+	usable := botpool.Usable(bots)
+	if len(usable) == 0 {
+		return api.ImageSource{}, false
+	}
+	refs, err := d.repo.ImageFileRefs(callCtx, image.ImageID)
+	if err != nil {
+		refs = nil
+	}
+	// 已有引用：直接用持有引用的 Bot，读取成功也不再重复写库。
+	if botID, fileID, ok := pickImageSource(usable, refs, 0, ""); ok {
+		for _, bot := range usable {
+			if bot.BotID != botID {
+				continue
+			}
+			provider := d.provider(bot, effective)
+			if provider == nil {
+				return api.ImageSource{}, false
+			}
+			return api.ImageSource{Provider: provider, FileID: fileID, BotID: botID, FromRef: true}, true
+		}
+	}
+	// 没有引用时先回到来源 Bot 直读原编号，读成功后由网关登记为引用。
+	if botID, fileID, ok := pickImageSource(usable, nil, image.SourceBotID, image.RemoteFileID); ok {
+		for _, bot := range usable {
+			if bot.BotID != botID {
+				continue
+			}
+			provider := d.provider(bot, effective)
+			if provider == nil {
+				return api.ImageSource{}, false
+			}
+			return api.ImageSource{Provider: provider, FileID: fileID, BotID: botID}, true
+		}
+	}
+	// 来源 Bot 已不可用：让池内另一个 Bot 转发原消息，取得属于自己的文件编号。
+	for _, bot := range usable {
+		if bot.BotID == image.SourceBotID {
+			continue
+		}
+		provider := d.provider(bot, effective)
+		if provider == nil {
+			continue
+		}
+		fileID, takeErr := takeOverImage(callCtx, provider, image)
+		if takeErr != nil {
+			continue
+		}
+		return api.ImageSource{Provider: provider, FileID: fileID, BotID: bot.BotID}, true
+	}
+	return api.ImageSource{}, false
+}
+
+// takeOverImage 让另一个 Bot 转发原消息取得自己的文件编号。
+// 频道里其他 Bot 存下的编号不能直接复用，转发是官方途径；临时消息由接管方法自行删除。
+func takeOverImage(ctx context.Context, provider storage.StreamProvider, image *posts.PublicImage) (string, error) {
+	taker, ok := provider.(interface {
+		TakeoverFile(ctx context.Context, fromChatID string, messageID int64) (string, error)
+	})
+	if !ok {
+		return "", errors.New("当前图床不支持接管")
+	}
+	if strings.TrimSpace(image.SourceChatID) == "" || image.SourceMessageID <= 0 {
+		return "", errors.New("缺少原消息位置")
+	}
+	return taker.TakeoverFile(ctx, image.SourceChatID, image.SourceMessageID)
 }
 
 // pickImageSource 在可用 Bot 与已有引用里选出读这张图的 Bot 与文件编号：

@@ -1288,8 +1288,8 @@ func TestGatewayKeepsResolvedBotOverGlobalSnapshot(t *testing.T) {
 		}
 		return storage.Stream{Body: io.NopCloser(strings.NewReader("picked")), ContentType: "image/jpeg", Size: 6}, nil
 	}}
-	resolve := func(context.Context, *posts.PublicImage) (storage.StreamProvider, string, int64, bool) {
-		return picked, "file-b", 8, true
+	resolve := func(context.Context, *posts.PublicImage) (ImageSource, bool) {
+		return ImageSource{Provider: picked, FileID: "file-b", BotID: 8}, true
 	}
 	env := newGatewayEnvWithResolve(t, global, resolve)
 	shortCode := env.publishPost(t, "rsv12345", "image/jpeg", storage.ModePhoto, true, false)
@@ -1322,11 +1322,15 @@ func TestGatewayRegistersRefOnlyAfterSuccessfulRead(t *testing.T) {
 	}}
 	var mode atomic.Value
 	mode.Store("fail")
-	resolve := func(context.Context, *posts.PublicImage) (storage.StreamProvider, string, int64, bool) {
+	resolve := func(context.Context, *posts.PublicImage) (ImageSource, bool) {
 		if mode.Load() == "fail" {
-			return failing, "file-v", 9, true
+			return ImageSource{Provider: failing, FileID: "file-v", BotID: 9}, true
 		}
-		return &rangeProvider{fakeStreamProvider: &fakeStreamProvider{}, size: int64(len(body)), body: body}, "file-v", 9, true
+		return ImageSource{
+			Provider: &rangeProvider{fakeStreamProvider: &fakeStreamProvider{}, size: int64(len(body)), body: body},
+			FileID:   "file-v",
+			BotID:    9,
+		}, true
 	}
 	env := newGatewayEnvWithResolve(t, failing, resolve)
 	shortCode := env.publishPost(t, "rsv45678", posts.MimeVideoMP4, storage.ModeDocument, true, false)
@@ -1379,5 +1383,26 @@ func TestGatewayRegistersRefOnlyAfterSuccessfulRead(t *testing.T) {
 	// GET、HEAD 与区间读取都通过后，7 号才不再被这张图占用。
 	if count, err := env.repo.CountImagesExclusiveToRemoval(ctx, 7, []int64{9}); err != nil || count != 0 {
 		t.Fatalf("接管后独占计数 = %d（err=%v），期望 0", count, err)
+	}
+}
+
+// TestShouldRegisterRefSkipsKnownRef 验证已有引用与缺少身份时不写库，只有新取得的编号才登记。
+func TestShouldRegisterRefSkipsKnownRef(t *testing.T) {
+	cases := []struct {
+		name    string
+		fromRef bool
+		botID   int64
+		fileID  string
+		want    bool
+	}{
+		{"已有引用", true, 9, "file-b", false},
+		{"新取得的引用", false, 9, "file-b", true},
+		{"缺少 Bot", false, 0, "file-b", false},
+		{"缺少文件", false, 9, "  ", false},
+	}
+	for _, item := range cases {
+		if got := shouldRegisterRef(item.fromRef, item.botID, item.fileID); got != item.want {
+			t.Errorf("%s: got %v want %v", item.name, got, item.want)
+		}
 	}
 }

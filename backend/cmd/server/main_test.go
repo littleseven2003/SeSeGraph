@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/botpool"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/settings"
@@ -416,8 +417,11 @@ func TestNextProviderSkipsRotatedCredential(t *testing.T) {
 			// 列表里已是新令牌，旧请求携带的是旧版本。
 			return []botpool.Bot{{BotID: 111, Token: "111:new"}}, nil
 		},
-		apiBase:    func(context.Context) (string, error) { return "https://api.telegram.org", nil },
-		failover:   func() (int64, storage.Provider, bool) { failovers++; return 111, next, true },
+		apiBase: func(context.Context) (string, error) { return "https://api.telegram.org", nil },
+		failover: func(int64) (storage.Provider, bool) {
+			failovers++
+			return next, true
+		},
 		markFrozen: func(context.Context, int64, string) error { frozen++; return nil },
 	}
 	provider, ok := newNextProvider(deps)(context.Background(),
@@ -440,5 +444,108 @@ func TestNextProviderSkipsRotatedCredential(t *testing.T) {
 	}
 	if failovers != 1 || frozen != 1 {
 		t.Fatalf("切换次数 = %d/%d，期望各 1 次", failovers, frozen)
+	}
+}
+
+// takeoverFake 模拟能转发原消息的读图提供方，记录被要求接管的原消息位置。
+type takeoverFake struct {
+	botID int64
+	taken int
+}
+
+func (f *takeoverFake) Name() string { return "takeover-fake" }
+
+func (f *takeoverFake) Upload(context.Context, storage.UploadRequest) (storage.UploadResult, error) {
+	return storage.UploadResult{}, nil
+}
+
+func (f *takeoverFake) OpenStream(context.Context, string) (storage.Stream, error) {
+	return storage.Stream{}, storage.ErrFileUnavailable
+}
+
+func (f *takeoverFake) TakeoverFile(_ context.Context, chatID string, messageID int64) (string, error) {
+	if chatID != "-100777" || messageID != 55 {
+		return "", errors.New("原消息位置不符")
+	}
+	f.taken++
+	return "file-b", nil
+}
+
+// TestImageResolverTakesOverMissingRef 验证从缺失引用开始的真实接管路径：
+// 原 Bot 已移出池时由另一个 Bot 转发原消息取得自己的文件编号，
+// 登记成功后再次读取直接复用引用，且原 Bot 的删除保护随之解除。
+func TestImageResolverTakesOverMissingRef(t *testing.T) {
+	handle, err := db.Open(filepath.Join(t.TempDir(), "resolve.db"))
+	if err != nil {
+		t.Fatalf("打开数据库失败: %v", err)
+	}
+	t.Cleanup(func() { _ = handle.Close() })
+	if err := db.Migrate(context.Background(), handle); err != nil {
+		t.Fatalf("迁移失败: %v", err)
+	}
+	repository := posts.NewRepository(handle)
+	ctx := context.Background()
+	postID, err := repository.Create(ctx, posts.Post{Title: "接管", ImageCount: 1, UploadMode: storage.ModePhoto})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+	if _, err := repository.AttachImage(ctx, posts.Image{
+		PostID: postID, SortOrder: 1, Status: posts.ImageStatusUploaded,
+		MimeType: "image/jpeg", FileSize: 10, TempFilePath: "tmp/a.part",
+	}); err != nil {
+		t.Fatalf("保存图片失败: %v", err)
+	}
+	images, err := repository.ListImages(ctx, postID)
+	if err != nil || len(images) != 1 {
+		t.Fatalf("读取图片失败: %v", err)
+	}
+	imageID := images[0].ID
+	if err := repository.MarkImageStoredWithOrigin(ctx, imageID, "file-a", 55, "telegram", 7, "-100777"); err != nil {
+		t.Fatalf("写入逐图来源失败: %v", err)
+	}
+
+	taker := &takeoverFake{botID: 8}
+	resolver := newImageResolver(imageResolverDeps{
+		repo: repository,
+		// 7 号 Bot 已被移出池，只剩 8 号。
+		bots: func(context.Context) ([]botpool.Bot, error) {
+			return []botpool.Bot{{BotID: 8, Token: "888:ok", Status: botpool.StatusOK}}, nil
+		},
+		effective: func(context.Context) (settings.Effective, error) { return settings.Effective{}, nil },
+		provider: func(bot botpool.Bot, _ settings.Effective) storage.StreamProvider {
+			if bot.BotID != 8 {
+				return nil
+			}
+			return taker
+		},
+	})
+
+	image := &posts.PublicImage{
+		ImageID: imageID, RemoteFileID: "file-a", MIMEType: "image/jpeg",
+		UploadMode: storage.ModePhoto, SourceBotID: 7, SourceChatID: "-100777", SourceMessageID: 55,
+	}
+	source, ok := resolver(ctx, image)
+	if !ok || source.BotID != 8 || source.FileID != "file-b" || source.FromRef {
+		t.Fatalf("选源 = %+v ok=%v，期望 8/file-b 且标记为未登记", source, ok)
+	}
+	if taker.taken != 1 {
+		t.Fatalf("接管次数 = %d，期望 1", taker.taken)
+	}
+	if count, err := repository.CountImagesExclusiveToRemoval(ctx, 7, []int64{8}); err != nil || count != 1 {
+		t.Fatalf("接管前独占计数 = %d（err=%v），期望 1", count, err)
+	}
+
+	if err := repository.SetImageFileRef(ctx, imageID, 8, "file-b"); err != nil {
+		t.Fatalf("登记引用失败: %v", err)
+	}
+	source, ok = resolver(ctx, image)
+	if !ok || source.BotID != 8 || source.FileID != "file-b" || !source.FromRef {
+		t.Fatalf("再次选源 = %+v ok=%v，期望直接复用已登记引用", source, ok)
+	}
+	if taker.taken != 1 {
+		t.Fatalf("已有引用时不应再次接管，实际 %d 次", taker.taken)
+	}
+	if count, err := repository.CountImagesExclusiveToRemoval(ctx, 7, []int64{8}); err != nil || count != 0 {
+		t.Fatalf("接管后独占计数 = %d（err=%v），期望 0", count, err)
 	}
 }

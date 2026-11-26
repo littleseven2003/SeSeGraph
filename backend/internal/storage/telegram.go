@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -498,7 +499,9 @@ type apiResponse struct {
 
 type messageResult struct {
 	MessageID int64 `json:"message_id"`
-	Photo     []struct {
+	// FileID 是解析出的媒体编号，不参与反序列化，由调用方按媒体类型补齐。
+	FileID string `json:"-"`
+	Photo  []struct {
 		FileID   string `json:"file_id"`
 		FileSize int64  `json:"file_size"`
 	} `json:"photo"`
@@ -577,6 +580,96 @@ func (t *Telegram) resultFrom(raw json.RawMessage, mode string) (UploadResult, e
 	result.FileID = largest.FileID
 	result.FileSize = largest.FileSize
 	return result, nil
+}
+
+// TakeoverFile 借用本 Bot 转发原消息，取得属于本 Bot 的文件编号，再删掉这条临时消息。
+// 频道内其他 Bot 存下的文件编号不能直接复用，转发是让新 Bot 拿到自己编号的官方途径。
+func (t *Telegram) TakeoverFile(ctx context.Context, fromChatID string, messageID int64) (string, error) {
+	if t == nil {
+		return "", ErrNotConfigured
+	}
+	from := strings.TrimSpace(fromChatID)
+	if from == "" || messageID <= 0 {
+		return "", ErrUpstream
+	}
+	forwarded, err := t.forwardMessage(ctx, from, messageID)
+	if err != nil {
+		return "", err
+	}
+	// 尽力删除临时转发：删不掉不影响读取，只是频道里多一条重复消息。
+	defer func() {
+		_, _ = t.callAPI(context.WithoutCancel(ctx), "deleteMessage", url.Values{
+			"chat_id":    {t.chatID},
+			"message_id": {strconv.FormatInt(forwarded.MessageID, 10)},
+		})
+	}()
+	if forwarded.FileID == "" {
+		return "", ErrUpstream
+	}
+	return forwarded.FileID, nil
+}
+
+// forwardMessage 转发一条频道消息，并解析出归属本 Bot 的文件编号与消息编号。
+func (t *Telegram) forwardMessage(ctx context.Context, fromChatID string, messageID int64) (messageResult, error) {
+	payload, err := t.callAPI(ctx, "forwardMessage", url.Values{
+		"chat_id":      {t.chatID},
+		"from_chat_id": {fromChatID},
+		"message_id":   {strconv.FormatInt(messageID, 10)},
+	})
+	if err != nil {
+		return messageResult{}, err
+	}
+	var message messageResult
+	if err := json.Unmarshal(payload, &message); err != nil {
+		return messageResult{}, ErrUpstream
+	}
+	message.FileID = firstFileID(message)
+	return message, nil
+}
+
+// callAPI 发送一次最小的表单请求并返回上游结果，失败时只给出统一错误。
+func (t *Telegram) callAPI(ctx context.Context, method string, form url.Values) (json.RawMessage, error) {
+	endpoint := t.apiBase + "/bot" + t.token + "/" + method
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint,
+		strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, ErrUpstream
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	response, err := t.client.Do(request)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, errTransport
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10))
+		_ = response.Body.Close()
+	}()
+
+	var payload apiResponse
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&payload); err != nil {
+		return nil, ErrUpstream
+	}
+	if !payload.OK {
+		return nil, t.errorFor(payload)
+	}
+	return payload.Result, nil
+}
+
+// firstFileID 取消息里任意一种媒体的文件编号，供接管与删除临时消息复用。
+func firstFileID(message messageResult) string {
+	switch {
+	case len(message.Photo) > 0:
+		return message.Photo[len(message.Photo)-1].FileID
+	case message.Document != nil:
+		return message.Document.FileID
+	case message.Video != nil:
+		return message.Video.FileID
+	}
+	return ""
 }
 
 // SendMessage 发送一条纯文本消息，用于流量预警等运维通知。

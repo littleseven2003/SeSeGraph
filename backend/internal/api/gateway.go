@@ -141,8 +141,17 @@ type imageGateway struct {
 }
 
 // newImageGateway 创建网关，并发上限非正时使用默认值。
+// ImageSource 是网关为一张图选定的取流方式：从哪个 Bot、用哪个文件编号读，
+// FromRef 表示这个编号已经登记过，读取成功时不必重复写库。
+type ImageSource struct {
+	Provider storage.StreamProvider
+	FileID   string
+	BotID    int64
+	FromRef  bool
+}
+
 // ImageResolver 返回这张图本次可用的取流来源；ok 为 false 时回落到全局图床。
-type ImageResolver func(ctx context.Context, image *posts.PublicImage) (storage.StreamProvider, string, int64, bool)
+type ImageResolver func(ctx context.Context, image *posts.PublicImage) (ImageSource, bool)
 
 func newImageGateway(repo *posts.Repository, streams storage.StreamProvider, concurrency, queueDepth int, wait time.Duration, logger *log.Logger, meter *traffic.Recorder, resolve ImageResolver) *imageGateway {
 	if concurrency <= 0 {
@@ -304,10 +313,12 @@ func (g *imageGateway) handle(c *gin.Context) {
 	fileID := image.RemoteFileID
 	resolvedBotID := int64(0)
 	resolved := false
+	fromRef := false
 	if g.resolve != nil {
-		if picked, pickedID, botID, ok := g.resolve(ctx, image); ok && picked != nil {
+		if source, ok := g.resolve(ctx, image); ok && source.Provider != nil {
 			// 逐图选出的 Bot 就是本次唯一视图，不再被全局快照覆盖。
-			streams, fileID, resolvedBotID, resolved = picked, pickedID, botID, true
+			streams, fileID, resolvedBotID, resolved = source.Provider, source.FileID, source.BotID, true
+			fromRef = source.FromRef
 		}
 	}
 	if !resolved {
@@ -358,8 +369,9 @@ func (g *imageGateway) handle(c *gin.Context) {
 			end = total - 1
 		}
 		length := end - requested.Start + 1
-		// 上游确认了长度即证明这张文件可由该 Bot 读取，同样登记为删除保护依据。
-		if refBotID > 0 && fileID != "" {
+		// 上游确认了长度即证明这张文件可由该 Bot 读取，同样登记为删除保护依据；
+		// 已有引用不再重复写库。
+		if shouldRegisterRef(fromRef, refBotID, fileID) {
 			_ = g.repo.SetImageFileRef(context.WithoutCancel(ctx), image.ImageID, refBotID, fileID)
 		}
 		c.Header("Content-Type", image.MIMEType)
@@ -399,7 +411,7 @@ func (g *imageGateway) handle(c *gin.Context) {
 
 	// 读到之后才登记引用：失败的读取不产生可作删除依据的条目，
 	// 登记下来的每一条都代表这次真的从该 Bot 取到了这张文件。
-	if refBotID > 0 && fileID != "" {
+	if shouldRegisterRef(fromRef, refBotID, fileID) {
 		defer func() { _ = g.repo.SetImageFileRef(context.WithoutCancel(ctx), image.ImageID, refBotID, fileID) }()
 	}
 
@@ -443,6 +455,12 @@ func (g *imageGateway) handle(c *gin.Context) {
 			g.logger.Print("图片转发中断")
 		}
 	}
+}
+
+// shouldRegisterRef 报告这次成功读取是否需要登记引用：
+// 已有引用、缺少 Bot 编号或文件编号时不写库，避免每次读图都动 SQLite。
+func shouldRegisterRef(fromRef bool, botID int64, fileID string) bool {
+	return !fromRef && botID > 0 && strings.TrimSpace(fileID) != ""
 }
 
 // openStream 按是否请求区间打开上游流；上游不支持区间时退回整段响应。

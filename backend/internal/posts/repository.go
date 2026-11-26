@@ -117,6 +117,9 @@ type PublicImage struct {
 	// SourceBotID 是存下这张图的 Bot 编号，0 表示升级前的旧数据还没回填。
 	// 读图网关据此在没有其他引用时回到原 Bot 直读。
 	SourceBotID int64
+	// SourceChatID 与 SourceMessageID 定位原消息，供其他 Bot 借道转发取得自己的文件编号。
+	SourceChatID    string
+	SourceMessageID int64
 }
 
 // Image 是帖子中的单张图片记录。
@@ -479,12 +482,14 @@ func (r *Repository) PublicImage(ctx context.Context, shortCode string) (*Public
 	}
 	image := &PublicImage{}
 	err := r.handle.QueryRowContext(ctx,
-		`SELECT i.id, i.post_id, i.remote_file_id, i.mime_type, p.upload_mode, i.source_bot_id
+		`SELECT i.id, i.post_id, i.remote_file_id, i.mime_type, p.upload_mode,
+		        i.source_bot_id, i.source_chat_id, i.remote_message_id
 		 FROM post_images i JOIN posts p ON p.id = i.post_id
 		 WHERE i.short_code = ? AND i.status = ? AND i.remote_file_id <> ''
 		   AND p.is_public = 1 AND p.is_disabled = 0 AND p.pending_delete = 0`,
 		shortCode, ImageStatusStored,
-	).Scan(&image.ImageID, &image.PostID, &image.RemoteFileID, &image.MIMEType, &image.UploadMode, &image.SourceBotID)
+	).Scan(&image.ImageID, &image.PostID, &image.RemoteFileID, &image.MIMEType, &image.UploadMode,
+		&image.SourceBotID, &image.SourceChatID, &image.SourceMessageID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
