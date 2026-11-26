@@ -303,19 +303,28 @@ func (g *imageGateway) handle(c *gin.Context) {
 	streams := g.streams
 	fileID := image.RemoteFileID
 	resolvedBotID := int64(0)
+	resolved := false
 	if g.resolve != nil {
-		if picked, pickedID, botID, ok := g.resolve(ctx, image); ok {
-			streams = picked
-			fileID = pickedID
-			resolvedBotID = botID
+		if picked, pickedID, botID, ok := g.resolve(ctx, image); ok && picked != nil {
+			// 逐图选出的 Bot 就是本次唯一视图，不再被全局快照覆盖。
+			streams, fileID, resolvedBotID, resolved = picked, pickedID, botID, true
 		}
 	}
-	if snapshotter, ok := g.streams.(storage.Snapshotter); ok {
-		if fixed, ready := snapshotter.Snapshot(); ready {
-			streams = fixed
+	if !resolved {
+		if snapshotter, ok := g.streams.(storage.Snapshotter); ok {
+			if fixed, ready := snapshotter.Snapshot(); ready {
+				streams = fixed
+			}
 		}
 	}
 
+	// 身份以本次实际选用的提供方为准：解析结果没带编号时从提供方自身取。
+	refBotID := resolvedBotID
+	if refBotID == 0 {
+		if origin, ok := streams.(storage.Origin); ok {
+			refBotID, _ = origin.Origin()
+		}
+	}
 	// 区间读取只对 MP4 生效，已有图片保持整段响应，不改旧行为。
 	video := strings.EqualFold(image.MIMEType, posts.MimeVideoMP4)
 	var requested storage.ByteRange
@@ -349,6 +358,10 @@ func (g *imageGateway) handle(c *gin.Context) {
 			end = total - 1
 		}
 		length := end - requested.Start + 1
+		// 上游确认了长度即证明这张文件可由该 Bot 读取，同样登记为删除保护依据。
+		if refBotID > 0 && fileID != "" {
+			_ = g.repo.SetImageFileRef(context.WithoutCancel(ctx), image.ImageID, refBotID, fileID)
+		}
 		c.Header("Content-Type", image.MIMEType)
 		c.Header("Cache-Control", imageCacheControl)
 		c.Header("Content-Disposition", "inline")
@@ -361,10 +374,6 @@ func (g *imageGateway) handle(c *gin.Context) {
 		return
 	}
 
-	// 通过其他 Bot 的引用读到后登记下来，下次可直接复用，也为删除保护提供依据。
-	if resolvedBotID > 0 && fileID != image.RemoteFileID {
-		defer func() { _ = g.repo.SetImageFileRef(context.WithoutCancel(ctx), image.ImageID, resolvedBotID, fileID) }()
-	}
 	stream, partial, err := g.openStream(streams, ctx, fileID, requested, ranged)
 	switch {
 	case errors.Is(err, storage.ErrFileUnavailable):
@@ -387,6 +396,12 @@ func (g *imageGateway) handle(c *gin.Context) {
 		return
 	}
 	defer func() { _ = stream.Body.Close() }()
+
+	// 读到之后才登记引用：失败的读取不产生可作删除依据的条目，
+	// 登记下来的每一条都代表这次真的从该 Bot 取到了这张文件。
+	if refBotID > 0 && fileID != "" {
+		defer func() { _ = g.repo.SetImageFileRef(context.WithoutCancel(ctx), image.ImageID, refBotID, fileID) }()
+	}
 
 	// 原图模式使用入库时嗅探的 MIME；photo 模式以 Telegram 回传格式为准，
 	// 上游没给出可识别的图片类型时回落到入库结果，避免图片被当成二进制流下载。

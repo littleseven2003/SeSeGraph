@@ -1231,3 +1231,153 @@ func TestGatewayHandlesColdBurst(t *testing.T) {
 		t.Errorf("冷打开 100 张图有 %d 个请求失败", failures)
 	}
 }
+
+// snapshotStreamProvider 用一个固定视图覆盖内部提供方，模拟热切换期间的全局快照。
+type snapshotStreamProvider struct {
+	*fakeStreamProvider
+	fixed storage.StreamProvider
+}
+
+func (s *snapshotStreamProvider) Snapshot() (storage.StreamProvider, bool) { return s.fixed, true }
+
+// newGatewayEnvWithResolve 在网关测试环境里装配逐图解析，模拟多 Bot 接管。
+func newGatewayEnvWithResolve(t *testing.T, streams storage.StreamProvider, resolve ImageResolver) *gatewayEnv {
+	t.Helper()
+	handle, err := db.Open(filepath.Join(t.TempDir(), "gateway-resolve.db"))
+	if err != nil {
+		t.Fatalf("打开数据库失败: %v", err)
+	}
+	t.Cleanup(func() { _ = handle.Close() })
+	if err := db.Migrate(context.Background(), handle); err != nil {
+		t.Fatalf("迁移失败: %v", err)
+	}
+	repository := posts.NewRepository(handle)
+	router := NewRouter(Deps{
+		Version:      "v0.3.0-test",
+		Commit:       "abc1234",
+		Posts:        repository,
+		Streams:      streams,
+		ResolveImage: resolve,
+		Logger:       log.New(io.Discard, "", 0),
+	})
+	server := httptest.NewServer(router)
+	t.Cleanup(server.Close)
+	return &gatewayEnv{server: server, repo: repository, handle: handle}
+}
+
+// storedImageID 读取短码对应的图片编号，供检查文件引用。
+func (e *gatewayEnv) storedImageID(t *testing.T, shortCode string) int64 {
+	t.Helper()
+	image, err := e.repo.PublicImage(context.Background(), shortCode)
+	if err != nil {
+		t.Fatalf("读取图片失败: %v", err)
+	}
+	return image.ImageID
+}
+
+// TestGatewayKeepsResolvedBotOverGlobalSnapshot 验证逐图选出的 Bot 不会被全局快照覆盖：
+// 全局视图不可读时，按引用选出的 Bot 仍能读出内容。
+func TestGatewayKeepsResolvedBotOverGlobalSnapshot(t *testing.T) {
+	unavailable := &fakeStreamProvider{open: func(context.Context, string) (storage.Stream, error) {
+		return storage.Stream{}, storage.ErrFileUnavailable
+	}}
+	global := &snapshotStreamProvider{fakeStreamProvider: unavailable, fixed: unavailable}
+	picked := &fakeStreamProvider{open: func(_ context.Context, fileID string) (storage.Stream, error) {
+		if fileID != "file-b" {
+			return storage.Stream{}, storage.ErrFileUnavailable
+		}
+		return storage.Stream{Body: io.NopCloser(strings.NewReader("picked")), ContentType: "image/jpeg", Size: 6}, nil
+	}}
+	resolve := func(context.Context, *posts.PublicImage) (storage.StreamProvider, string, int64, bool) {
+		return picked, "file-b", 8, true
+	}
+	env := newGatewayEnvWithResolve(t, global, resolve)
+	shortCode := env.publishPost(t, "rsv12345", "image/jpeg", storage.ModePhoto, true, false)
+
+	response, body := openRange(t, http.MethodGet, env.server.URL+"/i/"+shortCode, "")
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("状态码 = %d，期望 200，响应: %s", response.StatusCode, body)
+	}
+	if string(body) != "picked" {
+		t.Fatalf("响应内容 = %q，期望来自按引用选出的 Bot", string(body))
+	}
+	if got := unavailable.callCount(); got != 0 {
+		t.Errorf("全局视图被调用 = %d，期望 0", got)
+	}
+	refs, err := env.repo.ImageFileRefs(context.Background(), env.storedImageID(t, shortCode))
+	if err != nil {
+		t.Fatalf("读取引用失败: %v", err)
+	}
+	if len(refs) != 1 || refs[0].BotID != 8 || refs[0].FileID != "file-b" {
+		t.Fatalf("引用 = %+v，期望读到后登记 8/file-b", refs)
+	}
+}
+
+// TestGatewayRegistersRefOnlyAfterSuccessfulRead 验证读失败不产生引用，
+// 且视频的 GET、HEAD 与区间读取都能为删除保护提供依据。
+func TestGatewayRegistersRefOnlyAfterSuccessfulRead(t *testing.T) {
+	body := []byte("0123456789")
+	failing := &fakeStreamProvider{open: func(context.Context, string) (storage.Stream, error) {
+		return storage.Stream{}, storage.ErrFileUnavailable
+	}}
+	var mode atomic.Value
+	mode.Store("fail")
+	resolve := func(context.Context, *posts.PublicImage) (storage.StreamProvider, string, int64, bool) {
+		if mode.Load() == "fail" {
+			return failing, "file-v", 9, true
+		}
+		return &rangeProvider{fakeStreamProvider: &fakeStreamProvider{}, size: int64(len(body)), body: body}, "file-v", 9, true
+	}
+	env := newGatewayEnvWithResolve(t, failing, resolve)
+	shortCode := env.publishPost(t, "rsv45678", posts.MimeVideoMP4, storage.ModeDocument, true, false)
+	ctx := context.Background()
+	imageID := env.storedImageID(t, shortCode)
+	// 这张图原本由 7 号 Bot 存下，9 号是接管方：只有真的读到过才允许移除 7 号。
+	if err := env.repo.MarkImageStoredWithOrigin(ctx, imageID, "remote-video", 1, "telegram", 7, "-100777"); err != nil {
+		t.Fatalf("写入逐图来源失败: %v", err)
+	}
+	if count, err := env.repo.CountImagesExclusiveToRemoval(ctx, 7, []int64{9}); err != nil || count != 1 {
+		t.Fatalf("接管前独占计数 = %d（err=%v），期望 1", count, err)
+	}
+
+	// 读失败：404 且不登记引用，删除保护继续按原 Bot 计算。
+	response, _ := openRange(t, http.MethodGet, env.server.URL+"/i/"+shortCode, "")
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("读失败状态码 = %d，期望 404", response.StatusCode)
+	}
+	if refs, err := env.repo.ImageFileRefs(ctx, imageID); err != nil {
+		t.Fatalf("读失败后读取引用失败: %v", err)
+	} else {
+		for _, ref := range refs {
+			if ref.BotID == 9 {
+				t.Fatalf("读失败后仍登记了 9 号引用: %+v", refs)
+			}
+		}
+	}
+
+	mode.Store("ok")
+	// HEAD 探区间、GET 取区间，两次都证明该 Bot 能读这张文件。
+	for _, method := range []string{http.MethodHead, http.MethodGet} {
+		response, _ = openRange(t, method, env.server.URL+"/i/"+shortCode, "bytes=2-5")
+		if response.StatusCode != http.StatusPartialContent {
+			t.Fatalf("%s 状态码 = %d，期望 206", method, response.StatusCode)
+		}
+	}
+	refs, err := env.repo.ImageFileRefs(ctx, imageID)
+	if err != nil {
+		t.Fatalf("读取引用失败: %v", err)
+	}
+	found := false
+	for _, ref := range refs {
+		if ref.BotID == 9 && ref.FileID == "file-v" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("引用 = %+v，期望登记 9/file-v", refs)
+	}
+	// GET、HEAD 与区间读取都通过后，7 号才不再被这张图占用。
+	if count, err := env.repo.CountImagesExclusiveToRemoval(ctx, 7, []int64{9}); err != nil || count != 0 {
+		t.Fatalf("接管后独占计数 = %d（err=%v），期望 0", count, err)
+	}
+}

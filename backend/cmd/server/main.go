@@ -364,16 +364,34 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	}
 	reloadBotsFn = reloadBots
 
-	// 读图按逐图引用与池内健康状态选 Bot：当前 Bot 可用时优先，否则用其他 Bot 已存的引用。
+	// 读图按逐图引用与池内健康状态选 Bot：先找能读的引用，再回到逐图来源本身。
 	providerCache := struct {
 		mu sync.Mutex
-		m  map[int64]storage.StreamProvider
-	}{m: map[int64]storage.StreamProvider{}}
-	resolveImageFn = func(callCtx context.Context, image *posts.PublicImage) (storage.StreamProvider, string, int64, bool) {
-		refs, err := repository.ImageFileRefs(callCtx, image.ImageID)
-		if err != nil || len(refs) == 0 {
-			return nil, "", 0, false
+		m  map[int64]cachedStreamProvider
+	}{m: map[int64]cachedStreamProvider{}}
+	streamProviderFor := func(bot botpool.Bot, effective settings.Effective) storage.StreamProvider {
+		token := strings.TrimSpace(bot.Token)
+		if token == "" {
+			return nil
 		}
+		// 缓存按凭据指纹校验：轮换令牌后不会继续用旧客户端读图。
+		version := storage.CredentialVersion(token, effective.TelegramAPIBase.Value)
+		providerCache.mu.Lock()
+		cached, ok := providerCache.m[bot.BotID]
+		providerCache.mu.Unlock()
+		if ok && cached.Version == version {
+			return cached.Provider
+		}
+		built, buildErr := newProviderWithToken(effective, token)
+		if buildErr != nil || built == nil {
+			return nil
+		}
+		providerCache.mu.Lock()
+		providerCache.m[bot.BotID] = cachedStreamProvider{Provider: built, Version: version}
+		providerCache.mu.Unlock()
+		return built
+	}
+	resolveImageFn = func(callCtx context.Context, image *posts.PublicImage) (storage.StreamProvider, string, int64, bool) {
 		bots, err := botPool.List(callCtx)
 		if err != nil {
 			return nil, "", 0, false
@@ -382,26 +400,27 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		if err != nil {
 			return nil, "", 0, false
 		}
-		for _, bot := range botpool.Usable(bots) {
-			for _, ref := range refs {
-				if ref.BotID != bot.BotID || strings.TrimSpace(bot.Token) == "" {
-					continue
-				}
-				providerCache.mu.Lock()
-				provider, cached := providerCache.m[bot.BotID]
-				providerCache.mu.Unlock()
-				if !cached {
-					built, buildErr := newProviderWithToken(effective, bot.Token)
-					if buildErr != nil || built == nil {
-						continue
-					}
-					provider = built
-					providerCache.mu.Lock()
-					providerCache.m[bot.BotID] = provider
-					providerCache.mu.Unlock()
-				}
-				return provider, ref.FileID, bot.BotID, true
+		usable := botpool.Usable(bots)
+		if len(usable) == 0 {
+			return nil, "", 0, false
+		}
+		refs, err := repository.ImageFileRefs(callCtx, image.ImageID)
+		if err != nil {
+			refs = nil
+		}
+		botID, fileID, ok := pickImageSource(usable, refs, image.SourceBotID, image.RemoteFileID)
+		if !ok {
+			return nil, "", 0, false
+		}
+		for _, bot := range usable {
+			if bot.BotID != botID {
+				continue
 			}
+			provider := streamProviderFor(bot, effective)
+			if provider == nil {
+				return nil, "", 0, false
+			}
+			return provider, fileID, botID, true
 		}
 		return nil, "", 0, false
 	}
@@ -469,6 +488,34 @@ func matchBotCredential(bots []botpool.Bot, botID int64, version, apiBase string
 		return storage.CredentialVersion(bot.Token, apiBase) == version
 	}
 	return false
+}
+
+// pickImageSource 在可用 Bot 与已有引用里选出读这张图的 Bot 与文件编号：
+// 先找持有引用的 Bot（跨 Bot 接管后编号只属于对方），再回到存下这张图的 Bot 直读原编号，
+// 都没有时返回 false，由调用方沿用全局图床。读成功后网关会把这次成功的引用登记下来。
+func pickImageSource(usable []botpool.Bot, refs []posts.ImageFileRef, sourceBotID int64, remoteFileID string) (int64, string, bool) {
+	for _, bot := range usable {
+		for _, ref := range refs {
+			if ref.BotID != bot.BotID || strings.TrimSpace(ref.FileID) == "" {
+				continue
+			}
+			return bot.BotID, ref.FileID, true
+		}
+	}
+	if sourceBotID > 0 && strings.TrimSpace(remoteFileID) != "" {
+		for _, bot := range usable {
+			if bot.BotID == sourceBotID {
+				return bot.BotID, remoteFileID, true
+			}
+		}
+	}
+	return 0, "", false
+}
+
+// cachedStreamProvider 是按键缓存读图提供方，凭据指纹变化即失效，避免轮换后仍用旧客户端。
+type cachedStreamProvider struct {
+	Provider storage.StreamProvider
+	Version  string
 }
 
 // uploadFrozenNote 是多 Bot 池里某个 Bot 被上游拒绝时的冻结说明，只写固定说法。

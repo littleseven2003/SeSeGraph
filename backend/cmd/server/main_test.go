@@ -3,8 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/botpool"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/settings"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/storage"
 	"log"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -296,5 +302,105 @@ func TestEnvValueTrimsSpace(t *testing.T) {
 	env := envLookup(map[string]string{"TELEGRAM_API_BASE": " http://127.0.0.1:9090 "})
 	if got := envValue(env, "TELEGRAM_API_BASE"); got != "http://127.0.0.1:9090" {
 		t.Errorf("应去除首尾空白，实际 %q", got)
+	}
+}
+
+// TestMatchBotCredentialRejectsRotatedToken 验证迟到结果只在凭据版本仍一致时才算数。
+func TestMatchBotCredentialRejectsRotatedToken(t *testing.T) {
+	bots := []botpool.Bot{{BotID: 111, Token: "111:old"}}
+	version := storage.CredentialVersion("111:old", "https://api.telegram.org")
+	if !matchBotCredential(bots, 111, version, "https://api.telegram.org") {
+		t.Fatal("同一令牌与上游地址应判定为同一版凭据")
+	}
+	if matchBotCredential(bots, 111, version, "https://mirror.example") {
+		t.Error("上游地址变化后不应判定为同一版凭据")
+	}
+	rotated := []botpool.Bot{{BotID: 111, Token: "111:new"}}
+	if matchBotCredential(rotated, 111, version, "https://api.telegram.org") {
+		t.Error("换过令牌后不应再匹配旧请求的凭据版本")
+	}
+	if matchBotCredential(bots, 222, version, "https://api.telegram.org") {
+		t.Error("编号不存在时不应匹配")
+	}
+	if matchBotCredential(bots, 111, "", "https://api.telegram.org") {
+		t.Error("没有凭据版本时不应匹配")
+	}
+}
+
+// TestSeedBotPoolWritesMarkerOnlyAfterSuccess 验证迁移标记只在真正完成后写入，
+// 失败时保留重试机会，避免用户移除旧 Bot 后又被加回来或被永久跳过。
+func TestSeedBotPoolWritesMarkerOnlyAfterSuccess(t *testing.T) {
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"ok":false}`))
+	}))
+	t.Cleanup(failing.Close)
+
+	setup := func(env settings.Env) (*botpool.Pool, *settings.Resolver, *settings.Store) {
+		handle, err := db.Open(filepath.Join(t.TempDir(), "seed.db"))
+		if err != nil {
+			t.Fatalf("打开数据库失败: %v", err)
+		}
+		t.Cleanup(func() { _ = handle.Close() })
+		if err := db.Migrate(context.Background(), handle); err != nil {
+			t.Fatalf("迁移失败: %v", err)
+		}
+		store := settings.NewStore(handle)
+		return botpool.New(store), settings.NewResolver(store, env), store
+	}
+
+	// 没有旧令牌：无需迁移，也不写标记。
+	pool, resolver, store := setup(settings.Env{})
+	if err := seedBotPool(context.Background(), pool, resolver, store); err != nil {
+		t.Fatalf("无令牌时迁移失败: %v", err)
+	}
+	if _, done, _ := store.Get(context.Background(), "telegram.bots.migrated"); done {
+		t.Fatal("没有可迁移令牌时不应写完成标记")
+	}
+
+	// 探测失败：列表未写入，标记也不能写。
+	pool, resolver, store = setup(settings.Env{TelegramToken: "111:legacy", TelegramAPIBase: failing.URL})
+	if err := seedBotPool(context.Background(), pool, resolver, store); err != nil {
+		t.Fatalf("探测失败时应返回可重试错误，实际: %v", err)
+	}
+	if _, done, _ := store.Get(context.Background(), "telegram.bots.migrated"); done {
+		t.Fatal("探测失败时不应写完成标记")
+	}
+	if bots, err := pool.List(context.Background()); err != nil || len(bots) != 0 {
+		t.Fatalf("探测失败后列表 = %+v（err=%v），期望为空", bots, err)
+	}
+
+	// 旧令牌已在列表里：并入完成，写下标记，之后移除不会再被加回。
+	pool, resolver, store = setup(settings.Env{TelegramToken: "111:legacy"})
+	if err := pool.Replace(context.Background(), []botpool.Bot{{BotID: 111, Token: "111:legacy"}}); err != nil {
+		t.Fatalf("写入列表失败: %v", err)
+	}
+	if err := seedBotPool(context.Background(), pool, resolver, store); err != nil {
+		t.Fatalf("已并入时失败: %v", err)
+	}
+	if _, done, _ := store.Get(context.Background(), "telegram.bots.migrated"); !done {
+		t.Fatal("已并入旧令牌后应写完成标记")
+	}
+}
+
+// TestPickImageSourceFallsBackToSourceBot 验证读图选源：优先用持有引用的 Bot，
+// 没有引用时回到存下这张图的 Bot 直读原编号，两者都不可用时才回落到全局图床。
+func TestPickImageSourceFallsBackToSourceBot(t *testing.T) {
+	usable := []botpool.Bot{{BotID: 111}, {BotID: 222}}
+	refs := []posts.ImageFileRef{{BotID: 222, FileID: "file-b"}}
+
+	if botID, fileID, ok := pickImageSource(usable, refs, 111, "file-a"); !ok || botID != 222 || fileID != "file-b" {
+		t.Fatalf("有引用时 = %d/%q/%v，期望 222/file-b", botID, fileID, ok)
+	}
+	// 引用的 Bot 已被移除：回到来源 Bot 直读原编号，读成功后由网关登记替代引用。
+	if botID, fileID, ok := pickImageSource([]botpool.Bot{{BotID: 111}}, refs, 111, "file-a"); !ok || botID != 111 || fileID != "file-a" {
+		t.Fatalf("引用不可用时 = %d/%q/%v，期望 111/file-a", botID, fileID, ok)
+	}
+	// 连来源 Bot 也不在池里：交给全局图床，不再猜编号。
+	if _, _, ok := pickImageSource(usable, nil, 333, "file-c"); ok {
+		t.Fatal("来源与引用都不可用时不应选出 Bot")
+	}
+	if _, _, ok := pickImageSource(nil, nil, 111, "file-a"); ok {
+		t.Fatal("没有可用 Bot 时不应选出 Bot")
 	}
 }
