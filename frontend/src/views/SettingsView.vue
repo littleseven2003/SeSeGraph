@@ -200,14 +200,14 @@ const form = reactive({
 
 // Bot 池：草稿与服务端条目分开保存，保存成功后整体刷新。
 const bots = ref<BotEntry[]>([])
-const botDraft = ref<{ bot_id: number; alias: string; token: string }[]>([])
+const botDraft = ref<{ bot_id: number; alias: string; token: string; status: string }[]>([])
 const botSaving = ref(false)
 const botError = ref('')
 const botNotice = ref('')
 
 function applyBots(list: BotEntry[]): void {
   bots.value = list
-  botDraft.value = list.map((bot) => ({ bot_id: bot.bot_id, alias: bot.alias, token: '' }))
+  botDraft.value = list.map((bot) => ({ bot_id: bot.bot_id, alias: bot.alias, token: '', status: bot.status }))
 }
 
 function maskedTokenOf(botID: number): string {
@@ -227,7 +227,7 @@ function statusTextOf(botID: number): string {
   if (found.status === 'frozen') {
     return found.status_note !== '' ? `已冻结：${found.status_note}` : '已冻结'
   }
-  if (found.status === 'paused') return '已停用'
+  if (found.status === 'paused') return '已停用（不参与新写入）'
   return '可写入'
 }
 
@@ -247,13 +247,21 @@ function addBotDraft(): void {
     botError.value = '最多配置 10 个 Bot'
     return
   }
-  botDraft.value.push({ bot_id: 0, alias: '', token: '' })
+  botDraft.value.push({ bot_id: 0, alias: '', token: '', status: 'ok' })
 }
 
 function removeBotDraft(index: number): void {
   botNotice.value = ''
   botError.value = ''
   botDraft.value.splice(index, 1)
+}
+
+// toggleBotDraft 在草稿里切换停用／启用；停用只退出新写入，已有图片仍可读。
+function toggleBotDraft(index: number): void {
+  botNotice.value = ''
+  botError.value = ''
+  const bot = botDraft.value[index]
+  bot.status = bot.status === 'paused' ? 'ok' : 'paused'
 }
 
 function moveBotDraft(index: number, offset: number): void {
@@ -274,6 +282,7 @@ async function saveBotPool(): Promise<void> {
       alias: bot.alias.trim(),
       token: bot.token.trim(),
       priority: index,
+      status: bot.status,
     })))
     applyBots(saved.bots)
     botNotice.value = saved.pool_enabled
@@ -816,37 +825,9 @@ onBeforeUnmount(() => {
                 <div class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
                   <div class="border-b border-line/70 px-5 py-4">
                     <h3 class="text-sm font-semibold">Telegram 图床</h3>
-                    <p class="mt-1 text-xs text-muted">图片经该 Bot 存入私有频道，保存后上传队列与图片网关立即使用新配置。</p>
+                    <p class="mt-1 text-xs text-muted">Bot 凭据统一在下方「Bot 列表」维护；这里只保留频道与上游地址。</p>
                   </div>
                   <div class="space-y-4 px-5 py-4">
-                    <label class="block">
-                      <span class="text-xs font-medium text-muted">Bot Token</span>
-                      <div class="mt-1 flex items-center gap-2">
-                        <input
-                          v-model="form.token"
-                          type="password"
-                          autocomplete="off"
-                          :disabled="saving || managed(FIELD_TELEGRAM_TOKEN)"
-                          :placeholder="tokenPlaceholder(view.telegram.token_set)"
-                          class="h-11 min-w-0 flex-1 rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface disabled:opacity-60"
-                        />
-                        <button
-                          v-if="view.telegram.token_set && !managed(FIELD_TELEGRAM_TOKEN)"
-                          type="button"
-                          :disabled="saving"
-                          class="h-11 shrink-0 rounded-xl border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas disabled:opacity-60"
-                          @click="clearToken"
-                        >
-                          清除
-                        </button>
-                      </div>
-                      <p class="mt-1 text-xs text-muted">
-                        <template v-if="managed(FIELD_TELEGRAM_TOKEN)">{{ ENV_MANAGED_HINT }}</template>
-                        <template v-else-if="view.telegram.token_set">令牌保存在服务端，不会回显</template>
-                        <template v-else>尚未设置，填入后即可上传图片</template>
-                      </p>
-                    </label>
-
                     <label class="block">
                       <span class="text-xs font-medium text-muted">频道标识</span>
                       <input
@@ -875,8 +856,20 @@ onBeforeUnmount(() => {
 
                 <div class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
                   <div class="border-b border-line/70 px-5 py-4">
-                    <h3 class="text-sm font-semibold">多 Bot 池</h3>
-                    <p class="mt-1 text-xs text-muted">按顺序尝试，遇到账号受限自动换下一个；令牌只以掩码显示，留空表示沿用原值。</p>
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <h3 class="text-sm font-semibold">Bot 列表</h3>
+                        <p class="mt-1 text-xs text-muted">按顺序尝试，遇到账号受限自动换下一个；令牌只以掩码显示，留空表示沿用原值。</p>
+                      </div>
+                      <button
+                        type="button"
+                        :disabled="botSaving"
+                        class="h-9 rounded-lg border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas disabled:opacity-60"
+                        @click="addBotDraft"
+                      >
+                        添加 Bot
+                      </button>
+                    </div>
                   </div>
                   <div class="space-y-3 px-5 py-4">
                     <div v-for="(bot, index) in botDraft" :key="index" class="rounded-xl bg-canvas px-3 py-2.5">
@@ -917,6 +910,14 @@ onBeforeUnmount(() => {
                             @click="moveBotDraft(index, 1)"
                           >
                             下移
+                          </button>
+                          <button
+                            type="button"
+                            :disabled="botSaving"
+                            class="h-8 rounded-lg border border-line px-2 transition hover:bg-surface disabled:opacity-40"
+                            @click="toggleBotDraft(index)"
+                          >
+                            {{ bot.status === 'paused' ? '启用' : '停用' }}
                           </button>
                           <button
                             type="button"

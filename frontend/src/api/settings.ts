@@ -336,6 +336,8 @@ export interface BotInput {
   alias: string
   token: string
   priority: number
+  /** status 允许人工停用（paused）或恢复（ok），空串表示沿用服务端状态。 */
+  status?: string
 }
 
 // fetchBots 读取 Bot 池与健康状态。
