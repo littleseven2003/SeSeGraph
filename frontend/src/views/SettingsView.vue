@@ -1344,7 +1344,7 @@ onBeforeUnmount(() => {
                       <button
                         type="button"
                         :disabled="backing"
-                        class="h-11 rounded-xl border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
+                        class="h-9 rounded-lg border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
                         @click="runBackup"
                       >
                         {{ backing ? '备份中…' : '立即备份' }}
@@ -1352,26 +1352,24 @@ onBeforeUnmount(() => {
                       <a
                         v-if="backup !== null && backup.latest !== null"
                         href="/api/backup/download"
-                        class="inline-flex h-11 items-center rounded-xl border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
+                        class="inline-flex h-9 items-center rounded-lg border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
                       >
                         下载最近备份
                       </a>
                     </div>
                   </div>
                   <div class="px-5 py-4">
-                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                      <label class="flex min-h-11 items-center gap-2.5 rounded-xl border border-line bg-canvas px-3 py-2.5 text-sm">
-                        <input
-                          v-model="form.backupEnabled"
-                          type="checkbox"
-                          :disabled="saving || managed(FIELD_BACKUP_ENABLED)"
-                          class="h-5 w-5 shrink-0 accent-accent"
-                        />
-                        <span class="min-w-0">
-                          启用每日自动备份
-                          <span v-if="managed(FIELD_BACKUP_ENABLED)" class="mt-0.5 block text-xs text-muted">{{ ENV_MANAGED_HINT }}</span>
-                        </span>
-                      </label>
+                    <label class="flex min-h-11 items-center justify-between gap-2.5 rounded-xl bg-canvas px-3.5 py-2.5 text-sm">
+                      <span class="min-w-0">启用每日自动备份<span v-if="managed(FIELD_BACKUP_ENABLED)" class="mt-0.5 block text-xs text-muted">{{ ENV_MANAGED_HINT }}</span></span>
+                      <input
+                        v-model="form.backupEnabled"
+                        type="checkbox"
+                        :disabled="saving || managed(FIELD_BACKUP_ENABLED)"
+                        class="h-5 w-5 shrink-0 accent-accent"
+                      />
+                    </label>
+
+                    <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <label class="block">
                         <span class="text-xs font-medium text-muted">每日时刻</span>
                         <input
@@ -1399,11 +1397,16 @@ onBeforeUnmount(() => {
 
                     <p v-if="backupError !== ''" class="text-xs text-danger">{{ backupError }}</p>
                     <p v-else-if="backupNote !== ''" class="text-xs text-accent">{{ backupNote }}</p>
-                    <template v-if="backup !== null">
-                      <p class="text-xs text-muted">{{ backupScheduleText(backup) }}</p>
-                      <p class="mt-1 text-sm">{{ backupLatestText(backup) }}</p>
-                    </template>
-                    <p v-else class="text-xs text-muted">尚未读取备份状态。</p>
+                    <div class="mt-3 grid grid-cols-1 gap-3 rounded-xl bg-canvas px-3.5 py-2.5 sm:grid-cols-2">
+                      <div>
+                        <p class="text-xs text-muted">执行计划</p>
+                        <p class="mt-0.5 text-sm">{{ backup !== null ? backupScheduleText(backup) : '尚未读取' }}</p>
+                      </div>
+                      <div>
+                        <p class="text-xs text-muted">最近备份</p>
+                        <p class="mt-0.5 text-sm">{{ backup !== null ? backupLatestText(backup) : '尚未读取' }}</p>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -1412,13 +1415,14 @@ onBeforeUnmount(() => {
                     <h3 class="text-sm font-semibold">媒体缩略图缓存</h3>
                     <button
                       type="button"
-                      class="h-11 shrink-0 rounded-xl border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
+                      class="h-9 shrink-0 rounded-lg border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink"
                       @click="refreshThumbUsage"
                     >
                       刷新占用
                     </button>
                   </div>
                   <div class="space-y-3 px-5 py-4">
+                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <label class="block">
                       <span class="text-xs font-medium text-muted">缓存上限（GB）</span>
                       <input
@@ -1428,13 +1432,11 @@ onBeforeUnmount(() => {
                         max="50"
                         step="0.5"
                         :disabled="saving || managed(FIELD_MEDIA_THUMBS_LIMIT)"
-                        class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface disabled:opacity-60 sm:w-56"
+                        class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface disabled:opacity-60"
                       />
                       <p v-if="managed(FIELD_MEDIA_THUMBS_LIMIT)" class="mt-1 text-xs text-muted">{{ ENV_MANAGED_HINT }}</p>
                     </label>
-                    <p class="text-xs text-muted">每项媒体保存一份最长边 512px 的 WebP，行内小图与放大气泡共用；保存后按最近最少使用淘汰到新上限，磁盘余量不足时暂停写入新的小图。</p>
-
-                    <div class="grid grid-cols-2 gap-3 rounded-xl bg-canvas px-3 py-3 sm:max-w-md">
+                    <div class="grid grid-cols-2 gap-3 rounded-xl bg-canvas px-3 py-2.5">
                       <div>
                         <p class="text-xs text-muted">已占用</p>
                         <p class="mt-0.5 text-sm font-medium tnum">{{ formatTrafficBytes(view?.media_thumbs.used_bytes ?? 0) }}</p>
@@ -1444,11 +1446,13 @@ onBeforeUnmount(() => {
                         <p class="mt-0.5 text-sm font-medium tnum">{{ view?.media_thumbs.count ?? 0 }}</p>
                       </div>
                     </div>
+                    </div>
+                    <p class="text-xs text-muted">每项媒体保存一份最长边 512px 的 WebP，行内小图与放大气泡共用；保存后按最近最少使用淘汰到新上限，磁盘余量不足时暂停写入新的小图。</p>
 
                     <div class="flex flex-wrap items-center gap-3">
                       <button
                         type="button"
-                        class="h-11 rounded-xl border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
+                        class="h-9 rounded-lg border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60"
                         :disabled="thumbBusy || saving"
                         @click="clearThumbs"
                       >
@@ -1472,7 +1476,7 @@ onBeforeUnmount(() => {
                         </select>
                         <button
                           type="button"
-                          class="h-11 shrink-0 rounded-xl bg-ink px-3.5 text-sm font-medium text-surface transition hover:opacity-90 disabled:opacity-60"
+                          class="h-9 shrink-0 rounded-lg bg-brand px-3 text-xs font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
                           :disabled="rebuildRunning || rebuildPostId === null"
                           @click="startRebuild"
                         >
