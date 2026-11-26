@@ -74,6 +74,19 @@ type Origin interface {
 	Origin() (botID int64, chatID string)
 }
 
+// SendOrigin 是一次发送实际使用的身份：编号、频道与凭据指纹。
+// 三者一起固定，热替换期间迟到的结果才能按真实发送者核对与落库。
+type SendOrigin struct {
+	BotID             int64
+	ChatID            string
+	CredentialVersion string
+}
+
+// OriginProvider 在发送的同时返回本次实际使用的身份，避免先取身份再发送时被并发换池影响。
+type OriginProvider interface {
+	UploadWithOrigin(ctx context.Context, req UploadRequest) (UploadResult, SendOrigin, error)
+}
+
 // Stream 是一次流式下载的句柄。Body 由调用方负责关闭，读取不整块载入内存。
 type Stream struct {
 	Body        io.ReadCloser

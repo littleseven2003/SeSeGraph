@@ -306,6 +306,21 @@ func (t *Telegram) SendDocument(ctx context.Context, path, caption string) error
 
 // Upload 以流式 multipart 方式上传单张图片，不把文件整体载入内存。
 func (t *Telegram) Upload(ctx context.Context, req UploadRequest) (UploadResult, error) {
+	result, _, err := t.UploadWithOrigin(ctx, req)
+	return result, err
+}
+
+// UploadWithOrigin 发送单张图片并附带本次使用的 Bot、频道与凭据指纹。
+func (t *Telegram) UploadWithOrigin(ctx context.Context, req UploadRequest) (UploadResult, SendOrigin, error) {
+	origin := SendOrigin{CredentialVersion: t.CredentialVersion()}
+	if t != nil {
+		origin.BotID, origin.ChatID = t.Origin()
+	}
+	result, err := t.upload(ctx, req)
+	return result, origin, err
+}
+
+func (t *Telegram) upload(ctx context.Context, req UploadRequest) (UploadResult, error) {
 	mode := req.Mode
 	if mode == "" {
 		mode = ModePhoto

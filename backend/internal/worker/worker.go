@@ -39,8 +39,9 @@ type Options struct {
 	// PublishReady 判断发布条件是否齐备，与手动发布共用口径；未装配时按未就绪处理。
 	PublishReady func(ctx context.Context) error
 	// NextProvider 在某个 Bot 被上游判为账号受限后返回池内下一个可写入的提供方。
+	// 形参是本次发送实际使用的身份，装配方据此核对凭据版本后再改运行态。
 	// 未装配时保持单 Bot 行为，本张直接失败。
-	NextProvider func(ctx context.Context, failed storage.Provider, cause error) (storage.Provider, bool)
+	NextProvider func(ctx context.Context, origin storage.SendOrigin, cause error) (storage.Provider, bool)
 }
 
 // Worker 串行处理待上传的帖子。
@@ -55,7 +56,7 @@ type Worker struct {
 	now          func() time.Time
 	gate         *storage.UploadGate
 	publishReady func(ctx context.Context) error
-	nextProvider func(ctx context.Context, failed storage.Provider, cause error) (storage.Provider, bool)
+	nextProvider func(ctx context.Context, origin storage.SendOrigin, cause error) (storage.Provider, bool)
 
 	mu          sync.Mutex
 	nextAllowed time.Time
@@ -326,12 +327,8 @@ func (w *Worker) uploadImage(ctx context.Context, provider storage.Provider, pos
 		if image.MimeType == posts.MimeVideoMP4 {
 			mode = storage.ModeVideo
 		}
-		// 发送前固定本次使用的 Bot 与频道：热替换期间迟到的结果仍记在实际发送者名下。
-		botID, chatID := int64(0), ""
-		if origin, ok := provider.(storage.Origin); ok {
-			botID, chatID = origin.Origin()
-		}
-		result, uploadErr := provider.Upload(ctx, storage.UploadRequest{
+		// 身份与发送在同一次调用里固定：热替换或别的线程换池都不会把结果记到别的 Bot 名下。
+		result, origin, uploadErr := w.send(ctx, provider, storage.UploadRequest{
 			FileName: filepath.Base(path),
 			MIMEType: image.MimeType,
 			Size:     image.FileSize,
@@ -341,7 +338,7 @@ func (w *Worker) uploadImage(ctx context.Context, provider storage.Provider, pos
 		_ = file.Close()
 
 		if uploadErr == nil {
-			if err := w.recordStored(ctx, provider, botID, chatID, image.ID, result); err != nil {
+			if err := w.recordStored(ctx, provider, origin, image.ID, result); err != nil {
 				return provider, err
 			}
 			_ = os.Remove(path)
@@ -363,7 +360,7 @@ func (w *Worker) uploadImage(ctx context.Context, provider storage.Provider, pos
 
 		// 账号被上游限制时换池内下一个 Bot 重发本张，已存的图片不受影响。
 		if storage.IsAccountLimited(uploadErr) && w.nextProvider != nil && switched < 2 {
-			next, ok := w.nextProvider(ctx, provider, uploadErr)
+			next, ok := w.nextProvider(ctx, origin, uploadErr)
 			if ok && next != nil {
 				switched++
 				provider = next
@@ -380,10 +377,27 @@ func (w *Worker) uploadImage(ctx context.Context, provider storage.Provider, pos
 	}
 }
 
-// recordStored 记录存图结果；提供方带身份时把这张图记到实际发送的 Bot 名下。
-func (w *Worker) recordStored(ctx context.Context, provider storage.Provider, botID int64, chatID string, imageID int64, result storage.UploadResult) error {
-	if botID > 0 {
-		return w.repo.MarkImageStoredWithOrigin(ctx, imageID, result.FileID, result.MessageID, provider.Name(), botID, chatID)
+// send 调用一次发送并取回本次实际使用的身份；提供方支持时在同一调用内固定，
+// 否则退回发送前后各取一次，至少不会把旧实例的身份与新的发送结果混在一起。
+func (w *Worker) send(ctx context.Context, provider storage.Provider, req storage.UploadRequest) (storage.UploadResult, storage.SendOrigin, error) {
+	if originProvider, ok := provider.(storage.OriginProvider); ok {
+		return originProvider.UploadWithOrigin(ctx, req)
+	}
+	origin := storage.SendOrigin{}
+	if source, ok := provider.(storage.Origin); ok {
+		origin.BotID, origin.ChatID = source.Origin()
+	}
+	if versioned, ok := provider.(interface{ CredentialVersion() string }); ok {
+		origin.CredentialVersion = versioned.CredentialVersion()
+	}
+	result, err := provider.Upload(ctx, req)
+	return result, origin, err
+}
+
+// recordStored 记录存图结果；本次发送带身份时把这张图记到实际发送的 Bot 名下。
+func (w *Worker) recordStored(ctx context.Context, provider storage.Provider, origin storage.SendOrigin, imageID int64, result storage.UploadResult) error {
+	if origin.BotID > 0 {
+		return w.repo.MarkImageStoredWithOrigin(ctx, imageID, result.FileID, result.MessageID, provider.Name(), origin.BotID, origin.ChatID)
 	}
 	return w.repo.MarkImageStored(ctx, imageID, result.FileID, result.MessageID, provider.Name())
 }

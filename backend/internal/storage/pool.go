@@ -51,19 +51,31 @@ func (p *Pool) Ready() bool {
 
 // Upload 用当前生效的 Bot 发送；被上游拒绝后由调用方换 Bot 重试本张。
 func (p *Pool) Upload(ctx context.Context, req UploadRequest) (UploadResult, error) {
+	result, _, err := p.UploadWithOrigin(ctx, req)
+	return result, err
+}
+
+// UploadWithOrigin 在选中条目的同一把锁内固定身份并发送，返回本次实际使用的 Bot 与凭据指纹。
+func (p *Pool) UploadWithOrigin(ctx context.Context, req UploadRequest) (UploadResult, SendOrigin, error) {
 	p.mu.Lock()
 	if p.active < 0 || p.active >= len(p.entries) || p.blocked[p.entries[p.active].BotID] {
 		next := p.pickLocked(-1)
 		if next < 0 {
 			p.mu.Unlock()
-			return UploadResult{}, &UploadError{Stage: "存图", Kind: KindAccount, Note: "池内没有可写入的 Bot"}
+			return UploadResult{}, SendOrigin{}, &UploadError{Stage: "存图", Kind: KindAccount, Note: "池内没有可写入的 Bot"}
 		}
 		p.active = next
 	}
 	entry := p.entries[p.active]
 	atomic.AddInt64(&p.uploads, 1)
 	p.mu.Unlock()
-	return entry.Provider.Upload(ctx, req)
+
+	origin := SendOrigin{BotID: entry.BotID, ChatID: entry.ChatID}
+	if versioned, ok := entry.Provider.(interface{ CredentialVersion() string }); ok {
+		origin.CredentialVersion = versioned.CredentialVersion()
+	}
+	result, err := entry.Provider.Upload(ctx, req)
+	return result, origin, err
 }
 
 // Origin 返回当前生效条目的编号与原频道，供逐图来源记录。

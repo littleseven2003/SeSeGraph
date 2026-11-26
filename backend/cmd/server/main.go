@@ -324,42 +324,27 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	}
 
 	// 故障切换始终挂上：运行中加入第二个 Bot 后无需重启即可生效。
-	nextProvider := func(callCtx context.Context, failed storage.Provider, _ error) (storage.Provider, bool) {
-		// 优先用本次请求实际使用的 Bot 编号，避免热替换后标错对象。
-		actualID := int64(0)
-		if origin, ok := failed.(storage.Origin); ok {
-			actualID, _ = origin.Origin()
+	nextProvider := func(callCtx context.Context, origin storage.SendOrigin, _ error) (storage.Provider, bool) {
+		if origin.BotID <= 0 {
+			return nil, false
 		}
-		failedVersion := ""
-		if versioned, ok := failed.(interface{ CredentialVersion() string }); ok {
-			failedVersion = versioned.CredentialVersion()
+		// 先核对本次发送所用凭据是否仍是列表里的那一版：换过令牌就既不动运行态，
+		// 也不把刚轮换的 Bot 标成冻结，迟到的旧请求失败只按库里的逐图结果记录。
+		current, listErr := botPool.List(callCtx)
+		if listErr != nil {
+			return nil, false
 		}
-		failedBotID, next, ok := runtime.Failover(uploadFrozenNote)
-		if actualID > 0 {
-			failedBotID = actualID
+		effective, resolveErr := resolver.Effective(callCtx)
+		if resolveErr != nil {
+			return nil, false
 		}
-		// 只有失败请求所用凭据仍是列表里的那一版时才标冻结，避免把刚轮换的新令牌误标。
-		if failedBotID > 0 {
-			current, listErr := botPool.List(callCtx)
-			freeze := true
-			if listErr == nil && failedVersion != "" {
-				freeze = false
-				effective, resolveErr := resolver.Effective(callCtx)
-				for _, bot := range current {
-					if err := resolveErr; err != nil {
-						break
-					}
-					if bot.BotID == failedBotID && storage.CredentialVersion(bot.Token, effective.TelegramAPIBase.Value) == failedVersion {
-						freeze = true
-						break
-					}
-				}
-			}
-			if freeze {
-				if err := botPool.MarkFrozen(callCtx, failedBotID, uploadFrozenNote); err != nil {
-					log.Print("记录 Bot 冻结状态失败")
-				}
-			}
+		if !matchBotCredential(current, origin.BotID, origin.CredentialVersion, effective.TelegramAPIBase.Value) {
+			return nil, false
+		}
+		// 凭据核对通过后才切换运行态并落冻结标记，两步都只针对本次实际发送的 Bot。
+		_, next, ok := runtime.Failover(uploadFrozenNote)
+		if err := botPool.MarkFrozen(callCtx, origin.BotID, uploadFrozenNote); err != nil {
+			log.Print("记录 Bot 冻结状态失败")
 		}
 		if !ok {
 			return nil, false
@@ -469,6 +454,21 @@ func bootstrapAdmin(ctx context.Context, service *auth.Service, lookupEnv func(s
 	default:
 		return errDatabase
 	}
+}
+
+// matchBotCredential 报告给定编号的 Bot 当前令牌是否仍是这次发送用的那一版。
+// 换过令牌就返回 false：迟到的旧请求失败既不能切池，也不能把新令牌标成冻结。
+func matchBotCredential(bots []botpool.Bot, botID int64, version, apiBase string) bool {
+	if botID <= 0 || strings.TrimSpace(version) == "" {
+		return false
+	}
+	for _, bot := range bots {
+		if bot.BotID != botID {
+			continue
+		}
+		return storage.CredentialVersion(bot.Token, apiBase) == version
+	}
+	return false
 }
 
 // uploadFrozenNote 是多 Bot 池里某个 Bot 被上游拒绝时的冻结说明，只写固定说法。
@@ -979,7 +979,7 @@ type uploadQueue struct {
 	SetProvider func(storage.Provider)
 }
 
-func startUploadQueue(ctx context.Context, repository *posts.Repository, dataDir string, provider storage.Provider, gate *storage.UploadGate, lookupEnv func(string) (string, bool), ready func(ctx context.Context) error, nextProvider func(ctx context.Context, failed storage.Provider, cause error) (storage.Provider, bool)) *uploadQueue {
+func startUploadQueue(ctx context.Context, repository *posts.Repository, dataDir string, provider storage.Provider, gate *storage.UploadGate, lookupEnv func(string) (string, bool), ready func(ctx context.Context) error, nextProvider func(ctx context.Context, origin storage.SendOrigin, cause error) (storage.Provider, bool)) *uploadQueue {
 	interval := readUploadInterval(lookupEnv)
 
 	queue, err := worker.New(worker.Options{

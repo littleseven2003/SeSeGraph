@@ -929,9 +929,9 @@ func TestProcessSwitchesBotWhenAccountLimited(t *testing.T) {
 
 	e.worker.provider = primary
 	switched := 0
-	e.worker.nextProvider = func(_ context.Context, failed storage.Provider, cause error) (storage.Provider, bool) {
-		if failed != primary || !storage.IsAccountLimited(cause) {
-			t.Errorf("换 Bot 参数不符：failed=%v cause=%v", failed, cause)
+	e.worker.nextProvider = func(_ context.Context, origin storage.SendOrigin, cause error) (storage.Provider, bool) {
+		if origin.BotID != 111 || origin.ChatID != "-100777" || !storage.IsAccountLimited(cause) {
+			t.Errorf("换 Bot 参数不符：origin=%+v cause=%v", origin, cause)
 		}
 		switched++
 		return secondary, true
