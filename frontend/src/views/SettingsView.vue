@@ -603,6 +603,17 @@ function restorePendingDraft(before: typeof form, patch: SettingsPatch): void {
   }
 }
 
+
+// botDraftChanged 判断 Bot 列表是否有未保存改动（别名、令牌、顺序、启停）。
+function botDraftChanged(): boolean {
+  if (botDraft.value.length !== bots.value.length) return true
+  return botDraft.value.some((bot, index) => {
+    const saved = bots.value[index]
+    return saved === undefined || bot.bot_id !== saved.bot_id || bot.alias !== saved.alias
+      || bot.token !== '' || bot.status !== saved.status
+  })
+}
+
 async function save(): Promise<void> {
   if (view.value === null || saving.value) return
   saveError.value = ''
@@ -655,6 +666,12 @@ async function save(): Promise<void> {
   // 记下保存前的输入：本次没提交的组要把草稿还原回去，避免被服务端结果覆盖。
   const pending = { ...form }
   try {
+    // Telegram 页把 Bot 列表和频道一起提交：列表失败就不保存频道，避免半套配置。
+    const savingBotsInTelegram = activeSection.value === 'telegram' && botDraftChanged()
+    if (savingBotsInTelegram) {
+      await saveBotPool()
+      if (botError.value !== '') return
+    }
     applyView(await saveSettings(patch))
     restorePendingDraft(pending, patch)
     feedback.value = '设置已保存并立即生效'
@@ -732,10 +749,24 @@ function jumpToSection(id: string): void {
 }
 
 // followHash 在分组渲染后补一次定位，刷新、前进后退和直接打开都能落到同一分组。
+// CARD_ANCHORS 指向同一栏内的具体卡片，切到对应菜单后再滚到卡片位置。
+const CARD_ANCHORS: Record<string, string> = {
+  backup: 'backup',
+  cache: 'cache',
+  theme: 'theme',
+  security: 'account',
+}
+
 function followHash(): void {
+  const raw = window.location.hash.replace(/^#/, '')
   const id = hashSection()
   if (id === '') return
   jumpToSection(id)
+  const card = CARD_ANCHORS[raw]
+  if (card === undefined) return
+  void nextTick(() => {
+    document.getElementById(card)?.scrollIntoView({ block: 'start' })
+  })
 }
 
 // syncActiveFromScroll 以顶栏下沿为准判定当前分组；滚到底部时直接取最后一组，
@@ -806,13 +837,13 @@ onBeforeUnmount(() => {
         </a>
       </nav>
       <div class="flex items-start gap-8">
-      <nav class="sticky top-24 hidden w-[168px] shrink-0 lg:block" aria-label="设置分组">
+      <nav class="sticky top-24 hidden w-[184px] shrink-0 lg:block" aria-label="设置分组">
         <ul class="space-y-0.5">
           <li v-for="item in SETTING_NAV" :key="item.id">
             <p v-if="item.group" class="px-3 pb-1 pt-3 text-[11px] font-medium text-muted/70 first:pt-0">{{ item.group }}</p>
             <a
               :href="'#' + item.id"
-              class="flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition hover:bg-brand-soft/70 hover:text-ink"
+              class="flex items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-sm transition hover:bg-brand-soft/70 hover:text-ink"
               @click="selectSection(item.id)"
               :class="activeSection === item.id ? 'bg-brand-soft text-ink' : 'text-muted'"
             >
@@ -862,9 +893,11 @@ onBeforeUnmount(() => {
             <div v-show="activeSection === 'telegram' || activeSection === 'network'" class="space-y-8">
             <section id="upstream" class="scroll-mt-36">
               <div class="flex items-center gap-2">
-                <h2 class="text-base font-semibold tracking-tight">上游与代理</h2>
+                <h2 v-show="activeSection === 'telegram'" class="text-base font-semibold tracking-tight">Telegram 图床</h2>
+                <h2 v-show="activeSection === 'network'" class="text-base font-semibold tracking-tight">代理与自检</h2>
               </div>
-              <p class="mt-1 text-xs text-muted">图片与发布的上游凭据、代理走向，保存后立即重建传输层。</p>
+              <p v-show="activeSection === 'telegram'" class="mt-1 text-xs text-muted">Bot 凭据与频道地址，保存后上传队列与图片网关立即使用新配置。</p>
+              <p v-show="activeSection === 'network'" class="mt-1 text-xs text-muted">代理走向与上游连通性检测，保存后立即重建传输层。</p>
 
               <div class="mt-3 space-y-3">
                 <div v-show="activeSection === 'telegram'" class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
@@ -899,7 +932,7 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
 
-                <div class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+                <div v-show="activeSection === 'telegram'" class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
                   <div class="border-b border-line/70 px-5 py-4">
                     <div class="flex flex-wrap items-center justify-between gap-2">
                       <div>
@@ -1306,12 +1339,14 @@ onBeforeUnmount(() => {
             <div v-show="activeSection === 'traffic' || activeSection === 'maintenance'" class="space-y-8">
             <section id="ops" class="scroll-mt-36">
               <div class="flex items-center gap-2">
-                <h2 class="text-base font-semibold tracking-tight">流量与备份</h2>
+                <h2 v-show="activeSection === 'traffic'" class="text-base font-semibold tracking-tight">流量看护</h2>
+                <h2 v-show="activeSection === 'maintenance'" class="text-base font-semibold tracking-tight">备份与缓存</h2>
               </div>
-              <p class="mt-1 text-xs text-muted">按自然月统计图片出站流量，生成一致性快照并可下载或发到频道。</p>
+              <p v-show="activeSection === 'traffic'" class="mt-1 text-xs text-muted">按自然月统计图片出站流量，达到阈值提醒或熔断。</p>
+              <p v-show="activeSection === 'maintenance'" class="mt-1 text-xs text-muted">每日快照与逐图小图缓存，各自独立保存与维护。</p>
 
               <div class="mt-3 space-y-3">
-                <div class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+                <div v-show="activeSection === 'traffic'" class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
                   <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3.5">
                     <h3 class="text-sm font-semibold">流量看护</h3>
                     <button
@@ -1382,7 +1417,7 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
 
-                <div v-show="activeSection === 'maintenance'" class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+                <div id="backup" v-show="activeSection === 'maintenance'" class="scroll-mt-36 rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
                   <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3.5">
                     <h3 class="text-sm font-semibold">自动备份</h3>
                     <div class="flex shrink-0 items-center gap-2">
@@ -1455,7 +1490,7 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
 
-                <div v-show="activeSection === 'maintenance'" class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+                <div id="cache" v-show="activeSection === 'maintenance'" class="scroll-mt-36 rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
                   <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3.5">
                     <h3 class="text-sm font-semibold">媒体缩略图缓存</h3>
                     <button
@@ -1530,7 +1565,7 @@ onBeforeUnmount(() => {
                         <button
                           v-if="rebuildRunning"
                           type="button"
-                          class="h-11 shrink-0 rounded-xl border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-surface hover:text-ink"
+                          class="h-9 shrink-0 rounded-lg border border-line px-3 text-xs font-medium text-muted transition hover:bg-surface hover:text-ink"
                           @click="cancelRebuild"
                         >
                           取消
@@ -1553,7 +1588,7 @@ onBeforeUnmount(() => {
 
 
             <div v-show="activeSection === 'appearance'" class="space-y-8">
-            <div class="rounded-lg border border-line bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+            <div id="theme" class="scroll-mt-36 rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
               <div class="border-b border-line/70 px-5 py-4">
                 <h3 class="text-sm font-semibold">外观主题</h3>
                 <p class="mt-1 text-xs text-muted">跟随系统会随设备日夜自动切换；主题只记在本机，不影响媒体遮罩开关。</p>
