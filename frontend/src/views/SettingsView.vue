@@ -20,6 +20,7 @@ import {
   type BackupStatus,
   type BotEntry,
   type ConnectionResult,
+  type SettingsPatch,
   type SettingsView,
   type TrafficStats,
 } from '../api/settings.ts'
@@ -150,19 +151,28 @@ const activeSection = ref('channel')
 
 // 分组导航：桌面左侧目录与手机顶部横向目录共用同一份分组。
 const SETTING_NAV = [
-  { id: 'channel', label: '通道与连接' },
-  { id: 'media', label: '上传与媒体' },
-  { id: 'storage', label: '流量与存储' },
-  { id: 'appearance', label: '外观与安全' },
+  { id: 'telegram', label: 'Telegram 图床', group: '上游连接' },
+  { id: 'network', label: '代理与自检' },
+  { id: 'telegraph', label: 'Telegraph 发布', group: '内容与运维' },
+  { id: 'upload', label: '上传默认值' },
+  { id: 'traffic', label: '流量看护' },
+  { id: 'maintenance', label: '备份与缓存' },
+  { id: 'appearance', label: '外观与安全', group: '系统与偏好' },
 ]
 
 // LEGACY_ANCHORS 让旧地址里的分区锚点安静落到新分组，不报错也不丢定位。
 const LEGACY_ANCHORS: Record<string, string> = {
-  upstream: 'channel',
-  check: 'channel',
-  defaults: 'media',
-  ops: 'storage',
+  channel: 'telegram',
+  upstream: 'telegram',
+  check: 'network',
+  media: 'upload',
+  defaults: 'upload',
+  storage: 'traffic',
+  ops: 'traffic',
+  backup: 'maintenance',
+  cache: 'maintenance',
   account: 'appearance',
+  theme: 'appearance',
 }
 
 // fieldErrorText 给字段就近的报错文案，避免只在底部提示。
@@ -562,6 +572,37 @@ function failText(cause: unknown): { message: string; fields: string[] } {
   return { message: '保存失败，请稍后重试', fields: [] }
 }
 
+
+// restorePendingDraft 把本次没有提交的组还原成保存前的输入，保留未保存草稿。
+function restorePendingDraft(before: typeof form, patch: SettingsPatch): void {
+  if (patch.telegram === undefined) form.channelId = before.channelId
+  if (patch.telegraph === undefined) {
+    form.authorName = before.authorName
+    form.pathMode = before.pathMode
+  }
+  if (patch.proxy === undefined) {
+    form.proxyMode = before.proxyMode
+    form.proxyUrl = before.proxyUrl
+    form.proxyTelegram = before.proxyTelegram
+    form.proxyTelegraph = before.proxyTelegraph
+  }
+  if (patch.upload === undefined) form.defaultMode = before.defaultMode
+  if (patch.traffic === undefined) {
+    form.alertGB = before.alertGB
+    form.limitGB = before.limitGB
+  }
+  if (patch.backup === undefined) {
+    form.backupEnabled = before.backupEnabled
+    form.backupTime = before.backupTime
+    form.backupKeep = before.backupKeep
+  }
+  if (patch.media_thumbs === undefined) form.thumbGB = before.thumbGB
+  if (patch.meta === undefined) {
+    form.metaFilenames = before.metaFilenames
+    form.metaParseMode = before.metaParseMode
+  }
+}
+
 async function save(): Promise<void> {
   if (view.value === null || saving.value) return
   saveError.value = ''
@@ -588,31 +629,34 @@ async function save(): Promise<void> {
     fieldErrors.value = [FIELD_PROXY_URL]
     return
   }
-  if (gbToBytes(form.alertGB) === null || gbToBytes(form.limitGB) === null) {
+  if (patch.traffic !== undefined && (gbToBytes(form.alertGB) === null || gbToBytes(form.limitGB) === null)) {
     saveError.value = '流量阈值需为不小于 0 的 GB 数值'
     fieldErrors.value = [FIELD_TRAFFIC_ALERT, FIELD_TRAFFIC_LIMIT]
     return
   }
-  if (backupTimeInvalid(form.backupTime)) {
+  if (patch.backup !== undefined && backupTimeInvalid(form.backupTime)) {
     saveError.value = '备份时刻格式为 HH:MM'
     fieldErrors.value = [FIELD_BACKUP_TIME]
     return
   }
   const keep = Number(form.backupKeep)
-  if (!Number.isInteger(keep) || keep < 1 || keep > 60) {
+  if (patch.backup !== undefined && (!Number.isInteger(keep) || keep < 1 || keep > 60)) {
     saveError.value = '备份保留份数为 1–60 的整数'
     fieldErrors.value = [FIELD_BACKUP_KEEP]
     return
   }
-  if (proxyCustomNeedsURL(form.proxyMode, view.value.proxy.url_set, form.proxyUrl)) {
+  if (patch.proxy !== undefined && proxyCustomNeedsURL(form.proxyMode, view.value.proxy.url_set, form.proxyUrl)) {
     saveError.value = '自定义代理需要填写代理地址'
     fieldErrors.value = [FIELD_PROXY_URL]
     return
   }
 
   saving.value = true
+  // 记下保存前的输入：本次没提交的组要把草稿还原回去，避免被服务端结果覆盖。
+  const pending = { ...form }
   try {
     applyView(await saveSettings(patch))
+    restorePendingDraft(pending, patch)
     feedback.value = '设置已保存并立即生效'
     void loadTraffic()
     void loadBackup()
@@ -765,6 +809,7 @@ onBeforeUnmount(() => {
       <nav class="sticky top-24 hidden w-[168px] shrink-0 lg:block" aria-label="设置分组">
         <ul class="space-y-0.5">
           <li v-for="item in SETTING_NAV" :key="item.id">
+            <p v-if="item.group" class="px-3 pb-1 pt-3 text-[11px] font-medium text-muted/70 first:pt-0">{{ item.group }}</p>
             <a
               :href="'#' + item.id"
               class="flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition hover:bg-brand-soft/70 hover:text-ink"
@@ -814,7 +859,7 @@ onBeforeUnmount(() => {
 
         <template v-else-if="view !== null">
           <div class="space-y-8">
-            <div v-show="activeSection === 'channel'" class="space-y-8">
+            <div v-show="activeSection === 'telegram' || activeSection === 'network'" class="space-y-8">
             <section id="upstream" class="scroll-mt-36">
               <div class="flex items-center gap-2">
                 <h2 class="text-base font-semibold tracking-tight">上游与代理</h2>
@@ -822,7 +867,7 @@ onBeforeUnmount(() => {
               <p class="mt-1 text-xs text-muted">图片与发布的上游凭据、代理走向，保存后立即重建传输层。</p>
 
               <div class="mt-3 space-y-3">
-                <div class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+                <div v-show="activeSection === 'telegram'" class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
                   <div class="border-b border-line/70 px-5 py-4">
                     <h3 class="text-sm font-semibold">Telegram 图床</h3>
                     <p class="mt-1 text-xs text-muted">Bot 凭据统一在下方「Bot 列表」维护；这里只保留频道与上游地址。</p>
@@ -954,7 +999,7 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
 
-                <div class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+                <div v-show="activeSection === 'network'" class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
                   <div class="border-b border-line/70 px-5 py-4">
                     <h3 class="text-sm font-semibold">网络代理</h3>
                     <p class="mt-1 text-xs text-muted">
@@ -1051,7 +1096,7 @@ onBeforeUnmount(() => {
               </div>
             </section>
 
-            <section id="check" class="scroll-mt-36">
+            <section id="check" v-show="activeSection === 'network'" class="scroll-mt-36">
               <div class="flex items-center gap-2">
                 <h2 class="text-base font-semibold tracking-tight">连通性自检</h2>
               </div>
@@ -1101,8 +1146,8 @@ onBeforeUnmount(() => {
             </section>
             </div>
 
-            <div v-show="activeSection === 'media'" class="space-y-8">
-            <section id="defaults" class="scroll-mt-36">
+            <div v-show="activeSection === 'telegraph' || activeSection === 'upload'" class="space-y-8">
+            <section id="defaults" v-show="activeSection === 'upload'" class="scroll-mt-36">
               <div class="flex items-center gap-2">
                 <h2 class="text-base font-semibold tracking-tight">发帖默认值</h2>
               </div>
@@ -1172,7 +1217,7 @@ onBeforeUnmount(() => {
               </div>
             </section>
 
-                <div class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+                <div v-show="activeSection === 'telegraph'" class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
                   <div class="border-b border-line/70 px-5 py-4">
                     <h3 class="text-sm font-semibold">Telegraph 发布</h3>
                     <p class="mt-1 text-xs text-muted">发布页面的作者名由这里提供，令牌通过「申请账户」或环境变量写入。</p>
@@ -1258,7 +1303,7 @@ onBeforeUnmount(() => {
 
 
 
-            <div v-show="activeSection === 'storage'" class="space-y-8">
+            <div v-show="activeSection === 'traffic' || activeSection === 'maintenance'" class="space-y-8">
             <section id="ops" class="scroll-mt-36">
               <div class="flex items-center gap-2">
                 <h2 class="text-base font-semibold tracking-tight">流量与备份</h2>
@@ -1337,7 +1382,7 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
 
-                <div class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+                <div v-show="activeSection === 'maintenance'" class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
                   <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3.5">
                     <h3 class="text-sm font-semibold">自动备份</h3>
                     <div class="flex shrink-0 items-center gap-2">
@@ -1410,7 +1455,7 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
 
-                <div class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+                <div v-show="activeSection === 'maintenance'" class="rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
                   <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3.5">
                     <h3 class="text-sm font-semibold">媒体缩略图缓存</h3>
                     <button

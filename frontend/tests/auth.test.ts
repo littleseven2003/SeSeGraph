@@ -8,11 +8,11 @@ function source(file: string): string {
 
 test('设置页分组锚点与就近字段错误', () => {
   const view = source('views/SettingsView.vue')
-  // 原有分区仍在页面内，旧地址的分区锚点经映射表落到新的四个分组。
+  // 原有分区仍在页面内，旧地址的分区锚点经映射表落到新的七栏。
   for (const id of ['upstream', 'defaults', 'check', 'ops', 'account']) {
     assert.ok(view.includes(`id="${id}"`), `缺少分区 ${id}`)
   }
-  for (const id of ['channel', 'media', 'storage', 'appearance']) {
+  for (const id of ['telegram', 'network', 'telegraph', 'upload', 'traffic', 'maintenance', 'appearance']) {
     assert.ok(view.includes(`{ id: '${id}'`), `导航缺少 ${id}`)
   }
   assert.ok(view.includes('LEGACY_ANCHORS'), '旧锚点有映射表')
