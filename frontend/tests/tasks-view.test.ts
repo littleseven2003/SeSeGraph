@@ -116,6 +116,8 @@ test('折叠只留摘要，四阶段与操作都收进同一个展开区', () =>
   assert.ok(source.includes('role="progressbar"'), '收起时仍有总轨')
   assert.equal(source.includes('{{ overallOf(task) }}%'), false, '进度轨不显示百分号')
   assert.ok(source.includes('sm:h-9'), '窄屏操作保留 44px 热区、桌面收敛')
+  assert.ok(source.includes('px-4 py-4 sm:px-6 sm:py-5'), '展开区加大上下内边距')
+  assert.ok(source.includes('gap-5 lg:grid-cols-[minmax(0,1fr)_148px]') || source.includes('gap-5 lg:gap-6'), '阶段与操作区间距放宽')
 })
 
 test('窄屏时间紧跟标题，总轨换行铺满', () => {

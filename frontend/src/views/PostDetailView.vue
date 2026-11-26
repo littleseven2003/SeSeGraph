@@ -354,7 +354,7 @@ onBeforeUnmount(() => {
             <ul class="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-4">
               <li v-for="image in detail.images" :key="image.sort_order" class="min-w-0">
                 <div class="group relative overflow-hidden rounded-lg border border-line bg-canvas">
-                  <button type="button" class="relative block aspect-square w-full" :aria-label="`预览第 ${image.sort_order} 张`" @click="openLightbox(image.sort_order)">
+                  <button type="button" class="relative block aspect-[3/2] w-full sm:aspect-[4/3]" :aria-label="`预览第 ${image.sort_order} 张`" @click="openLightbox(image.sort_order)">
                     <img
                       v-if="thumbUrl(image) !== '' && !failedThumbs.has(image.sort_order)"
                       :src="thumbUrl(image)"
@@ -383,22 +383,22 @@ onBeforeUnmount(() => {
                     </span>
                     <span v-if="detail.cover_sort_order === image.sort_order" class="absolute left-1.5 top-1.5 rounded bg-brand px-1.5 py-0.5 text-[10px] font-medium text-brand-ink">封面</span>
                   </button>
-                  <div class="flex items-center justify-between gap-1 border-t border-line/70 px-1.5 py-1">
+                  <div class="flex items-center justify-between gap-1 border-t border-line/70 px-2 py-1">
                     <span class="tnum text-[11px] text-muted">#{{ image.sort_order }}</span>
                     <div class="flex items-center gap-0.5">
-                      <button type="button" class="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted transition hover:bg-canvas hover:text-ink" :aria-label="`揭开第 ${image.sort_order} 张`" @click="toggleReveal(image.sort_order)">
+                      <button type="button" class="inline-flex h-11 w-11 -m-2 items-center justify-center rounded-md text-muted transition hover:bg-canvas hover:text-ink sm:m-0 sm:h-7 sm:w-7" :aria-label="`揭开第 ${image.sort_order} 张`" @click="toggleReveal(image.sort_order)">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" class="h-4 w-4" aria-hidden="true">
                           <path d="M2.5 12S6 6.5 12 6.5 21.5 12 21.5 12 18 17.5 12 17.5 2.5 12 2.5 12Z" stroke-linecap="round" />
                           <circle cx="12" cy="12" r="2.6" />
                         </svg>
                       </button>
-                      <button type="button" class="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-40" :disabled="imageLink(image) === ''" :aria-label="`复制第 ${image.sort_order} 张链接`" @click="copy(imageLink(image), '单图链接')">
+                      <button type="button" class="inline-flex h-11 w-11 -m-2 items-center justify-center rounded-md text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-40 sm:m-0 sm:h-7 sm:w-7" :disabled="imageLink(image) === ''" :aria-label="`复制第 ${image.sort_order} 张链接`" @click="copy(imageLink(image), '单图链接')">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" class="h-4 w-4" aria-hidden="true">
                           <rect x="9" y="9" width="11" height="11" rx="2" />
                           <path d="M5 15V6a2 2 0 0 1 2-2h8" stroke-linecap="round" />
                         </svg>
                       </button>
-                      <button type="button" class="inline-flex h-8 items-center rounded-md px-1.5 text-[11px] text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-40" :disabled="image.status !== 'stored' || busy !== ''" @click="setCover(image.sort_order)">
+                      <button type="button" class="inline-flex h-11 items-center rounded-md px-1.5 text-[11px] text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-40 sm:h-7" :disabled="image.status !== 'stored' || busy !== ''" @click="setCover(image.sort_order)">
                         设为封面
                       </button>
                     </div>

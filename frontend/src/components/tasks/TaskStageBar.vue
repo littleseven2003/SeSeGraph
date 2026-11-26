@@ -18,6 +18,11 @@ const STAGE_FILL: Record<StageKey, string> = {
   publish: 'bg-stage-publish',
 }
 
+// showValue 判断右侧状态文字是否值得显示：未开始的阶段只留中性轨道，读屏信息在容器 aria-label 里。
+function showValue(item: StageView): boolean {
+  return item.value !== '待开始' && item.value !== '等待' && item.value !== '未开始'
+}
+
 function fillClass(item: StageView): string {
   if (item.tone === 'danger') return 'bg-danger'
   if (item.tone === 'muted') return 'bg-line'
@@ -43,33 +48,33 @@ const VALUE_TEXT: Record<TaskTone, string> = {
 <template>
   <div
     v-if="props.layout === 'pairs'"
-    class="grid grid-cols-2 gap-2.5 sm:gap-3"
+    class="grid grid-cols-2 gap-x-6 gap-y-4 sm:gap-x-8"
     :aria-label="`四阶段进度：${props.stages.map((item) => item.index + '. ' + item.label + ' ' + item.value).join('，')}`"
   >
-    <ol class="space-y-2.5">
+    <ol class="space-y-4">
       <li v-for="item in [props.stages[0], props.stages[2]]" :key="item.key" class="min-w-0">
         <div class="flex items-baseline justify-between gap-2">
           <span class="truncate text-xs">
             <span class="tnum text-muted/75">{{ item.index }}.</span>
             <span class="ml-0.5 font-medium">{{ item.label }}</span>
           </span>
-          <span class="tnum shrink-0 text-xs" :class="VALUE_TEXT[item.tone]">{{ item.value }}</span>
+          <span v-if="showValue(item)" class="tnum shrink-0 text-xs" :class="VALUE_TEXT[item.tone]">{{ item.value }}</span>
         </div>
-        <div class="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-canvas" role="progressbar" :aria-label="`${item.label}进度`" :aria-valuenow="stagePercent(item.ratio)" aria-valuemin="0" aria-valuemax="100">
+        <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-canvas" role="progressbar" :aria-label="`${item.label}进度`" :aria-valuenow="stagePercent(item.ratio)" aria-valuemin="0" aria-valuemax="100">
           <div class="h-full rounded-full transition-[width] duration-300" :class="fillClass(item)" :style="fillStyle(item)"></div>
         </div>
       </li>
     </ol>
-    <ol class="space-y-2.5">
+    <ol class="space-y-4">
       <li v-for="item in [props.stages[1], props.stages[3]]" :key="item.key" class="min-w-0">
         <div class="flex items-baseline justify-between gap-2">
           <span class="truncate text-xs">
             <span class="tnum text-muted/75">{{ item.index }}.</span>
             <span class="ml-0.5 font-medium">{{ item.label }}</span>
           </span>
-          <span class="tnum shrink-0 text-xs" :class="VALUE_TEXT[item.tone]">{{ item.value }}</span>
+          <span v-if="showValue(item)" class="tnum shrink-0 text-xs" :class="VALUE_TEXT[item.tone]">{{ item.value }}</span>
         </div>
-        <div class="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-canvas" role="progressbar" :aria-label="`${item.label}进度`" :aria-valuenow="stagePercent(item.ratio)" aria-valuemin="0" aria-valuemax="100">
+        <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-canvas" role="progressbar" :aria-label="`${item.label}进度`" :aria-valuenow="stagePercent(item.ratio)" aria-valuemin="0" aria-valuemax="100">
           <div class="h-full rounded-full transition-[width] duration-300" :class="fillClass(item)" :style="fillStyle(item)"></div>
         </div>
       </li>
@@ -78,7 +83,7 @@ const VALUE_TEXT: Record<TaskTone, string> = {
 
   <ol
     v-else
-    class="grid grid-cols-2 gap-2.5 sm:grid-cols-4 sm:gap-3"
+    class="grid grid-cols-2 gap-3.5 sm:grid-cols-4 sm:gap-4"
     :aria-label="`四阶段进度：${stages.map((item) => item.index + '. ' + item.label + ' ' + item.value).join('，')}`"
   >
     <li v-for="item in stages" :key="item.key" class="min-w-0">
@@ -87,7 +92,7 @@ const VALUE_TEXT: Record<TaskTone, string> = {
           <span class="tnum text-muted/75">{{ item.index }}.</span>
           <span class="ml-0.5 font-medium">{{ item.label }}</span>
         </span>
-        <span class="tnum shrink-0 text-xs" :class="VALUE_TEXT[item.tone]">{{ item.value }}</span>
+        <span v-if="showValue(item)" class="tnum shrink-0 text-xs" :class="VALUE_TEXT[item.tone]">{{ item.value }}</span>
       </div>
       <div
         class="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-canvas"

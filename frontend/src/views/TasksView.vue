@@ -60,6 +60,12 @@ function summaryOf(task: TaskRow): string {
   return stageSummary(stagesOf(task))
 }
 
+// summaryUseful 避免展开区概况只是重复「某阶段待开始」，有实际计数或失败原因时仍显示。
+function summaryUseful(task: TaskRow): boolean {
+  const summary = summaryOf(task)
+  return summary !== '四阶段已完成' && !summary.endsWith('待开始')
+}
+
 // overallOf 按适用阶段算总进度：旧任务缺压缩记录时不计该段，仅存图任务不计发布段。
 function overallOf(task: TaskRow): number {
   return stageOverall(stagesOf(task), {
@@ -463,8 +469,8 @@ onBeforeUnmount(() => {
             </span>
           </button>
 
-          <div v-if="isExpanded(task.id)" :id="`task-stages-${task.id}`" class="border-t border-line/70 px-4 py-3 sm:px-5">
-            <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_148px] lg:items-start">
+          <div v-if="isExpanded(task.id)" :id="`task-stages-${task.id}`" class="border-t border-line/70 px-4 py-4 sm:px-6 sm:py-5">
+            <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_148px] lg:items-start lg:gap-6">
               <div class="min-w-0">
                 <TaskStageBar :stages="stagesOf(task)" layout="pairs" />
               </div>
@@ -525,7 +531,7 @@ onBeforeUnmount(() => {
             </div>
 
             <!-- 顶行已经给过更新时间，这里只留阶段概况，不重复同一时间。 -->
-            <p class="mt-2 text-xs text-muted">{{ summaryOf(task) }}</p>
+            <p v-if="summaryUseful(task)" class="mt-2 text-xs text-muted">{{ summaryOf(task) }}</p>
             <!-- 失败时把可读原因写在这里，不再只显示笼统的「存图失败」。 -->
             <p v-if="failureOf(task) !== ''" class="mt-1.5 rounded-md bg-danger-soft px-2 py-1.5 text-xs leading-relaxed text-danger">
               {{ failureOf(task) }}
