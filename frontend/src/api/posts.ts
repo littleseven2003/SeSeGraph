@@ -91,6 +91,9 @@ export interface ServerProgress {
   images: ServerProgressImage[]
   /** 发布状态：idle / pending / publishing / published / failed */
   publish_state: string
+  /** 提交时选择的发布意图：auto 表示同步完成后自动入发布队列 */
+  publish_intent?: 'auto' | ''
+
   /** 是否已对外公开 */
   public: boolean
   /** 发布完成后的分享链接 */

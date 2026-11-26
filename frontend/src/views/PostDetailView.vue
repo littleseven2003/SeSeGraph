@@ -14,7 +14,7 @@ import {
 import { changeCover, fetchProgress, thumbPath, type ServerProgress } from '../api/posts.ts'
 import { ApiError } from '../api/client.ts'
 import { copyText } from '../utils/clipboard.ts'
-import { formatPublishedAt, imageShareUrl, postShareUrl, statusLabel } from '../utils/gallery.ts'
+import { formatPublishedAt, formatPublishedDate, imageShareUrl, postShareUrl, readShareTemplate, renderShareText, statusLabel } from '../utils/gallery.ts'
 import { detailUploadModeLabel } from '../utils/media.ts'
 import { blurEnabled } from '../utils/blur.ts'
 import { splitTags } from '../utils/meta.ts'
@@ -56,11 +56,25 @@ const badge = computed(() =>
 
 const shareUrl = computed(() => (detail.value === null ? '' : postShareUrl(detail.value)))
 
+// 分享文案与画廊抽屉同源：本机模板 + 同一套占位符渲染，整帖不可分享时一并禁用。
+const shareText = computed(() => {
+  const post = detail.value
+  if (post === null || shareUrl.value === '') return ''
+  return renderShareText(readShareTemplate(window.localStorage), {
+    title: post.title,
+    description: post.description,
+    url: shareUrl.value,
+    count: post.image_count,
+    tags: post.tags,
+    published_at: formatPublishedDate(post.published_at),
+  })
+})
+
 // 四阶段口径复用任务页的同一份判定，动态分母也一致。
 const stages = computed(() => (progress.value === null ? [] : taskStages(stageInputOf(stageInputOfSource()))))
 const overall = computed(() =>
   stageOverall(stages.value, {
-    publishIntent: '',
+    publishIntent: progress.value?.publish_intent ?? '',
     publishState: progress.value?.publish_state ?? '',
     hasCompressRecord: progress.value === null ? true : progress.value.compressed_count !== null && progress.value.compressed_count !== undefined,
   }),
@@ -75,6 +89,7 @@ function stageInputOfSource() {
   return {
     image_count: state.image_count,
     status: state.status,
+    publish_intent: state.publish_intent ?? '',
     publish_state: state.publish_state,
     control_state: state.control_state,
     received_count: received,
@@ -82,6 +97,23 @@ function stageInputOfSource() {
     compressed_count: state.compressed_count ?? null,
   }
 }
+
+// publishSettled 判断本次任务的发布是否已经结束：自动发布必须已发布成功，
+// 手动发布的任务只要没有等待或失败就算结束，避免同步已满但发布未完成时提前隐藏。
+const publishSettled = computed(() => {
+  const state = progress.value
+  if (state === null) return false
+  if (state.publish_intent === 'auto') return state.publish_state === 'published'
+  return state.publish_state === '' || state.publish_state === 'idle' || state.publish_state === 'published'
+})
+
+// showProgress 在任务未完成、或自动发布仍在等待/失败时保留进度卡。
+const showProgress = computed(() => {
+  const state = progress.value
+  if (state === null) return false
+  if (activeTask.value) return true
+  return !(overall.value >= 100 && publishSettled.value)
+})
 
 const activeTask = computed(() => {
   const state = progress.value
@@ -177,7 +209,7 @@ async function toggleDisabled(): Promise<void> {
   if (detail.value === null) return
   await run('toggle', async () => {
     await setPostDisabled(postId.value, !detail.value?.disabled)
-    notice.value = detail.value?.disabled === true ? '已恢复公开' : '已撤回公开'
+    notice.value = detail.value?.disabled === true ? '已恢复公开' : '已撤回发布'
     await load()
   })
 }
@@ -205,6 +237,12 @@ async function refreshViews(): Promise<void> {
     }
     notice.value = result.cached ? '浏览量为缓存值' : '浏览量已刷新'
   })
+}
+
+async function copyShareText(): Promise<void> {
+  if (shareText.value === '') return
+  const ok = await copyText(shareText.value)
+  notice.value = ok ? '分享文案已复制' : '分享文案复制失败，请手动选择'
 }
 
 async function copy(text: string, what: string): Promise<void> {
@@ -263,7 +301,7 @@ onBeforeUnmount(() => {
   <div class="min-h-full">
     <AppHeader />
 
-    <main class="mx-auto w-full max-w-[1120px] px-5 py-6">
+    <main class="mx-auto w-full max-w-[1240px] px-5 py-6">
       <div class="flex flex-wrap items-center gap-3">
         <router-link
           :to="{ name: 'home' }"
@@ -294,9 +332,21 @@ onBeforeUnmount(() => {
 
       <div v-if="loading" class="mt-6 rounded-xl border border-line bg-surface px-6 py-16 text-center text-sm text-muted">正在读取详情…</div>
 
-      <div v-else-if="detail !== null" class="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
+      <div v-else-if="detail !== null" class="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_312px]">
         <section class="min-w-0">
-          <div class="rounded-xl border border-line bg-surface p-3 sm:p-4">
+          <div v-if="showProgress" id="progress" class="mb-4 rounded-2xl bg-surface p-4 shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <p class="text-sm font-medium">进度</p>
+              <p class="tnum text-xs text-muted">总进度 {{ overall }}%</p>
+            </div>
+            <TaskStageBar v-if="stages.length > 0" class="mt-3" :stages="stages" />
+            <p class="mt-2 text-xs text-muted">{{ stages.length > 0 ? stageSummary(stages) : '暂时读不到进度，稍后再看' }}</p>
+            <p v-if="progress !== null && progress.publish_intent === 'auto' && progress.publish_state !== 'published' && progress.publish_state !== 'publishing' && progress.publish_state !== 'pending'" class="mt-1 text-xs text-muted">
+              自动发布尚未完成{{ progress.publish_error ? '：' + progress.publish_error : '，完成后进度卡会消失' }}
+            </p>
+          </div>
+
+          <div :id="showProgress ? 'media' : 'progress'" class="rounded-2xl bg-surface p-3 shadow-[0_1px_0_0_rgba(27,26,23,0.05)] sm:p-4">
             <div class="flex flex-wrap items-center justify-between gap-2 pb-3">
               <p class="text-sm font-medium">媒体 <span class="tnum text-xs text-muted">{{ detail.images.length }} 张</span></p>
               <p class="text-xs text-muted">点图预览，长按或点眼睛可单张揭开</p>
@@ -359,47 +409,66 @@ onBeforeUnmount(() => {
             <p v-if="detail.images.length === 0" class="py-10 text-center text-sm text-muted">这条图集还没有图片</p>
           </div>
 
-          <div id="progress" class="mt-4 rounded-xl border border-line bg-surface p-4">
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <p class="text-sm font-medium">进度</p>
-              <p class="tnum text-xs text-muted">总进度 {{ overall }}%</p>
-            </div>
-            <TaskStageBar v-if="stages.length > 0" class="mt-3" :stages="stages" />
-            <p class="mt-2 text-xs text-muted">{{ stages.length > 0 ? stageSummary(stages) : '暂时读不到进度，稍后再看' }}</p>
-          </div>
         </section>
 
         <aside class="min-w-0 lg:sticky lg:top-20 lg:self-start">
-          <div class="rounded-xl border border-line bg-surface p-4">
+          <div class="rounded-2xl bg-surface p-4 shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
             <div class="flex items-center justify-between gap-2">
               <p class="text-sm font-medium">信息</p>
               <button v-if="!editing" type="button" class="inline-flex h-9 items-center rounded-lg border border-line px-2.5 text-xs text-muted transition hover:bg-canvas hover:text-ink" @click="startEdit">编辑</button>
             </div>
 
-            <dl v-if="!editing" class="mt-3 space-y-2 text-sm">
-              <div class="flex items-start justify-between gap-3"><dt class="shrink-0 text-xs text-muted">张数</dt><dd class="tnum text-right">{{ detail.image_count }}</dd></div>
-              <div class="flex items-start justify-between gap-3"><dt class="shrink-0 text-xs text-muted">画质</dt><dd class="text-right">{{ detailUploadModeLabel(detail.upload_mode) }}</dd></div>
-              <div class="flex items-start justify-between gap-3"><dt class="shrink-0 text-xs text-muted">发布</dt><dd class="text-right">{{ formatPublishedAt(detail.published_at) || '未发布' }}</dd></div>
-              <div class="flex items-start justify-between gap-3"><dt class="shrink-0 text-xs text-muted">创建</dt><dd class="text-right">{{ formatPublishedAt(detail.created_at) }}</dd></div>
-              <div class="flex items-start justify-between gap-3">
-                <dt class="shrink-0 text-xs text-muted">浏览量</dt>
-                <dd class="flex items-center gap-1.5 text-right"><span class="tnum">{{ detail.views_count }}</span>
-                  <button type="button" class="inline-flex h-8 items-center rounded-md border border-line px-1.5 text-[11px] text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-50" :disabled="busy !== ''" @click="refreshViews">刷新</button>
-                </dd>
-              </div>
-              <div class="flex items-start justify-between gap-3"><dt class="shrink-0 text-xs text-muted">作者</dt><dd class="text-right">{{ detail.author_name === '' ? '—' : detail.author_name }}</dd></div>
-              <div class="border-t border-line/70 pt-2">
-                <dt class="text-xs text-muted">标签</dt>
-                <dd class="mt-1 flex flex-wrap gap-1">
-                  <span v-for="tag in detail.tags" :key="tag" class="rounded-md bg-canvas px-1.5 py-0.5 text-xs text-muted">#{{ tag }}</span>
-                  <span v-if="detail.tags.length === 0" class="text-xs text-muted">无</span>
-                </dd>
-              </div>
-              <div class="border-t border-line/70 pt-2">
-                <dt class="text-xs text-muted">说明</dt>
-                <dd class="mt-1 whitespace-pre-wrap text-xs leading-relaxed">{{ detail.description === '' ? '暂无说明' : detail.description }}</dd>
-              </div>
-            </dl>
+            <template v-if="!editing">
+              <dl class="mt-3 grid grid-cols-2 gap-2">
+                <div class="rounded-xl bg-canvas px-3 py-2">
+                  <dt class="text-[11px] text-muted">张数</dt>
+                  <dd class="mt-0.5 tnum text-sm">{{ detail.image_count }}</dd>
+                </div>
+                <div class="rounded-xl bg-canvas px-3 py-2">
+                  <dt class="text-[11px] text-muted">画质</dt>
+                  <dd class="mt-0.5 text-sm">{{ detailUploadModeLabel(detail.upload_mode) }}</dd>
+                </div>
+                <div class="rounded-xl bg-canvas px-3 py-2">
+                  <dt class="text-[11px] text-muted">浏览量</dt>
+                  <dd class="mt-0.5 flex items-center justify-between gap-1">
+                    <span class="tnum text-sm">{{ detail.views_count }}</span>
+                    <button
+                      type="button"
+                      class="-m-2 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-surface hover:text-ink disabled:opacity-50 sm:m-0 sm:h-7 sm:w-7"
+                      :disabled="busy !== ''"
+                      aria-label="刷新浏览量"
+                      title="刷新浏览量"
+                      @click="refreshViews"
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="h-4 w-4" :class="busy === 'views' ? 'animate-spin' : ''" aria-hidden="true">
+                        <path d="M20 11a8 8 0 1 0-2.3 6.3" stroke-linecap="round" />
+                        <path d="M20 5v6h-6" stroke-linecap="round" stroke-linejoin="round" />
+                      </svg>
+                    </button>
+                  </dd>
+                </div>
+                <div class="rounded-xl bg-canvas px-3 py-2">
+                  <dt class="text-[11px] text-muted">发布</dt>
+                  <dd class="mt-0.5 text-sm">{{ formatPublishedAt(detail.published_at) || '未发布' }}</dd>
+                </div>
+              </dl>
+
+              <dl class="mt-3 space-y-2 text-sm">
+                <div class="flex items-start justify-between gap-3"><dt class="shrink-0 text-xs text-muted">创建</dt><dd class="text-right">{{ formatPublishedAt(detail.created_at) }}</dd></div>
+                <div class="flex items-start justify-between gap-3"><dt class="shrink-0 text-xs text-muted">作者</dt><dd class="text-right">{{ detail.author_name === '' ? '—' : detail.author_name }}</dd></div>
+                <div class="border-t border-line/70 pt-2">
+                  <dt class="text-xs text-muted">标签</dt>
+                  <dd class="mt-1 flex flex-wrap gap-1">
+                    <span v-for="tag in detail.tags" :key="tag" class="rounded-md bg-canvas px-1.5 py-0.5 text-xs text-muted">#{{ tag }}</span>
+                    <span v-if="detail.tags.length === 0" class="text-xs text-muted">无</span>
+                  </dd>
+                </div>
+                <div class="border-t border-line/70 pt-2">
+                  <dt class="text-xs text-muted">说明</dt>
+                  <dd class="mt-1 whitespace-pre-wrap text-xs leading-relaxed">{{ detail.description === '' ? '暂无说明' : detail.description }}</dd>
+                </div>
+              </dl>
+            </template>
 
             <form v-else class="mt-3 space-y-2.5" @submit.prevent="saveMeta">
               <label class="block"><span class="text-xs text-muted">标题</span>
@@ -421,12 +490,21 @@ onBeforeUnmount(() => {
             </form>
           </div>
 
-          <div class="mt-3 rounded-xl border border-line bg-surface p-4">
+          <div class="mt-3 rounded-2xl bg-surface p-4 shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
             <p class="text-sm font-medium">分享</p>
             <div class="mt-2 flex items-center gap-2">
-              <input :value="shareUrl === '' ? '尚未发布，暂无公开链接' : shareUrl" readonly class="h-9 min-w-0 flex-1 rounded-lg border border-line bg-canvas px-2.5 text-xs text-muted outline-none" />
-              <button type="button" class="inline-flex h-9 shrink-0 items-center rounded-lg border border-line px-2.5 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-40" :disabled="shareUrl === ''" @click="copy(shareUrl, '分享链接')">复制</button>
+              <input :value="shareUrl === '' ? '尚未发布，暂无公开链接' : shareUrl" readonly class="h-9 min-w-0 flex-1 rounded-lg border border-line bg-canvas px-2.5 text-xs text-muted outline-none" aria-label="公开地址" />
+              <button type="button" class="inline-flex h-9 shrink-0 items-center rounded-lg border border-line px-2.5 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-40" :disabled="shareUrl === ''" @click="copy(shareUrl, '分享链接')">复制地址</button>
             </div>
+            <button
+              type="button"
+              class="mt-2 inline-flex h-9 w-full items-center justify-center rounded-lg bg-brand-soft px-3 text-xs font-medium text-brand-strong transition hover:brightness-95 disabled:opacity-40"
+              :disabled="shareText === ''"
+              @click="copyShareText"
+            >
+              复制分享文案
+            </button>
+            <p class="mt-1.5 text-[11px] leading-relaxed text-muted">{{ shareUrl === '' ? '发布完成、公开且未撤回后才能复制地址与文案。' : '文案按本机分享模板生成。' }}</p>
             <ul v-if="detail.telegraph_urls.length > 1" class="mt-2 space-y-1">
               <li v-for="(url, index) in detail.telegraph_urls" :key="url" class="flex items-center gap-2 text-xs text-muted">
                 <span class="tnum shrink-0">第 {{ index + 1 }} 页</span>
@@ -436,15 +514,14 @@ onBeforeUnmount(() => {
             </ul>
           </div>
 
-          <div class="mt-3 rounded-xl border border-line bg-surface p-4">
+          <div class="mt-3 rounded-2xl bg-surface p-4 shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
             <p class="text-sm font-medium">管理</p>
-            <div class="mt-2 flex flex-wrap gap-2">
-              <button type="button" class="inline-flex h-10 items-center rounded-lg border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60" :disabled="busy !== '' || detail.pending_delete" @click="toggleDisabled">
-                {{ detail.disabled ? '恢复公开' : '撤回公开' }}
+            <div class="mt-2 grid grid-cols-2 gap-2">
+              <button type="button" class="inline-flex h-9 items-center justify-center rounded-lg border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-60" :disabled="busy !== '' || detail.pending_delete" @click="toggleDisabled">
+                {{ detail.disabled ? '恢复公开' : '撤回发布' }}
               </button>
-              <button type="button" class="inline-flex h-10 items-center rounded-lg border border-danger/40 px-3 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-60" :disabled="busy !== ''" @click="confirmDelete = true">永久删除</button>
+              <button type="button" class="inline-flex h-9 items-center justify-center rounded-lg border border-danger/40 px-3 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-60" :disabled="busy !== ''" @click="confirmDelete = true">永久删除</button>
             </div>
-            <p class="mt-2 text-[11px] leading-relaxed text-muted">撤回后短码立即 404，恢复沿用原有公开授权。</p>
           </div>
         </aside>
       </div>

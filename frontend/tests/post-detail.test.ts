@@ -21,17 +21,25 @@ test('画廊点击直达详情页，不再走抽屉', () => {
   assert.equal(body.includes('drawerOpen.value = true'), false, '不再打开侧边抽屉')
 })
 
-test('详情页是 1120 版心的非对称双栏，含进度与危险区', () => {
+test('详情页是 1240 版心的非对称双栏，含进度与危险区', () => {
   const view = source('views/PostDetailView.vue')
-  assert.ok(view.includes('max-w-[1120px]'), '版心 1120')
-  assert.ok(view.includes('lg:grid-cols-[minmax(0,1fr)_340px]'), '桌面非对称双栏')
+  assert.ok(view.includes('max-w-[1240px]'), '版心 1240，媒体区更舒展')
+  assert.ok(view.includes('lg:grid-cols-[minmax(0,1fr)_312px]'), '桌面非对称双栏，右栏 312px')
   assert.ok(view.includes('lg:sticky lg:top-20'), '右栏滚动时固定')
   assert.ok(view.includes('id="progress"'), '进度区可被深链定位')
+  assert.ok(view.includes('v-if="showProgress"'), '完成后隐藏整张进度卡')
+  // 进度卡在媒体区上方，隐藏时 #progress 锚点落到媒体区。
+  const progressAt = view.indexOf('v-if="showProgress"')
+  const mediaAt = view.indexOf(":id=\"showProgress ? 'media' : 'progress'\"")
+  assert.ok(progressAt > 0 && mediaAt > progressAt, '进度卡位于媒体区之前且锚点可回落')
   assert.ok(view.includes('<TaskStageBar'), '四阶段复用同一组件')
   assert.ok(view.includes('taskStages(stageInputOf('), '进度口径复用统一判定')
   assert.ok(view.includes('confirmDelete'), '永久删除需二次确认')
   assert.ok(view.includes('setPostDisabled'), '撤回与恢复走目标值接口')
   assert.ok(view.includes('postShareUrl'), '分享链接沿用同一判定')
+  assert.ok(view.includes('renderShareText(readShareTemplate(window.localStorage)'), '分享文案复用本机模板与同一渲染')
+  assert.ok(view.includes('复制分享文案'), '分享卡提供复制分享文案')
+  assert.ok(view.includes('aria-label="刷新浏览量"') && view.includes('title="刷新浏览量"'), '刷新按钮为带语义的图标')
   assert.ok(view.includes('imageShareUrl'), '单图链接沿用公开条件')
   assert.equal(view.includes('TODO'), false, '不留下待办字样')
 })

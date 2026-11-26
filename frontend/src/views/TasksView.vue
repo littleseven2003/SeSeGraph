@@ -373,24 +373,8 @@ onBeforeUnmount(() => {
         </span>
         <p class="mt-3 text-sm font-semibold">{{ filtered ? '当前筛选没有任务' : '暂无任务' }}</p>
         <p class="mt-1 text-xs text-muted">
-          {{ filtered ? '换个筛选看看，或回到全部任务。' : '在工作台选好图片后提交，任务会出现在这里。' }}
+          {{ filtered ? '换个筛选看看。' : '在工作台选好图片后提交，任务会出现在这里。' }}
         </p>
-        <div class="mt-4 flex flex-wrap items-center justify-center gap-2">
-          <button
-            v-if="filtered"
-            type="button"
-            class="inline-flex h-11 items-center rounded-xl border border-line bg-surface px-4 text-sm font-medium text-muted transition hover:bg-canvas hover:text-ink"
-            @click="setFilter('')"
-          >
-            查看全部
-          </button>
-          <router-link
-            :to="{ name: 'workbench' }"
-            class="inline-flex h-11 items-center rounded-xl bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong"
-          >
-            新建图集
-          </router-link>
-        </div>
       </div>
 
       <ul v-else class="mt-4 space-y-3">
@@ -479,9 +463,9 @@ onBeforeUnmount(() => {
             </span>
           </button>
 
-          <div class="mt-2 border-t border-line/70 px-4 py-3 sm:px-5">
-            <div class="grid gap-3 lg:grid-cols-[3fr_3fr_1fr]">
-              <div class="min-w-0 lg:col-span-2">
+          <div v-if="isExpanded(task.id)" :id="`task-stages-${task.id}`" class="border-t border-line/70 px-4 py-3 sm:px-5">
+            <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_148px] lg:items-start">
+              <div class="min-w-0">
                 <TaskStageBar :stages="stagesOf(task)" layout="pairs" />
               </div>
               <div class="flex flex-col gap-1.5 lg:justify-start">
@@ -539,9 +523,7 @@ onBeforeUnmount(() => {
                 <p v-else-if="task.control_state === 'stopped'" class="text-xs text-danger">已停止，不再上传或发布</p>
               </div>
             </div>
-          </div>
 
-          <div v-if="isExpanded(task.id)" :id="`task-stages-${task.id}`" class="border-t border-line/70 px-4 py-3 sm:px-5">
             <!-- 顶行已经给过更新时间，这里只留阶段概况，不重复同一时间。 -->
             <p class="mt-2 text-xs text-muted">{{ summaryOf(task) }}</p>
             <!-- 失败时把可读原因写在这里，不再只显示笼统的「存图失败」。 -->

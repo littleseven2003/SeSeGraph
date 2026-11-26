@@ -78,8 +78,11 @@ test('卡片结构、空态与控件热区', () => {
   const controls = source.match(/inline-flex h-11/g) ?? []
   assert.ok(controls.length >= 6, `44px 控件数量不足：${controls.length}`)
   assert.ok(source.includes("filtered ? '当前筛选没有任务' : '暂无任务'"), '全空与筛选空分开说明')
-  assert.ok(source.includes('查看全部'), '筛选空提供回到全部')
-  assert.ok(source.includes('新建图集'), '空态提供新建入口')
+  // 空态只留图标与说明，不再放按钮。
+  const emptyStart = source.indexOf("filtered ? '当前筛选没有任务' : '暂无任务'")
+  const emptyBlock = source.slice(emptyStart, source.indexOf('</div>', source.indexOf('在工作台选好图片后提交', emptyStart)))
+  assert.equal(emptyBlock.includes('查看全部'), false, '空态不再提供回到全部按钮')
+  assert.equal(emptyBlock.includes('新建图集'), false, '空态不再提供新建入口')
 })
 
 test('任务页复用同一套四阶段与控制判定', () => {
@@ -97,16 +100,19 @@ test('任务页复用同一套四阶段与控制判定', () => {
   assert.equal(source.includes('statusLabel('), false, '不再用画廊聚合状态冒充单段状态')
 })
 
-test('四阶段与操作常驻卡片主体，展开区只承接失败原因', () => {
-  assert.ok(source.includes('<TaskStageBar :stages="stagesOf(task)" layout="pairs" />'), '主体复用四阶段组件并按两列各两段排布')
-  assert.ok(source.includes('lg:grid-cols-[3fr_3fr_1fr]'), '桌面按 3:3:1 分栏')
-  assert.ok(source.includes('v-if="isExpanded(task.id)"'), '展开区仍按需出现')
+test('折叠只留摘要，四阶段与操作都收进同一个展开区', () => {
+  assert.ok(source.includes('<TaskStageBar :stages="stagesOf(task)" layout="pairs" />'), '展开区复用四阶段组件并按两列各两段排布')
+  assert.ok(source.includes('lg:grid-cols-[minmax(0,1fr)_148px] lg:items-start'), '桌面改为自适应进度 + 148px 操作栏')
   assert.ok(source.includes(':aria-expanded="isExpanded(task.id)"'), '展开状态对读屏可见')
   assert.ok(source.includes('toggleExpanded(task.id, task.status)'), '整行可点开，失败任务展开时补读逐图原因')
-  // 四阶段在展开区之外，折叠时也能看到。
-  const stagesAt = source.indexOf('lg:grid-cols-[3fr_3fr_1fr]')
-  const expandedAt = source.indexOf('v-if="isExpanded(task.id)"')
-  assert.ok(stagesAt > 0 && stagesAt < expandedAt, '四阶段位于展开区之前')
+  // 四阶段、操作与失败明细在同一个展开容器内。
+  const expandedAt = source.indexOf('v-if="isExpanded(task.id)" :id="`task-stages-${task.id}`"')
+  assert.ok(expandedAt > 0, '展开区按需出现并保留锚点')
+  const expandedBlock = source.slice(expandedAt)
+  assert.ok(expandedBlock.indexOf('<TaskStageBar') > 0, '四阶段在展开区内')
+  assert.ok(expandedBlock.indexOf('查看图集') > 0, '操作按钮在展开区内')
+  assert.ok(expandedBlock.indexOf('失败明细') > 0, '失败明细同区承接')
+  assert.equal(source.includes('lg:grid-cols-[3fr_3fr_1fr]'), false, '不再固定 3:3:1')
   assert.ok(source.includes('role="progressbar"'), '收起时仍有总轨')
   assert.equal(source.includes('{{ overallOf(task) }}%'), false, '进度轨不显示百分号')
   assert.ok(source.includes('sm:h-9'), '窄屏操作保留 44px 热区、桌面收敛')
