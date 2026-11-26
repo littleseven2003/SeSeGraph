@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '../components/AppHeader.vue'
 import TaskStageBar from '../components/tasks/TaskStageBar.vue'
@@ -115,10 +115,13 @@ const showProgress = computed(() => {
   return !(overall.value >= 100 && publishSettled.value)
 })
 
+// activeTask 判断是否还有正在跑的任务：同步中（publishing）也要继续轮询，
+// 否则只在首帧看到 publishing，页面不会再读到已发布结果。
 const activeTask = computed(() => {
   const state = progress.value
   if (state === null) return false
-  return ['uploading', 'queued'].includes(state.status) || ['pending', 'publishing'].includes(state.publish_state)
+  return ['uploading', 'queued', 'publishing'].includes(state.status)
+    || ['pending', 'publishing'].includes(state.publish_state)
 })
 
 function messageOf(cause: unknown): string {
@@ -144,7 +147,18 @@ async function load(): Promise<void> {
     detail.value = null
   } finally {
     loading.value = false
+    followAnchor()
   }
+}
+
+// followAnchor 让任务页「查看图集」带来的 #progress 在内容渲染后再定位：
+// 首帧只有加载占位，进度卡或媒体区要等详情读回来才存在。
+function followAnchor(): void {
+  const raw = window.location.hash.replace(/^#/, '')
+  if (raw !== 'progress' && raw !== 'media') return
+  void nextTick(() => {
+    document.getElementById(raw)?.scrollIntoView({ block: 'start' })
+  })
 }
 
 async function reloadProgress(): Promise<void> {
@@ -383,22 +397,22 @@ onBeforeUnmount(() => {
                     </span>
                     <span v-if="detail.cover_sort_order === image.sort_order" class="absolute left-1.5 top-1.5 rounded bg-brand px-1.5 py-0.5 text-[10px] font-medium text-brand-ink">封面</span>
                   </button>
-                  <div class="flex items-center justify-between gap-1 border-t border-line/70 px-2 py-1">
+                  <div class="flex min-h-11 items-center justify-between gap-1 border-t border-line/70 px-1.5 sm:min-h-0 sm:px-2 sm:py-1">
                     <span class="tnum text-[11px] text-muted">#{{ image.sort_order }}</span>
                     <div class="flex items-center gap-0.5">
-                      <button type="button" class="inline-flex h-11 w-11 -m-2 items-center justify-center rounded-md text-muted transition hover:bg-canvas hover:text-ink sm:m-0 sm:h-7 sm:w-7" :aria-label="`揭开第 ${image.sort_order} 张`" @click="toggleReveal(image.sort_order)">
+                      <button type="button" class="inline-flex h-11 w-9 shrink-0 items-center justify-center rounded-md text-muted transition hover:bg-canvas hover:text-ink sm:h-7 sm:w-7" :aria-label="`揭开第 ${image.sort_order} 张`" @click="toggleReveal(image.sort_order)">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" class="h-4 w-4" aria-hidden="true">
                           <path d="M2.5 12S6 6.5 12 6.5 21.5 12 21.5 12 18 17.5 12 17.5 2.5 12 2.5 12Z" stroke-linecap="round" />
                           <circle cx="12" cy="12" r="2.6" />
                         </svg>
                       </button>
-                      <button type="button" class="inline-flex h-11 w-11 -m-2 items-center justify-center rounded-md text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-40 sm:m-0 sm:h-7 sm:w-7" :disabled="imageLink(image) === ''" :aria-label="`复制第 ${image.sort_order} 张链接`" @click="copy(imageLink(image), '单图链接')">
+                      <button type="button" class="inline-flex h-11 w-9 shrink-0 items-center justify-center rounded-md text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-40 sm:h-7 sm:w-7" :disabled="imageLink(image) === ''" :aria-label="`复制第 ${image.sort_order} 张链接`" @click="copy(imageLink(image), '单图链接')">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" class="h-4 w-4" aria-hidden="true">
                           <rect x="9" y="9" width="11" height="11" rx="2" />
                           <path d="M5 15V6a2 2 0 0 1 2-2h8" stroke-linecap="round" />
                         </svg>
                       </button>
-                      <button type="button" class="inline-flex h-11 items-center rounded-md px-1.5 text-[11px] text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-40 sm:h-7" :disabled="image.status !== 'stored' || busy !== ''" @click="setCover(image.sort_order)">
+                      <button type="button" class="inline-flex h-11 shrink-0 items-center whitespace-nowrap rounded-md px-1 text-[11px] text-muted transition hover:bg-canvas hover:text-ink disabled:opacity-40 sm:h-7 sm:px-1.5" :disabled="image.status !== 'stored' || busy !== ''" @click="setCover(image.sort_order)">
                         设为封面
                       </button>
                     </div>
