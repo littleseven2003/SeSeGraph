@@ -10,7 +10,6 @@ import {
   fetchBots,
   fetchSettings,
   fetchTraffic,
-  saveBots,
   saveTelegram,
   resetPostThumbs,
   saveSettings,
@@ -214,9 +213,6 @@ const form = reactive({
 // Bot 池：草稿与服务端条目分开保存，保存成功后整体刷新。
 const bots = ref<BotEntry[]>([])
 const botDraft = ref<{ bot_id: number; alias: string; token: string; status: string }[]>([])
-const botSaving = ref(false)
-const botError = ref('')
-const botNotice = ref('')
 
 function applyBots(list: BotEntry[]): void {
   bots.value = list
@@ -254,25 +250,19 @@ async function loadBots(): Promise<void> {
 }
 
 function addBotDraft(): void {
-  botNotice.value = ''
-  botError.value = ''
   if (botDraft.value.length >= 10) {
-    botError.value = '最多配置 10 个 Bot'
+    feedback.value = '最多配置 10 个 Bot'
     return
   }
   botDraft.value.push({ bot_id: 0, alias: '', token: '', status: 'ok' })
 }
 
 function removeBotDraft(index: number): void {
-  botNotice.value = ''
-  botError.value = ''
   botDraft.value.splice(index, 1)
 }
 
 // toggleBotDraft 在草稿里切换停用／启用；停用只退出新写入，已有图片仍可读。
 function toggleBotDraft(index: number): void {
-  botNotice.value = ''
-  botError.value = ''
   const bot = botDraft.value[index]
   bot.status = bot.status === 'paused' ? 'ok' : 'paused'
 }
@@ -284,28 +274,10 @@ function moveBotDraft(index: number, offset: number): void {
   ;[list[index], list[target]] = [list[target], list[index]]
 }
 
+// saveBotPool 与页头「保存设置」同一个入口：频道与 Bot 列表在一次请求里提交，
+// 探测与写入都通过后才生效，不会先落半套配置。
 async function saveBotPool(): Promise<void> {
-  if (botSaving.value) return
-  botSaving.value = true
-  botError.value = ''
-  botNotice.value = ''
-  try {
-    const saved = await saveBots(botDraft.value.map((bot, index) => ({
-      bot_id: bot.bot_id,
-      alias: bot.alias.trim(),
-      token: bot.token.trim(),
-      priority: index,
-      status: bot.status,
-    })))
-    applyBots(saved.bots)
-    botNotice.value = saved.pool_enabled
-      ? '已保存，上传遇到账号受限时会自动换用池内其他 Bot'
-      : '已保存；池内至少两个可用 Bot 时才启用自动切换'
-  } catch (cause) {
-    botError.value = cause instanceof ApiError ? cause.message : '保存 Bot 池失败，请稍后重试'
-  } finally {
-    botSaving.value = false
-  }
+  await save()
 }
 
 function applyView(next: SettingsView): void {
@@ -628,14 +600,17 @@ const MENU_PATCH_KEYS: Record<string, SettingsPatchKey[]> = {
   appearance: [],
 }
 
-async function save(): Promise<void> {
+async function save(scope?: SettingsPatchKey[]): Promise<void> {
   if (view.value === null || saving.value) return
   saveError.value = ''
   fieldErrors.value = []
   feedback.value = ''
 
-  const patch = changedPatch(view.value, form, MENU_PATCH_KEYS[activeSection.value] ?? [])
-  if (!hasPatch(patch)) {
+  const keys = scope ?? MENU_PATCH_KEYS[activeSection.value] ?? []
+  const patch = changedPatch(view.value, form, keys)
+  // Telegram 栏的 Bot 列表不在表单补丁里：只改别名或启停时同样要提交。
+  const telegramScope = activeSection.value === 'telegram'
+  if (!hasPatch(patch) && !(telegramScope && botDraftChanged())) {
     feedback.value = '没有需要保存的改动'
     return
   }
@@ -890,7 +865,7 @@ onBeforeUnmount(() => {
             type="button"
             :disabled="saving"
             class="mt-3 h-11 w-full rounded-xl bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
-            @click="save"
+            @click="save()"
           >
             {{ saving ? '保存中…' : '保存设置' }}
           </button>
@@ -964,7 +939,7 @@ onBeforeUnmount(() => {
                       </div>
                       <button
                         type="button"
-                        :disabled="botSaving"
+                        :disabled="saving"
                         class="h-9 rounded-lg border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas disabled:opacity-60"
                         @click="addBotDraft"
                       >
@@ -998,7 +973,7 @@ onBeforeUnmount(() => {
                         <span class="ml-auto flex gap-1">
                           <button
                             type="button"
-                            :disabled="index === 0 || botSaving"
+                            :disabled="index === 0 || saving"
                             class="h-8 rounded-lg border border-line px-2 transition hover:bg-surface disabled:opacity-40"
                             @click="moveBotDraft(index, -1)"
                           >
@@ -1006,7 +981,7 @@ onBeforeUnmount(() => {
                           </button>
                           <button
                             type="button"
-                            :disabled="index === botDraft.length - 1 || botSaving"
+                            :disabled="index === botDraft.length - 1 || saving"
                             class="h-8 rounded-lg border border-line px-2 transition hover:bg-surface disabled:opacity-40"
                             @click="moveBotDraft(index, 1)"
                           >
@@ -1014,7 +989,7 @@ onBeforeUnmount(() => {
                           </button>
                           <button
                             type="button"
-                            :disabled="botSaving"
+                            :disabled="saving"
                             class="h-8 rounded-lg border border-line px-2 transition hover:bg-surface disabled:opacity-40"
                             @click="toggleBotDraft(index)"
                           >
@@ -1022,7 +997,7 @@ onBeforeUnmount(() => {
                           </button>
                           <button
                             type="button"
-                            :disabled="botSaving"
+                            :disabled="saving"
                             class="h-8 rounded-lg border border-line px-2 text-danger transition hover:bg-surface disabled:opacity-40"
                             @click="removeBotDraft(index)"
                           >
@@ -1035,7 +1010,7 @@ onBeforeUnmount(() => {
                     <div class="flex flex-wrap items-center gap-2">
                       <button
                         type="button"
-                        :disabled="botSaving"
+                        :disabled="saving"
                         class="h-9 rounded-lg border border-line px-3 text-xs font-medium text-muted transition hover:bg-canvas disabled:opacity-60"
                         @click="addBotDraft"
                       >
@@ -1043,15 +1018,13 @@ onBeforeUnmount(() => {
                       </button>
                       <button
                         type="button"
-                        :disabled="botSaving"
+                        :disabled="saving"
                         class="h-9 rounded-lg bg-brand px-3 text-xs font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
                         @click="saveBotPool"
                       >
-                        保存 Bot 池
+                        保存 Bot 列表
                       </button>
                     </div>
-                    <p v-if="botError !== ''" class="text-xs text-danger">{{ botError }}</p>
-                    <p v-if="botNotice !== ''" class="text-xs text-muted">{{ botNotice }}</p>
                   </div>
                 </div>
 
@@ -1510,6 +1483,17 @@ onBeforeUnmount(() => {
                         <p class="mt-0.5 text-sm">{{ backup !== null ? backupLatestText(backup) : '尚未读取' }}</p>
                       </div>
                     </div>
+                    <div class="mt-3 flex flex-wrap items-center gap-3">
+                      <button
+                        type="button"
+                        class="h-9 rounded-lg bg-brand px-3 text-xs font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+                        :disabled="saving"
+                        @click="save(['backup'])"
+                      >
+                        保存备份计划
+                      </button>
+                      <span class="text-xs text-muted">只提交这一张卡片的字段，缓存上限的草稿保持原样。</span>
+                    </div>
                   </div>
                 </div>
 
@@ -1562,6 +1546,18 @@ onBeforeUnmount(() => {
                         清空缓存
                       </button>
                       <span class="text-xs text-muted">只删小图，原图与已发布内容不受影响。</span>
+                    </div>
+
+                    <div class="flex flex-wrap items-center gap-3">
+                      <button
+                        type="button"
+                        class="h-9 rounded-lg bg-brand px-3 text-xs font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+                        :disabled="saving"
+                        @click="save(['media_thumbs'])"
+                      >
+                        保存缓存上限
+                      </button>
+                      <span class="text-xs text-muted">只提交缓存上限，备份计划的草稿保持原样。</span>
                     </div>
 
                     <div class="space-y-2 rounded-xl bg-canvas px-3 py-3">
@@ -1755,7 +1751,7 @@ onBeforeUnmount(() => {
             type="button"
             :disabled="saving"
             class="h-11 shrink-0 rounded-xl bg-brand px-4 text-sm font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
-            @click="save"
+            @click="save()"
           >
             {{ saving ? '保存中…' : '保存设置' }}
           </button>

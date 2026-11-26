@@ -3,6 +3,7 @@ import type { TaskTone } from '../../utils/tasks.ts'
 import { stagePercent, type StageKey, type StageView } from '../../utils/stages.ts'
 
 // 四阶段进度条：桌面四等分，390px 折成 2×2；工作台与任务页共用同一份结构与色板。
+// 列对布局在窄屏也是两列：每列两段，合成 2×2，不再退化成单列四行。
 const props = defineProps<{
   stages: StageView[]
   /** 列对布局把四段拆成两列各两段，供任务页 3:3:1 主体使用；缺省仍是四等分一行。 */
@@ -42,7 +43,7 @@ const VALUE_TEXT: Record<TaskTone, string> = {
 <template>
   <div
     v-if="props.layout === 'pairs'"
-    class="grid grid-cols-1 gap-2.5 sm:grid-cols-2 sm:gap-3"
+    class="grid grid-cols-2 gap-2.5 sm:gap-3"
     :aria-label="`四阶段进度：${props.stages.map((item) => item.index + '. ' + item.label + ' ' + item.value).join('，')}`"
   >
     <ol class="space-y-2.5">
