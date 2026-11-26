@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/api"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/botpool"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/posts"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/settings"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/storage"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -547,5 +549,171 @@ func TestImageResolverTakesOverMissingRef(t *testing.T) {
 	}
 	if count, err := repository.CountImagesExclusiveToRemoval(ctx, 7, []int64{8}); err != nil || count != 0 {
 		t.Fatalf("接管后独占计数 = %d（err=%v），期望 0", count, err)
+	}
+}
+
+// dualBotFake 是接管后的读图提供方替身：只认自己取得的文件编号，并支持区间读取。
+type dualBotFake struct {
+	botID int64
+	taken int
+	body  []byte
+	opens int
+}
+
+func (f *dualBotFake) Name() string { return "dual-bot-fake" }
+
+func (f *dualBotFake) Upload(context.Context, storage.UploadRequest) (storage.UploadResult, error) {
+	return storage.UploadResult{}, nil
+}
+
+func (f *dualBotFake) TakeoverFile(_ context.Context, chatID string, messageID int64) (string, error) {
+	if chatID != "-100777" || messageID != 55 {
+		return "", errors.New("原消息位置不符")
+	}
+	f.taken++
+	return "file-b", nil
+}
+
+func (f *dualBotFake) OpenStream(_ context.Context, fileID string) (storage.Stream, error) {
+	f.opens++
+	if fileID != "file-b" {
+		return storage.Stream{}, storage.ErrFileUnavailable
+	}
+	return storage.Stream{
+		Body:        io.NopCloser(bytes.NewReader(f.body)),
+		ContentType: "video/mp4",
+		Size:        int64(len(f.body)),
+	}, nil
+}
+
+func (f *dualBotFake) Size(context.Context, string) (int64, error) { return int64(len(f.body)), nil }
+
+func (f *dualBotFake) OpenStreamRange(_ context.Context, fileID string, r storage.ByteRange) (storage.Stream, error) {
+	if fileID != "file-b" {
+		return storage.Stream{}, storage.ErrFileUnavailable
+	}
+	start := r.Start
+	end := int64(len(f.body))
+	if r.Length >= 0 && start+r.Length < end {
+		end = start + r.Length
+	}
+	if start > end || start > int64(len(f.body)) {
+		return storage.Stream{}, storage.ErrFileUnavailable
+	}
+	return storage.Stream{
+		Body:        io.NopCloser(bytes.NewReader(f.body[start:end])),
+		ContentType: "video/mp4",
+		Size:        int64(len(f.body)),
+		Start:       start,
+		End:         end - 1,
+	}, nil
+}
+
+// TestGatewayTakeoverServesAfterSourceRemoved 用双 Bot 样本走完整读图链路：
+// 原 Bot 移除、没有任何替代引用时由 B 转发接管，随后的 GET、HEAD 与 MP4 Range 都可用，
+// 且原 Bot 的删除保护在引用登记后解除。
+func TestGatewayTakeoverServesAfterSourceRemoved(t *testing.T) {
+	handle, err := db.Open(filepath.Join(t.TempDir(), "dual.db"))
+	if err != nil {
+		t.Fatalf("打开数据库失败: %v", err)
+	}
+	t.Cleanup(func() { _ = handle.Close() })
+	if err := db.Migrate(context.Background(), handle); err != nil {
+		t.Fatalf("迁移失败: %v", err)
+	}
+	repository := posts.NewRepository(handle)
+	ctx := context.Background()
+	postID, err := repository.Create(ctx, posts.Post{Title: "接管", ImageCount: 1, UploadMode: storage.ModeDocument})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+	if _, err := repository.AttachImage(ctx, posts.Image{
+		PostID: postID, SortOrder: 1, Status: posts.ImageStatusUploaded,
+		MimeType: posts.MimeVideoMP4, FileSize: 10, TempFilePath: "tmp/a.part",
+	}); err != nil {
+		t.Fatalf("保存图片失败: %v", err)
+	}
+	images, err := repository.ListImages(ctx, postID)
+	if err != nil || len(images) != 1 {
+		t.Fatalf("读取图片失败: %v", err)
+	}
+	imageID := images[0].ID
+	if err := repository.MarkImageStoredWithOrigin(ctx, imageID, "file-a", 55, "telegram", 7, "-100777"); err != nil {
+		t.Fatalf("写入逐图来源失败: %v", err)
+	}
+	if err := repository.MarkPostFinished(ctx, postID, posts.StatusCompleted, ""); err != nil {
+		t.Fatalf("标记完成失败: %v", err)
+	}
+	if err := repository.SetPublic(ctx, postID, true); err != nil {
+		t.Fatalf("设置公开失败: %v", err)
+	}
+	shortCode := images[0].ShortCode
+
+	body := []byte("0123456789")
+	taker := &dualBotFake{botID: 8, body: body}
+	resolver := newImageResolver(imageResolverDeps{
+		repo: repository,
+		// 7 号 Bot 已从池里移除，只剩 8 号。
+		bots: func(context.Context) ([]botpool.Bot, error) {
+			return []botpool.Bot{{BotID: 8, Token: "888:ok", Status: botpool.StatusOK}}, nil
+		},
+		effective: func(context.Context) (settings.Effective, error) { return settings.Effective{}, nil },
+		provider: func(bot botpool.Bot, _ settings.Effective) storage.StreamProvider {
+			if bot.BotID != 8 {
+				return nil
+			}
+			return taker
+		},
+	})
+	router := api.NewRouter(api.Deps{
+		Version: "test", Commit: "abc1234", Posts: repository, Streams: taker,
+		ResolveImage: resolver, Logger: log.New(io.Discard, "", 0),
+	})
+	server := httptest.NewServer(router)
+	t.Cleanup(server.Close)
+
+	request := func(method, rangeHeader string) (*http.Response, []byte) {
+		req, err := http.NewRequest(method, server.URL+"/i/"+shortCode, nil)
+		if err != nil {
+			t.Fatalf("构造请求失败: %v", err)
+		}
+		if rangeHeader != "" {
+			req.Header.Set("Range", rangeHeader)
+		}
+		response, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("请求失败: %v", err)
+		}
+		defer func() { _ = response.Body.Close() }()
+		payload, err := io.ReadAll(response.Body)
+		if err != nil {
+			t.Fatalf("读取响应失败: %v", err)
+		}
+		return response, payload
+	}
+
+	response, payload := request(http.MethodGet, "")
+	if response.StatusCode != http.StatusOK || string(payload) != string(body) {
+		t.Fatalf("接管后 GET = %d/%q，期望 200 与完整内容", response.StatusCode, payload)
+	}
+	if taker.taken != 1 {
+		t.Fatalf("接管次数 = %d，期望 1", taker.taken)
+	}
+
+	response, _ = request(http.MethodHead, "bytes=2-5")
+	if response.StatusCode != http.StatusPartialContent {
+		t.Fatalf("HEAD 状态码 = %d，期望 206", response.StatusCode)
+	}
+	response, payload = request(http.MethodGet, "bytes=2-5")
+	if response.StatusCode != http.StatusPartialContent || string(payload) != "2345" {
+		t.Fatalf("Range GET = %d/%q，期望 206 与 2345", response.StatusCode, payload)
+	}
+
+	// 引用已登记，后续读取不再重复接管；原 Bot 的删除保护随之解除。
+	if taker.taken != 1 {
+		t.Fatalf("再次读取不应重复接管，实际 %d 次", taker.taken)
+	}
+	if count, err := repository.CountImagesExclusiveToRemoval(ctx, 7, []int64{8}); err != nil || count != 0 {
+		t.Fatalf("独占计数 = %d（err=%v），期望 0", count, err)
 	}
 }
