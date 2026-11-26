@@ -285,10 +285,10 @@ function moveBotDraft(index: number, offset: number): void {
   ;[list[index], list[target]] = [list[target], list[index]]
 }
 
-// saveBotPool 与页头「保存设置」同一个入口：频道与 Bot 列表在一次请求里提交，
+// saveBotPool 走 Telegram 卡片自己的入口：频道与 Bot 列表在一次请求里提交，
 // 探测与写入都通过后才生效，不会先落半套配置。
 async function saveBotPool(): Promise<void> {
-  await save()
+  await save(['telegram'])
 }
 
 function applyView(next: SettingsView): void {
@@ -600,27 +600,17 @@ function botDraftChanged(): boolean {
   })
 }
 
-// MENU_PATCH_KEYS 把七栏映射到各自可提交的字段组。
-const MENU_PATCH_KEYS: Record<string, SettingsPatchKey[]> = {
-  telegram: ['telegram'],
-  network: ['proxy'],
-  telegraph: ['telegraph'],
-  upload: ['upload', 'meta'],
-  traffic: ['traffic'],
-  maintenance: ['backup', 'media_thumbs'],
-  appearance: [],
-}
-
-async function save(scope?: SettingsPatchKey[]): Promise<void> {
+// save 只提交按钮自己传进来的字段组：滚动高亮只影响导航，不改变提交范围。
+async function save(keys: SettingsPatchKey[]): Promise<void> {
   if (view.value === null || saving.value) return
+  if (keys.length === 0) return
   saveError.value = ''
   fieldErrors.value = []
   feedback.value = ''
 
-  const keys = scope ?? MENU_PATCH_KEYS[activeSection.value] ?? []
   const patch = changedPatch(view.value, form, keys)
   // Telegram 栏的 Bot 列表不在表单补丁里：只改别名或启停时同样要提交。
-  const telegramScope = activeSection.value === 'telegram'
+  const telegramScope = keys.includes('telegram')
   if (!hasPatch(patch) && !(telegramScope && botDraftChanged())) {
     feedback.value = '没有需要保存的改动'
     return
@@ -666,7 +656,7 @@ async function save(scope?: SettingsPatchKey[]): Promise<void> {
   // 记下保存前的输入：本次没提交的组要把草稿还原回去，避免被服务端结果覆盖。
   const pending = { ...form }
   try {
-    if (activeSection.value === 'telegram') {
+    if (telegramScope) {
       // 频道与 Bot 列表一次提交：候选频道参与探测，失败不会留下半套配置。
       const saved = await saveTelegram(form.channelId.trim(), botDraft.value.map((bot, index) => ({
         bot_id: bot.bot_id,
@@ -714,8 +704,12 @@ async function clearProxy(): Promise<void> {
   saving.value = true
   saveError.value = ''
   feedback.value = ''
+  // 只清除已保存的代理地址，其他卡片还没提交的草稿按原样留在输入框里。
+  const pending = { ...form }
   try {
     applyView(await saveSettings({ proxy: { url: '' } }))
+    form.proxyUrl = ''
+    restorePendingDraft(pending, { proxy: { url: '' } })
     feedback.value = '已清除保存的代理地址'
   } catch (cause) {
     saveError.value = failText(cause).message
@@ -808,6 +802,17 @@ function syncActiveFromScroll(): void {
   }
   activeSection.value = current
 }
+
+onMounted(() => {
+  // 先挂监听再读设置：加载期间滚动和锚点已经可用，刷新也能回到地址里的位置。
+  window.addEventListener('scroll', syncActiveFromScroll, { passive: true })
+  window.addEventListener('hashchange', followHash)
+  void load().then(async () => {
+    await nextTick()
+    followHash()
+    if (window.location.hash === '') syncActiveFromScroll()
+  })
+})
 
 onBeforeUnmount(() => {
   window.clearTimeout(reloginTimer)
@@ -1587,7 +1592,7 @@ onBeforeUnmount(() => {
                       </div>
                       <div class="rounded-xl bg-canvas px-3 py-2.5">
                         <p class="text-xs text-muted">当前上限</p>
-                        <p class="mt-0.5 text-sm font-medium tnum">{{ form.thumbGB }} GB</p>
+                        <p class="mt-0.5 text-sm font-medium tnum">{{ formatTrafficBytes(view?.media_thumbs.limit_bytes ?? 0) }}</p>
                       </div>
                     </div>
 

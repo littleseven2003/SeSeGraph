@@ -421,3 +421,28 @@ test('设置页四组十项常驻渲染，旧锚点静默映射', () => {
   assert.ok(view.includes('aria-label="主题模式"'), '外观与安全内有主题三态')
 })
 
+test('设置页挂载即加载，保存范围只由按钮决定', () => {
+  const view = readFileSync(new URL('../src/views/SettingsView.vue', import.meta.url), 'utf8')
+  // 挂载后必须真的去读设置，否则页面一直停在「正在读取设置…」。
+  assert.ok(view.includes('onMounted(() => {'), '有挂载入口')
+  assert.ok(view.includes('void load().then('), '挂载后立即读取设置')
+  assert.ok(view.includes("window.addEventListener('scroll', syncActiveFromScroll"), '滚动跟随挂载即生效')
+  assert.ok(view.includes("window.addEventListener('hashchange', followHash)"), '前进后退跟随挂载即生效')
+  // 提交范围来自按钮传入的字段组，与滚动高亮无关。
+  assert.equal(view.includes('MENU_PATCH_KEYS'), false, '不再按高亮项挑接口')
+  assert.ok(view.includes('async function save(keys: SettingsPatchKey[])'), '保存只接受显式字段组')
+  assert.ok(view.includes('const telegramScope = keys.includes(\'telegram\')'), 'Telegram 原子提交按字段组判定')
+  assert.ok(view.includes("await save(['telegram'])"), 'Bot 列表与频道同一次提交')
+  assert.ok(view.includes('await save()') === false, '不再有匿名字段组的保存入口')
+})
+
+test('清除代理与缓存指标互不影响其他卡片草稿', () => {
+  const view = readFileSync(new URL('../src/views/SettingsView.vue', import.meta.url), 'utf8')
+  const start = view.indexOf('async function clearProxy')
+  const body = view.slice(start, start + 900)
+  assert.ok(body.includes('const pending = { ...form }'), '先留其他卡片草稿')
+  assert.ok(body.includes('restorePendingDraft(pending, { proxy: { url: \'\' } })'), '只重置代理地址')
+  // 「当前上限」显示已生效值，草稿留在输入框里。
+  assert.ok(view.includes('formatTrafficBytes(view?.media_thumbs.limit_bytes ?? 0)'), '当前上限取已生效值')
+})
+
