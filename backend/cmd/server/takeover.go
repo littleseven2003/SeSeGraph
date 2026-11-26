@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -143,8 +144,9 @@ func (q *takeoverQueue) takeOver(ctx context.Context, image *posts.PublicImage) 
 	return nil
 }
 
-// verifyDestination 用 Telegram 返回的真实会话 ID 确认维护频道独立且为私有会话：
-// 每次转发前都重新校验，频道状态变化（改为公开、或与图床/来源频道重合）能及时拦住。
+// verifyDestination 用数字会话 ID 确认维护频道独立且为私有会话。
+// 每次都重新校验，频道被改为公开或与图床/来源频道重合时立刻拦住；
+// 无法解析出数字 ID 的别名一律暂停本次转发，避免把「同一频道的两种写法」当成两个频道。
 func (q *takeoverQueue) verifyDestination(ctx context.Context, provider storage.StreamProvider, galleryChat, sourceChat string) error {
 	dest := strings.TrimSpace(q.deps.chatID)
 	if dest == "" {
@@ -156,14 +158,24 @@ func (q *takeoverQueue) verifyDestination(ctx context.Context, provider storage.
 	if !ok {
 		return errors.New("当前图床无法确认维护频道")
 	}
-	info, err := inspector.ChatInfoOf(ctx, dest)
+	destID, err := resolveChatID(inspector, ctx, dest)
 	if err != nil {
 		return err
+	}
+	if destID == 0 {
+		return errors.New("维护频道标识无法确认")
+	}
+	// 私有性只看当前状态，不做一次性缓存；拿不到会话信息就暂停，不凭配置猜测。
+	info, infoErr := inspector.ChatInfoOf(ctx, dest)
+	if infoErr != nil || info.ID == 0 {
+		return errors.New("无法确认维护频道状态")
+	}
+	if info.ID != destID {
+		return errors.New("维护频道标识前后不一致")
 	}
 	if !info.Private() {
 		return errors.New("维护频道必须是私有会话")
 	}
-	destID := info.ID
 	for _, other := range []struct {
 		name string
 		chat string
@@ -172,21 +184,34 @@ func (q *takeoverQueue) verifyDestination(ctx context.Context, provider storage.
 		if chat == "" {
 			continue
 		}
-		if sameChatID(inspector, ctx, dest, destID, chat) {
+		otherID, resolveErr := resolveChatID(inspector, ctx, chat)
+		if resolveErr != nil || otherID == 0 {
+			// 解析不出来的别名不能仅凭字符串判断不同，暂停本次转发更安全。
+			return errors.New("无法确认" + other.name + "的会话标识")
+		}
+		if otherID == destID {
 			return errors.New("维护频道不能与" + other.name + "相同")
 		}
 	}
 	return nil
 }
 
-// sameChatID 先按 Telegram 返回的会话 ID 比较，取不到时退回规范化后的配置串比较。
-func sameChatID(inspector interface {
+// resolveChatID 返回会话的数字 ID：配置里已经是数字时直接采用，别名才查一次 getChat。
+func resolveChatID(inspector interface {
 	ChatInfoOf(context.Context, string) (storage.ChatInfo, error)
-}, ctx context.Context, dest string, destID int64, other string) bool {
-	if otherInfo, err := inspector.ChatInfoOf(ctx, other); err == nil && otherInfo.ID != 0 && destID != 0 {
-		return otherInfo.ID == destID
+}, ctx context.Context, chat string) (int64, error) {
+	trimmed := strings.TrimSpace(chat)
+	if trimmed == "" {
+		return 0, errors.New("会话标识为空")
 	}
-	return strings.TrimSpace(dest) == strings.TrimSpace(other)
+	if id, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
+		return id, nil
+	}
+	info, err := inspector.ChatInfoOf(ctx, trimmed)
+	if err != nil || info.ID == 0 {
+		return 0, errors.New("无法确认会话标识")
+	}
+	return info.ID, nil
 }
 
 // readBack 由新 Bot 实际读到至少一个字节，确认临时消息清掉后文件仍可读。

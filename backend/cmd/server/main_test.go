@@ -868,6 +868,9 @@ func (f *takeoverProbeFake) ChatInfoOf(_ context.Context, chatID string) (storag
 		return info, nil
 	case "-100777":
 		return storage.ChatInfo{ID: -100777, Type: "channel", Title: "图床"}, nil
+	case "@same":
+		// 与维护频道是同一会话的别名写法。
+		return storage.ChatInfo{ID: -100888, Type: "channel", Title: "维护"}, nil
 	}
 	return storage.ChatInfo{}, errors.New("会话不符")
 }
@@ -929,6 +932,10 @@ func TestTakeoverRequiresPrivateIndependentChannel(t *testing.T) {
 		{"公开会话", "-100888", &takeoverProbeFake{public: true}, "-100777", "-100777", 0},
 		{"与图床频道相同", "-100777", &takeoverProbeFake{}, "-100777", "-100777", 0},
 		{"与来源频道相同", "-100888", &takeoverProbeFake{}, "-100777", "-100888", 0},
+		// 别名与维护频道解析出同一个数字 ID，同样必须拒绝。
+		{"别名解析后相同", "-100888", &takeoverProbeFake{}, "@same", "-100777", 0},
+		// 解析不出来的别名不能当作不同频道，暂停本次转发。
+		{"别名无法解析", "-100888", &takeoverProbeFake{}, "@unknown", "-100777", 0},
 		// 先转发才做回读校验：这里允许一次转发，但不能留下可作删除依据的引用。
 		{"读不到文件", "-100888", &takeoverProbeFake{failRead: true}, "-100777", "-100777", 1},
 		// 回读零字节同样不算读到内容。
