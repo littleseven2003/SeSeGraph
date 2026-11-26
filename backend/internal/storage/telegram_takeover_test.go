@@ -47,7 +47,7 @@ func TestTelegramTakeoverForwardsThenDeletes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建提供方失败: %v", err)
 	}
-	fileID, err := provider.TakeoverFile(context.Background(), "-100777", 55)
+	fileID, err := provider.TakeoverFile(context.Background(), "-100999", "-100777", 55)
 	if err != nil {
 		t.Fatalf("接管失败: %v", err)
 	}
@@ -64,14 +64,17 @@ func TestTelegramTakeoverForwardsThenDeletes(t *testing.T) {
 	if fromChat != "-100777" || fromMessage != "55" {
 		t.Errorf("转发参数 = %q/%q，期望原频道与原消息", fromChat, fromMessage)
 	}
-	if deleteChat != "-100777" || deleteMessage != "77" {
-		t.Errorf("删除参数 = %q/%q，期望删除转发出来的 77 号消息", deleteChat, deleteMessage)
+	if deleteChat != "-100999" || deleteMessage != "77" {
+		t.Errorf("删除参数 = %q/%q，期望在维护频道删除转发出来的 77 号消息", deleteChat, deleteMessage)
 	}
 
-	if _, err := provider.TakeoverFile(context.Background(), "", 55); err == nil {
+	if _, err := provider.TakeoverFile(context.Background(), "-100999", "", 55); err == nil {
 		t.Fatal("缺少原频道时应直接报错")
 	}
-	if _, err := (*Telegram)(nil).TakeoverFile(context.Background(), "-100777", 55); err == nil {
+	if _, err := provider.TakeoverFile(context.Background(), "", "-100777", 55); err == nil {
+		t.Fatal("缺少维护频道时应直接报错")
+	}
+	if _, err := (*Telegram)(nil).TakeoverFile(context.Background(), "-100999", "-100777", 55); err == nil {
 		t.Fatal("未配置图床时应返回错误")
 	}
 }
@@ -88,7 +91,7 @@ func TestTelegramTakeoverRejectsBadPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建提供方失败: %v", err)
 	}
-	if _, err := provider.TakeoverFile(context.Background(), "-100777", 55); err == nil {
+	if _, err := provider.TakeoverFile(context.Background(), "-100999", "-100777", 55); err == nil {
 		t.Fatal("转发结果没有文件编号时应报错")
 	}
 }

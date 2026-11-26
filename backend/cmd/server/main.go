@@ -377,20 +377,27 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		providerCache.mu.Unlock()
 		return built
 	}
-	takeover := newTakeoverQueue(takeoverDeps{
-		repo:      repository,
-		bots:      botPool.List,
-		effective: resolver.Effective,
-		provider:  streamProviderFor,
-		logger:    log.Default(),
-	})
-	takeover.Start(ctx)
+	// 维护频道必须由运维显式配置为独立私有频道；没有配置时不做接管，保持原 Bot 的删除保护。
+	takeoverChat, _ := lookupEnv("TELEGRAM_TAKEOVER_CHAT_ID")
+	var enqueue func(*posts.PublicImage)
+	if strings.TrimSpace(takeoverChat) != "" {
+		takeover := newTakeoverQueue(takeoverDeps{
+			repo:      repository,
+			bots:      botPool.List,
+			effective: resolver.Effective,
+			provider:  streamProviderFor,
+			chatID:    strings.TrimSpace(takeoverChat),
+			logger:    log.Default(),
+		})
+		takeover.Start(ctx)
+		enqueue = takeover.Enqueue
+	}
 	resolveImageFn = newImageResolver(imageResolverDeps{
 		repo:      repository,
 		bots:      botPool.List,
 		effective: resolver.Effective,
 		provider:  streamProviderFor,
-		queue:     takeover.Enqueue,
+		queue:     enqueue,
 	})
 	// 启动时先按现有列表装配；旧单 Token 配置在列表为空时并入列表，保证升级后行为不变。
 	go func() {
@@ -567,11 +574,11 @@ func (d imageResolverDeps) resolve(callCtx context.Context, image *posts.PublicI
 	return api.ImageSource{}, false
 }
 
-// takeOverImage 让另一个 Bot 转发原消息取得自己的文件编号。
-// 频道里其他 Bot 存下的编号不能直接复用，转发是官方途径；临时消息由接管方法自行删除。
-func takeOverImage(ctx context.Context, provider storage.StreamProvider, image *posts.PublicImage) (string, error) {
+// takeOverImage 让另一个 Bot 把原消息转发到维护频道、取得自己的文件编号。
+// 频道里其他 Bot 存下的编号不能直接复用，转发是官方途径；临时消息由接管方法按期限清理。
+func takeOverImage(ctx context.Context, provider storage.StreamProvider, destChatID string, image *posts.PublicImage) (string, error) {
 	taker, ok := provider.(interface {
-		TakeoverFile(ctx context.Context, fromChatID string, messageID int64) (string, error)
+		TakeoverFile(ctx context.Context, destChatID, fromChatID string, messageID int64) (string, error)
 	})
 	if !ok {
 		return "", errors.New("当前图床不支持接管")
@@ -579,7 +586,7 @@ func takeOverImage(ctx context.Context, provider storage.StreamProvider, image *
 	if strings.TrimSpace(image.SourceChatID) == "" || image.SourceMessageID <= 0 {
 		return "", errors.New("缺少原消息位置")
 	}
-	return taker.TakeoverFile(ctx, image.SourceChatID, image.SourceMessageID)
+	return taker.TakeoverFile(ctx, destChatID, image.SourceChatID, image.SourceMessageID)
 }
 
 // pickImageSource 在可用 Bot 与已有引用里选出读这张图的 Bot 与文件编号：

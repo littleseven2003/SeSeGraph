@@ -212,6 +212,18 @@ func (t *Telegram) ChatID() string {
 // Origin 让提供方满足 storage.Origin：编号与频道都不触发新请求。
 func (t *Telegram) Origin() (int64, string) { return t.BotIDValue(), t.ChatID() }
 
+// ChatInfoOf 读取指定会话的属性，供接管前确认维护频道是独立私有会话。
+func (t *Telegram) ChatInfoOf(ctx context.Context, chatID string) (ChatInfo, error) {
+	if t == nil {
+		return ChatInfo{}, ErrNotConfigured
+	}
+	trimmed := strings.TrimSpace(chatID)
+	if trimmed == "" {
+		return ChatInfo{}, ErrNotConfigured
+	}
+	return t.chatInfo(ctx, trimmed)
+}
+
 // ChatInfo 是 getChat 返回的会话属性，用于确认备份目标是否为公开会话。
 type ChatInfo struct {
 	ID       int64  `json:"id"`
@@ -241,7 +253,12 @@ func (t *Telegram) ChatInfo(ctx context.Context) (ChatInfo, error) {
 	if t == nil {
 		return ChatInfo{}, ErrNotConfigured
 	}
-	form := url.Values{"chat_id": {t.chatID}}
+	return t.chatInfo(ctx, t.chatID)
+}
+
+// chatInfo 读取指定会话的属性。
+func (t *Telegram) chatInfo(ctx context.Context, chatID string) (ChatInfo, error) {
+	form := url.Values{"chat_id": {chatID}}
 	endpoint := t.apiBase + "/bot" + t.token + "/getChat"
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint,
 		strings.NewReader(form.Encode()))
@@ -582,24 +599,30 @@ func (t *Telegram) resultFrom(raw json.RawMessage, mode string) (UploadResult, e
 	return result, nil
 }
 
-// TakeoverFile 借用本 Bot 转发原消息，取得属于本 Bot 的文件编号，再删掉这条临时消息。
-// 频道内其他 Bot 存下的文件编号不能直接复用，转发是让新 Bot 拿到自己编号的官方途径。
-func (t *Telegram) TakeoverFile(ctx context.Context, fromChatID string, messageID int64) (string, error) {
+// takeoverDeleteTimeout 是清理临时转发的上限：删不掉也不能把后台任务拖住。
+const takeoverDeleteTimeout = 10 * time.Second
+
+// TakeoverFile 借用本 Bot 把原消息转发到指定维护频道，取得属于本 Bot 的文件编号，
+// 再删掉这条临时消息。转发目标与图床频道分开，避免公开图集里出现临时消息。
+func (t *Telegram) TakeoverFile(ctx context.Context, destChatID, fromChatID string, messageID int64) (string, error) {
 	if t == nil {
 		return "", ErrNotConfigured
 	}
+	dest := strings.TrimSpace(destChatID)
 	from := strings.TrimSpace(fromChatID)
-	if from == "" || messageID <= 0 {
+	if dest == "" || from == "" || messageID <= 0 {
 		return "", ErrUpstream
 	}
-	forwarded, err := t.forwardMessage(ctx, from, messageID)
+	forwarded, err := t.forwardMessage(ctx, dest, from, messageID)
 	if err != nil {
 		return "", err
 	}
-	// 尽力删除临时转发：删不掉不影响读取，只是频道里多一条重复消息。
+	// 清理单独设时限，并脱离请求取消：客户端断开也要把临时消息收掉。
 	defer func() {
-		_, _ = t.callAPI(context.WithoutCancel(ctx), "deleteMessage", url.Values{
-			"chat_id":    {t.chatID},
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), takeoverDeleteTimeout)
+		defer cancel()
+		_, _ = t.callAPI(cleanupCtx, "deleteMessage", url.Values{
+			"chat_id":    {dest},
 			"message_id": {strconv.FormatInt(forwarded.MessageID, 10)},
 		})
 	}()
@@ -609,10 +632,10 @@ func (t *Telegram) TakeoverFile(ctx context.Context, fromChatID string, messageI
 	return forwarded.FileID, nil
 }
 
-// forwardMessage 转发一条频道消息，并解析出归属本 Bot 的文件编号与消息编号。
-func (t *Telegram) forwardMessage(ctx context.Context, fromChatID string, messageID int64) (messageResult, error) {
+// forwardMessage 把一条频道消息转发到指定会话，并解析出归属本 Bot 的文件编号与消息编号。
+func (t *Telegram) forwardMessage(ctx context.Context, destChatID, fromChatID string, messageID int64) (messageResult, error) {
 	payload, err := t.callAPI(ctx, "forwardMessage", url.Values{
-		"chat_id":      {t.chatID},
+		"chat_id":      {destChatID},
 		"from_chat_id": {fromChatID},
 		"message_id":   {strconv.FormatInt(messageID, 10)},
 	})

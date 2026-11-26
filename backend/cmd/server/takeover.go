@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"io"
 	"log"
 	"strings"
 	"sync"
@@ -20,11 +22,13 @@ const takeoverLimit = 32
 const takeoverTimeout = 30 * time.Second
 
 // takeoverDeps 汇总后台接管需要的外部动作，便于测试替换。
+// chatID 必须是独立于图床频道的私有维护频道：转发与清理都落在这里，公开图集不受影响。
 type takeoverDeps struct {
 	repo      *posts.Repository
 	bots      func(context.Context) ([]botpool.Bot, error)
 	effective func(context.Context) (settings.Effective, error)
 	provider  func(botpool.Bot, settings.Effective) storage.StreamProvider
+	chatID    string
 	logger    *log.Logger
 }
 
@@ -34,8 +38,9 @@ type takeoverQueue struct {
 	deps  takeoverDeps
 	queue chan *posts.PublicImage
 
-	mu      sync.Mutex
-	pending map[int64]bool
+	mu       sync.Mutex
+	pending  map[int64]bool
+	verified bool
 }
 
 // newTakeoverQueue 创建后台接管队列。
@@ -101,8 +106,12 @@ func (q *takeoverQueue) handle(ctx context.Context, image *posts.PublicImage) {
 	}
 }
 
-// takeOver 选一个池内可写的 Bot 转发原消息，取得属于它的文件编号并登记为引用。
+// takeOver 在私有维护频道里由另一个 Bot 转发原消息，确认能取流后再登记为删除依据。
+// 只在维护频道转发，公开图集频道不会出现临时消息。
 func (q *takeoverQueue) takeOver(ctx context.Context, image *posts.PublicImage) error {
+	if strings.TrimSpace(q.deps.chatID) == "" {
+		return nil
+	}
 	bots, err := q.deps.bots(ctx)
 	if err != nil {
 		return err
@@ -119,11 +128,65 @@ func (q *takeoverQueue) takeOver(ctx context.Context, image *posts.PublicImage) 
 		if provider == nil {
 			continue
 		}
-		fileID, takeErr := takeOverImage(ctx, provider, image)
+		if err := q.verifyDestination(ctx, provider, effective.TelegramChannel.Value); err != nil {
+			return err
+		}
+		fileID, takeErr := takeOverImage(ctx, provider, q.deps.chatID, image)
 		if takeErr != nil {
 			continue
 		}
+		// 清理临时消息后仍要能读到这张文件，才允许登记为删除依据。
+		if readErr := readBack(ctx, provider, fileID); readErr != nil {
+			continue
+		}
 		return q.deps.repo.SetImageFileRef(ctx, image.ImageID, bot.BotID, fileID)
+	}
+	return nil
+}
+
+// verifyDestination 确认维护频道独立于图床频道且为私有会话；通过一次后不再重复查询。
+func (q *takeoverQueue) verifyDestination(ctx context.Context, provider storage.StreamProvider, galleryChat string) error {
+	dest := strings.TrimSpace(q.deps.chatID)
+	if dest == "" {
+		return errors.New("未配置维护频道")
+	}
+	if dest == strings.TrimSpace(galleryChat) {
+		return errors.New("维护频道不能与图床频道相同")
+	}
+	q.mu.Lock()
+	verified := q.verified
+	q.mu.Unlock()
+	if verified {
+		return nil
+	}
+	inspector, ok := provider.(interface {
+		ChatInfoOf(context.Context, string) (storage.ChatInfo, error)
+	})
+	if !ok {
+		return errors.New("当前图床无法确认维护频道")
+	}
+	info, err := inspector.ChatInfoOf(ctx, dest)
+	if err != nil {
+		return err
+	}
+	if !info.Private() {
+		return errors.New("维护频道必须是私有会话")
+	}
+	q.mu.Lock()
+	q.verified = true
+	q.mu.Unlock()
+	return nil
+}
+
+// readBack 由新 Bot 实际取一次流，确认临时消息清掉后文件仍可读取。
+func readBack(ctx context.Context, provider storage.StreamProvider, fileID string) error {
+	stream, err := provider.OpenStream(ctx, fileID)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = stream.Body.Close() }()
+	if _, err := io.CopyN(io.Discard, stream.Body, 1); err != nil && !errors.Is(err, io.EOF) {
+		return err
 	}
 	return nil
 }

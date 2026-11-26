@@ -461,13 +461,23 @@ func (f *takeoverFake) Upload(context.Context, storage.UploadRequest) (storage.U
 	return storage.UploadResult{}, nil
 }
 
-func (f *takeoverFake) OpenStream(context.Context, string) (storage.Stream, error) {
-	return storage.Stream{}, storage.ErrFileUnavailable
+func (f *takeoverFake) OpenStream(_ context.Context, fileID string) (storage.Stream, error) {
+	if fileID != "file-b" {
+		return storage.Stream{}, storage.ErrFileUnavailable
+	}
+	return storage.Stream{Body: io.NopCloser(strings.NewReader("ok")), ContentType: "image/jpeg", Size: 2}, nil
 }
 
-func (f *takeoverFake) TakeoverFile(_ context.Context, chatID string, messageID int64) (string, error) {
-	if chatID != "-100777" || messageID != 55 {
-		return "", errors.New("原消息位置不符")
+func (f *takeoverFake) ChatInfoOf(_ context.Context, chatID string) (storage.ChatInfo, error) {
+	if chatID != "-100999" {
+		return storage.ChatInfo{}, errors.New("维护频道不符")
+	}
+	return storage.ChatInfo{ID: -100999, Type: "channel", Title: "维护"}, nil
+}
+
+func (f *takeoverFake) TakeoverFile(_ context.Context, destChatID, fromChatID string, messageID int64) (string, error) {
+	if destChatID != "-100999" || fromChatID != "-100777" || messageID != 55 {
+		return "", errors.New("转发位置不符")
 	}
 	f.taken++
 	return "file-b", nil
@@ -529,7 +539,8 @@ func TestImageResolverTakesOverMissingRef(t *testing.T) {
 	// 公开读图只登记接管，不同步转发；第一次选源因此返回 false。
 	queued := 0
 	queue := newTakeoverQueue(takeoverDeps{
-		repo: repository,
+		repo:   repository,
+		chatID: "-100999",
 		bots: func(context.Context) ([]botpool.Bot, error) {
 			return []botpool.Bot{{BotID: 8, Token: "888:ok", Status: botpool.StatusOK}}, nil
 		},
@@ -600,9 +611,16 @@ func (f *dualBotFake) Upload(context.Context, storage.UploadRequest) (storage.Up
 	return storage.UploadResult{}, nil
 }
 
-func (f *dualBotFake) TakeoverFile(_ context.Context, chatID string, messageID int64) (string, error) {
-	if chatID != "-100777" || messageID != 55 {
-		return "", errors.New("原消息位置不符")
+func (f *dualBotFake) ChatInfoOf(_ context.Context, chatID string) (storage.ChatInfo, error) {
+	if chatID != "-100999" {
+		return storage.ChatInfo{}, errors.New("维护频道不符")
+	}
+	return storage.ChatInfo{ID: -100999, Type: "channel", Title: "维护"}, nil
+}
+
+func (f *dualBotFake) TakeoverFile(_ context.Context, destChatID, fromChatID string, messageID int64) (string, error) {
+	if destChatID != "-100999" || fromChatID != "-100777" || messageID != 55 {
+		return "", errors.New("转发位置不符")
 	}
 	f.taken++
 	return "file-b", nil
@@ -737,7 +755,8 @@ func TestGatewayTakeoverServesAfterSourceRemoved(t *testing.T) {
 
 	// 后台接管按合并队列执行一次，随后的读取走已登记引用。
 	queue := newTakeoverQueue(takeoverDeps{
-		repo: repository,
+		repo:   repository,
+		chatID: "-100999",
 		bots: func(context.Context) ([]botpool.Bot, error) {
 			return []botpool.Bot{{BotID: 8, Token: "888:ok", Status: botpool.StatusOK}}, nil
 		},
@@ -816,5 +835,114 @@ func TestTakeoverQueueCoalescesSameImage(t *testing.T) {
 	queue.mu.Unlock()
 	if retried {
 		t.Fatal("队列仍满时再次登记应被丢弃")
+	}
+}
+
+// takeoverProbeFake 可按需返回公开会话或读取失败，用于验证接管的前置条件与登记条件。
+type takeoverProbeFake struct {
+	public   bool
+	failRead bool
+	taken    int
+}
+
+func (f *takeoverProbeFake) Name() string { return "takeover-probe" }
+
+func (f *takeoverProbeFake) Upload(context.Context, storage.UploadRequest) (storage.UploadResult, error) {
+	return storage.UploadResult{}, nil
+}
+
+func (f *takeoverProbeFake) ChatInfoOf(_ context.Context, chatID string) (storage.ChatInfo, error) {
+	info := storage.ChatInfo{ID: -100888, Type: "channel", Title: "维护"}
+	if f.public {
+		info.Username = "public_channel"
+	}
+	return info, nil
+}
+
+func (f *takeoverProbeFake) TakeoverFile(context.Context, string, string, int64) (string, error) {
+	f.taken++
+	return "file-b", nil
+}
+
+func (f *takeoverProbeFake) OpenStream(context.Context, string) (storage.Stream, error) {
+	if f.failRead {
+		return storage.Stream{}, storage.ErrFileUnavailable
+	}
+	return storage.Stream{Body: io.NopCloser(strings.NewReader("ok")), ContentType: "image/jpeg", Size: 2}, nil
+}
+
+// TestTakeoverRequiresPrivateIndependentChannel 验证接管只在独立私有维护频道进行，
+// 公开会话、与图床频道相同、或清理后读不到时都不登记删除依据。
+func TestTakeoverRequiresPrivateIndependentChannel(t *testing.T) {
+	handle, err := db.Open(filepath.Join(t.TempDir(), "takeover-guard.db"))
+	if err != nil {
+		t.Fatalf("打开数据库失败: %v", err)
+	}
+	t.Cleanup(func() { _ = handle.Close() })
+	if err := db.Migrate(context.Background(), handle); err != nil {
+		t.Fatalf("迁移失败: %v", err)
+	}
+	repository := posts.NewRepository(handle)
+	ctx := context.Background()
+	postID, err := repository.Create(ctx, posts.Post{Title: "接管", ImageCount: 1, UploadMode: storage.ModePhoto})
+	if err != nil {
+		t.Fatalf("创建帖子失败: %v", err)
+	}
+	if _, err := repository.AttachImage(ctx, posts.Image{
+		PostID: postID, SortOrder: 1, Status: posts.ImageStatusUploaded,
+		MimeType: "image/jpeg", FileSize: 10, TempFilePath: "tmp/a.part",
+	}); err != nil {
+		t.Fatalf("保存图片失败: %v", err)
+	}
+	images, err := repository.ListImages(ctx, postID)
+	if err != nil || len(images) != 1 {
+		t.Fatalf("读取图片失败: %v", err)
+	}
+	imageID := images[0].ID
+	if err := repository.MarkImageStoredWithOrigin(ctx, imageID, "file-a", 55, "telegram", 7, "-100777"); err != nil {
+		t.Fatalf("写入逐图来源失败: %v", err)
+	}
+	image := &posts.PublicImage{
+		ImageID: imageID, RemoteFileID: "file-a", MIMEType: "image/jpeg",
+		UploadMode: storage.ModePhoto, SourceBotID: 7, SourceChatID: "-100777", SourceMessageID: 55,
+	}
+
+	cases := []struct {
+		name        string
+		chatID      string
+		fake        *takeoverProbeFake
+		gallery     string
+		wantForward int
+	}{
+		{"公开会话", "-100888", &takeoverProbeFake{public: true}, "-100777", 0},
+		{"与图床频道相同", "-100777", &takeoverProbeFake{}, "-100777", 0},
+		// 先转发才做回读校验：这里允许一次转发，但不能留下可作删除依据的引用。
+		{"读不到文件", "-100888", &takeoverProbeFake{failRead: true}, "-100777", 1},
+	}
+	for _, item := range cases {
+		queue := newTakeoverQueue(takeoverDeps{
+			repo:   repository,
+			chatID: item.chatID,
+			bots: func(context.Context) ([]botpool.Bot, error) {
+				return []botpool.Bot{{BotID: 8, Token: "888:ok", Status: botpool.StatusOK}}, nil
+			},
+			effective: func(context.Context) (settings.Effective, error) {
+				return settings.Effective{TelegramChannel: settings.Value{Value: item.gallery}}, nil
+			},
+			provider: func(botpool.Bot, settings.Effective) storage.StreamProvider { return item.fake },
+		})
+		queue.handle(ctx, image)
+		if item.fake.taken != item.wantForward {
+			t.Errorf("%s：转发次数 = %d，期望 %d", item.name, item.fake.taken, item.wantForward)
+		}
+		refs, err := repository.ImageFileRefs(ctx, imageID)
+		if err != nil {
+			t.Fatalf("%s：读取引用失败: %v", item.name, err)
+		}
+		for _, ref := range refs {
+			if ref.BotID == 8 {
+				t.Errorf("%s：不应登记 8 号引用，实际 %+v", item.name, refs)
+			}
+		}
 	}
 }
