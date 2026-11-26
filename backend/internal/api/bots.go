@@ -11,6 +11,7 @@ import (
 	"github.com/littleseven2003/SeSeGraph/backend/internal/botpool"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/netclient"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/settings"
+	"github.com/littleseven2003/SeSeGraph/backend/internal/storage"
 )
 
 // botsBody 是多 Bot 池的读取响应；令牌只以掩码出现。
@@ -51,13 +52,14 @@ var probeBots = settings.Probe
 
 // verifyBotTokens 用候选令牌依次执行 getMe、getChat 与 getChatMember；
 // 只对本次提交了新令牌的条目探测，失败时返回带别名的可读原因。
-func verifyBotTokens(ctx context.Context, deps Deps, bots []botpool.Bot) error {
+func verifyBotTokens(ctx context.Context, deps Deps, bots []botpool.Bot) ([]int64, error) {
+	ids := make([]int64, len(bots))
 	if deps.Settings == nil {
-		return nil
+		return ids, nil
 	}
 	effective, err := deps.Settings.Effective(ctx)
 	if err != nil {
-		return errors.New("读取图床配置失败")
+		return nil, errors.New("读取图床配置失败")
 	}
 	for _, bot := range bots {
 		token := strings.TrimSpace(bot.Token)
@@ -70,7 +72,7 @@ func verifyBotTokens(ctx context.Context, deps Deps, bots []botpool.Bot) error {
 		}
 		client, clientErr := netclient.NewClient(effective.ProxyConfig(), netclient.ServiceTelegram)
 		if clientErr != nil {
-			return errors.New(name + "：网络客户端创建失败")
+			return nil, errors.New(name + "：网络客户端创建失败")
 		}
 		result := probeBots(ctx, settings.ProbeOptions{
 			TelegramToken:   token,
@@ -84,10 +86,35 @@ func verifyBotTokens(ctx context.Context, deps Deps, bots []botpool.Bot) error {
 			if detail == "" {
 				detail = "连通性校验未通过"
 			}
-			return errors.New(name + "：" + detail)
+			return nil, errors.New(name + "：" + detail)
+		}
+		// 探测通过后解析真实编号，供列表去重与逐图来源使用。
+		provider, buildErr := storage.NewTelegram(storage.TelegramConfig{
+			Token:      token,
+			ChatID:     effective.TelegramChannel.Value,
+			APIBase:    effective.TelegramAPIBase.Value,
+			HTTPClient: client,
+		})
+		if buildErr != nil {
+			return nil, errors.New(name + "：无法读取 Bot 身份")
+		}
+		botID, idErr := provider.BotID(ctx)
+		if idErr != nil {
+			return nil, errors.New(name + "：无法读取 Bot 身份")
+		}
+		ids[indexForBot(bots, bot)] = botID
+	}
+	return ids, nil
+}
+
+// indexForBot 按令牌找到候选在列表中的位置，用于回填解析出的编号。
+func indexForBot(bots []botpool.Bot, target botpool.Bot) int {
+	for index, bot := range bots {
+		if bot.Token == target.Token {
+			return index
 		}
 	}
-	return nil
+	return 0
 }
 
 // maskToken 只保留令牌尾部四位，其余用圆点代替，避免明文回显。
@@ -155,13 +182,38 @@ func updateBotsHandler(deps Deps) gin.HandlerFunc {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), botSaveTimeout)
 		defer cancel()
 		// 新提交的令牌保存前先探测身份与频道发布权限，失败时保留原有配置。
-		if err := verifyBotTokens(ctx, deps, bots); err != nil {
+		ids, err := verifyBotTokens(ctx, deps, bots)
+		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
+		}
+		for index := range bots {
+			if bots[index].BotID == 0 {
+				bots[index].BotID = ids[index]
+			}
+		}
+		// 解析后的真实编号必须唯一，避免同一个 Bot 在列表里出现两次。
+		seen := make(map[int64]string, len(bots))
+		for _, bot := range bots {
+			if bot.BotID == 0 {
+				continue
+			}
+			if previous, ok := seen[bot.BotID]; ok {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "同一个 Bot 不能重复添加（" + previous + "）"})
+				return
+			}
+			seen[bot.BotID] = bot.Alias
 		}
 		if err := deps.Bots.Replace(ctx, bots); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
+		}
+		// 保存成功后立刻替换运行配置：下一个任务就按新列表分配。
+		if deps.ReloadBots != nil {
+			if err := deps.ReloadBots(ctx); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "已保存，但运行配置切换失败，请重新保存"})
+				return
+			}
 		}
 		botsHandler(deps)(c)
 	}

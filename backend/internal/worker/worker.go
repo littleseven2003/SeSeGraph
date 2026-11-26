@@ -106,6 +106,16 @@ func New(opts Options) (*Worker, error) {
 	}, nil
 }
 
+// SetProvider 在配置保存后热替换发送所用的提供方；在途请求继续用自己持有的实例。
+func (w *Worker) SetProvider(provider storage.Provider) {
+	if provider == nil {
+		return
+	}
+	w.mu.Lock()
+	w.provider = provider
+	w.mu.Unlock()
+}
+
 // Recovery 汇报启动恢复的结果。
 type Recovery struct {
 	Requeued     int64

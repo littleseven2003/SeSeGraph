@@ -79,6 +79,8 @@ type Deps struct {
 	Views *views.Service
 	// Bots 是多 Bot 池配置，未装配时池接口不可用。
 	Bots *botpool.Pool
+	// ReloadBots 在 Bot 列表保存后热替换运行配置，未装配时保持原状。
+	ReloadBots func(context.Context) error
 }
 
 // maxAuthBodyBytes 是登录与初始化请求体的上限，超出的请求不会被解码。

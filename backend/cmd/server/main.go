@@ -239,6 +239,8 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	backupSchedule := backupState.text()
 
 	botPool := botpool.New(settingsStore)
+	// reloadBotsFn 在队列装配完成后才有实现，路由先挂一个可延后填充的入口。
+	var reloadBotsFn func(context.Context) error
 	router := api.NewRouter(api.Deps{
 		Version:           version,
 		Commit:            commit,
@@ -271,6 +273,12 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		},
 		Views: viewsService,
 		Bots:  botPool,
+		ReloadBots: func(callCtx context.Context) error {
+			if reloadBotsFn == nil {
+				return nil
+			}
+			return reloadBotsFn(callCtx)
+		},
 	})
 
 	enqueueProvider := storage.Provider(switcher)
@@ -282,6 +290,37 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 			log.Print("多 Bot 池已启用")
 		}
 	}
+	// buildEnqueue 按当前 Bot 列表给出上传所用的提供方：零个可用保持等待，一个直接使用，多个按序切换。
+	buildEnqueue := func(callCtx context.Context) (storage.Provider, *storage.Pool, error) {
+		effective, resolveErr := resolver.Effective(callCtx)
+		if resolveErr != nil {
+			return nil, nil, resolveErr
+		}
+		bots, listErr := botPool.List(callCtx)
+		if listErr != nil {
+			return nil, nil, listErr
+		}
+		usable := botpool.Usable(bots)
+		if len(usable) == 0 {
+			return switcher, nil, nil
+		}
+		if len(usable) == 1 {
+			provider, buildErr := newProviderWithToken(effective, usable[0].Token)
+			if buildErr != nil || provider == nil {
+				return switcher, nil, nil
+			}
+			return provider, nil, nil
+		}
+		pool, buildErr := buildBotPool(callCtx, botPool, effective)
+		if buildErr != nil {
+			return nil, nil, buildErr
+		}
+		if pool == nil {
+			return switcher, nil, nil
+		}
+		return pool, pool, nil
+	}
+
 	var nextProvider func(ctx context.Context, failed storage.Provider, cause error) (storage.Provider, bool)
 	if poolProvider != nil {
 		nextProvider = func(callCtx context.Context, _ storage.Provider, _ error) (storage.Provider, bool) {
@@ -297,8 +336,19 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 			return next, true
 		}
 	}
-	stopWorker := startUploadQueue(ctx, repository, cfg.DataDir, enqueueProvider, gate, lookupEnv, publishReady(telegraphManager, cfg.PublicURL), nextProvider)
-	defer stopWorker()
+	uploadQ := startUploadQueue(ctx, repository, cfg.DataDir, enqueueProvider, gate, lookupEnv, publishReady(telegraphManager, cfg.PublicURL), nextProvider)
+	defer uploadQ.Stop()
+
+	reloadBots := func(callCtx context.Context) error {
+		provider, pool, buildErr := buildEnqueue(callCtx)
+		if buildErr != nil {
+			return buildErr
+		}
+		poolProvider = pool
+		uploadQ.SetProvider(provider)
+		return nil
+	}
+	reloadBotsFn = reloadBots
 
 	stopPublisher := startPublisher(ctx, repository, telegraphManager, cfg.PublicURL)
 	defer stopPublisher()
@@ -804,7 +854,13 @@ func readImageQueueWait(lookupEnv func(string) (string, bool)) time.Duration {
 
 // startUploadQueue 启动上传队列，返回停止函数。
 // 队列始终运行：图床未配置时按提供方的就绪状态等待，配置保存后自动接手。
-func startUploadQueue(ctx context.Context, repository *posts.Repository, dataDir string, provider storage.Provider, gate *storage.UploadGate, lookupEnv func(string) (string, bool), ready func(ctx context.Context) error, nextProvider func(ctx context.Context, failed storage.Provider, cause error) (storage.Provider, bool)) func() {
+type uploadQueue struct {
+	Stop func()
+	// SetProvider 在配置保存后热替换发送所用提供方。
+	SetProvider func(storage.Provider)
+}
+
+func startUploadQueue(ctx context.Context, repository *posts.Repository, dataDir string, provider storage.Provider, gate *storage.UploadGate, lookupEnv func(string) (string, bool), ready func(ctx context.Context) error, nextProvider func(ctx context.Context, failed storage.Provider, cause error) (storage.Provider, bool)) *uploadQueue {
 	interval := readUploadInterval(lookupEnv)
 
 	queue, err := worker.New(worker.Options{
@@ -818,7 +874,7 @@ func startUploadQueue(ctx context.Context, repository *posts.Repository, dataDir
 	})
 	if err != nil {
 		log.Print("上传队列初始化失败")
-		return func() {}
+		return &uploadQueue{Stop: func() {}, SetProvider: func(storage.Provider) {}}
 	}
 
 	if _, err := queue.Recover(ctx); err != nil {
@@ -828,7 +884,7 @@ func startUploadQueue(ctx context.Context, repository *posts.Repository, dataDir
 	queueCtx, cancel := context.WithCancel(ctx)
 	go queue.Run(queueCtx)
 	log.Print("上传队列已启动")
-	return cancel
+	return &uploadQueue{Stop: cancel, SetProvider: queue.SetProvider}
 }
 
 // readViewsInterval 读取浏览量同步间隔，未配置或取值不合法时使用默认值。
