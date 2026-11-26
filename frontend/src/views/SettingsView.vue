@@ -732,6 +732,10 @@ onBeforeUnmount(() => {
     <AppHeader />
 
     <main class="mx-auto w-full max-w-[1120px] px-5 py-7">
+      <div class="mb-5">
+        <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">设置</h1>
+        <p class="mt-1 text-sm text-muted">图床、发布默认值与存储备份都在这里调整，保存后立即生效。</p>
+      </div>
       <nav class="mb-4 flex gap-2 overflow-x-auto overscroll-x-contain py-1 lg:hidden" aria-label="设置分组">
         <a
           v-for="item in SETTING_NAV"
@@ -1493,6 +1497,7 @@ onBeforeUnmount(() => {
             </section>            </div>
 
 
+            <div v-show="activeSection === 'appearance'" class="space-y-8">
             <div class="rounded-lg border border-line bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
               <div class="border-b border-line/70 px-5 py-4">
                 <h3 class="text-sm font-semibold">外观主题</h3>
@@ -1519,7 +1524,6 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
-            <div v-show="activeSection === 'appearance'" class="space-y-8">
             <section id="account" class="scroll-mt-36">
               <div class="flex items-center gap-2">
                 <h2 class="text-base font-semibold tracking-tight">账号安全</h2>
