@@ -67,9 +67,11 @@ export function bytesToGB(bytes: number): string {
   return String(Math.round((bytes / (1 << 30)) * 100) / 100)
 }
 
-/** gbToBytes 把 GB 文本转成字节数；空文本表示关闭，非法返回 null。 */
-export function gbToBytes(text: string): number | null {
-  const trimmed = text.trim()
+// gbToBytes 把 GB 输入转成字节数：空值表示关闭，非法返回 null。
+// <input type="number"> 的 v-model 会直接给出数字，这里统一成文本再解析，
+// 避免在提交前抛错导致整次保存静默失效。
+export function gbToBytes(text: string | number): number | null {
+  const trimmed = typeof text === 'number' ? String(Number.isFinite(text) ? text : NaN) : text.trim()
   if (trimmed === '') return 0
   const value = Number(trimmed)
   if (!Number.isFinite(value) || value < 0) return null

@@ -345,6 +345,10 @@ test('GB 与字节互转以及备份时刻校验', () => {
   assert.equal(gbToBytes('1.5'), 1610612736)
   assert.equal(gbToBytes('-1'), null)
   assert.equal(gbToBytes('abc'), null)
+  // <input type="number"> 直接给出数字，解析必须照常工作，不能抛错。
+  assert.equal(gbToBytes(1.5), 1610612736)
+  assert.equal(gbToBytes(0), 0)
+  assert.equal(gbToBytes(Number.NaN), null)
   assert.equal(bytesToGB(0), '')
   assert.equal(bytesToGB(1610612736), '1.5')
   assert.equal(backupTimeInvalid('03:00'), false)
