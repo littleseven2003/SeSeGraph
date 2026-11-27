@@ -402,6 +402,9 @@ test('设置页四组十项常驻渲染，旧锚点静默映射', () => {
   assert.equal(view.includes('v-show="activeSection'), false, '不再互斥隐藏')
   assert.ok(view.includes('scrollIntoView({ behavior: \'smooth\''), '点菜单平滑定位')
   assert.ok(view.includes('function syncActiveFromScroll'), '滚动更新高亮')
+  assert.ok(view.includes('const offset = 152'), '偏移与 scroll-mt-36 对齐，锚点定位后即认作当前项')
+  assert.ok(view.includes('function holdJump'), '主动跳转期间按住选中项')
+  assert.ok(view.includes('window.setTimeout(releaseJump, 200)'), '滚动静止后再交还高亮')
   assert.ok(view.includes('LEGACY_ANCHORS'), '旧锚点映射表')
   // 四组顺序：连接与发布、上传配置、运维与安全、外观配置。
   const navStart = view.indexOf('const SETTING_NAV')
@@ -426,7 +429,7 @@ test('设置页挂载即加载，保存范围只由按钮决定', () => {
   // 挂载后必须真的去读设置，否则页面一直停在「正在读取设置…」。
   assert.ok(view.includes('onMounted(() => {'), '有挂载入口')
   assert.ok(view.includes('void load().then('), '挂载后立即读取设置')
-  assert.ok(view.includes("window.addEventListener('scroll', syncActiveFromScroll"), '滚动跟随挂载即生效')
+  assert.ok(view.includes("window.addEventListener('scroll', onScroll"), '滚动跟随挂载即生效')
   assert.ok(view.includes("window.addEventListener('hashchange', followHash)"), '前进后退跟随挂载即生效')
   // 提交范围来自按钮传入的字段组，与滚动高亮无关。
   assert.equal(view.includes('MENU_PATCH_KEYS'), false, '不再按高亮项挑接口')

@@ -761,12 +761,7 @@ function followHash(): void {
   if (target === '') return
   const nav = navForTarget(target)
   if (nav !== '') activeSection.value = nav
-  pendingJump = nav
-  window.clearTimeout(pendingTimer)
-  pendingTimer = window.setTimeout(() => {
-    pendingJump = ''
-    syncActiveFromScroll()
-  }, 600)
+  holdJump(nav)
   void nextTick(() => {
     document.getElementById(target)?.scrollIntoView({ block: 'start' })
   })
@@ -776,21 +771,41 @@ function followHash(): void {
 function selectSection(id: string): void {
   if (!SETTING_NAV.some((item) => item.id === id)) return
   activeSection.value = id
-  pendingJump = id
-  window.clearTimeout(pendingTimer)
-  pendingTimer = window.setTimeout(() => {
-    pendingJump = ''
-    syncActiveFromScroll()
-  }, 600)
+  holdJump(id)
   window.history.replaceState(null, '', '#' + id)
   const target = SETTING_NAV.find((item) => item.id === id)?.target ?? id
   document.getElementById(target)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
+// holdJump 在主动跳转后的滚动期间按住选中项：滚动静止后再交还给位置判定，
+// 另有 1.2 秒兜底，避免平滑滚动把高亮留在沿途区块上。
+function holdJump(id: string): void {
+  pendingJump = id
+  window.clearTimeout(pendingTimer)
+  pendingTimer = window.setTimeout(releaseJump, 1200)
+}
+
+function releaseJump(): void {
+  window.clearTimeout(pendingTimer)
+  pendingJump = ''
+  syncActiveFromScroll()
+}
+
+// onScroll 跳转期间只等滚动静止，不按途中位置改高亮。
+function onScroll(): void {
+  if (pendingJump !== '') {
+    window.clearTimeout(pendingTimer)
+    pendingTimer = window.setTimeout(releaseJump, 200)
+    return
+  }
+  syncActiveFromScroll()
+}
+
 // syncActiveFromScroll 以顶栏下沿为准选出当前区块；滚到底部时兜底最后一项。
+// 偏移取 scroll-mt-36 的 144px 略多，锚点定位后的区块才会被认作当前项。
 function syncActiveFromScroll(): void {
   if (pendingJump !== '') return
-  const offset = 120
+  const offset = 152
   let current = SETTING_NAV[0]?.id ?? ''
   for (const item of SETTING_NAV) {
     const element = document.getElementById(item.target)
@@ -805,7 +820,7 @@ function syncActiveFromScroll(): void {
 
 onMounted(() => {
   // 先挂监听再读设置：加载期间滚动和锚点已经可用，刷新也能回到地址里的位置。
-  window.addEventListener('scroll', syncActiveFromScroll, { passive: true })
+  window.addEventListener('scroll', onScroll, { passive: true })
   window.addEventListener('hashchange', followHash)
   void load().then(async () => {
     await nextTick()
@@ -818,7 +833,7 @@ onBeforeUnmount(() => {
   window.clearTimeout(reloginTimer)
   window.clearTimeout(pendingTimer)
   pendingJump = ''
-  window.removeEventListener('scroll', syncActiveFromScroll)
+  window.removeEventListener('scroll', onScroll)
   window.removeEventListener('hashchange', followHash)
 })
 </script>
