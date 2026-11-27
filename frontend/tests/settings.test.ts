@@ -406,6 +406,20 @@ test('设置页四组十项常驻渲染，旧锚点静默映射', () => {
   assert.equal(view.includes('v-show="activeSection'), false, '不再互斥隐藏')
   assert.ok(view.includes('scrollIntoView({ behavior: \'smooth\''), '点菜单平滑定位')
   assert.ok(view.includes('function syncActiveFromScroll'), '滚动更新高亮')
+  // 点击菜单写历史，后退回到上一个区块；窄屏药丸跟随高亮。
+  assert.ok(view.includes("window.history.pushState(null, '', '#' + id)"), '点菜单写入历史记录')
+  assert.equal(view.includes('history.replaceState'), false, '不再覆盖当前历史')
+  assert.ok(view.includes('function revealActiveNav'), '当前项滚进药丸可视区')
+  assert.ok(view.includes('watch(activeSection, revealActiveNav)'), '高亮变化时同步药丸位置')
+  // 正文顺序必须与导航一致：Telegraph 在连接与发布内，账号安全在颜色模式之前。
+  const body = view.slice(view.indexOf('<template>'))
+  const order = ['id="telegram"', 'id="telegraph"', 'id="proxy"', 'id="check"', 'id="meta"', 'id="upload"', 'id="traffic"', 'id="backup"', 'id="cache"', 'id="account"', 'id="theme"']
+  let at = -1
+  for (const id of order) {
+    const next = body.indexOf(id)
+    assert.ok(next > at, `正文顺序不符：${id}`)
+    at = next
+  }
   assert.ok(view.includes('const offset = 152'), '偏移与 scroll-mt-36 对齐，锚点定位后即认作当前项')
   assert.ok(view.includes('function holdJump'), '主动跳转期间按住选中项')
   assert.ok(view.includes('window.setTimeout(releaseJump, 200)'), '滚动静止后再交还高亮')
@@ -422,7 +436,7 @@ test('设置页四组十项常驻渲染，旧锚点静默映射', () => {
   }
   assert.ok(nav.includes("{ id: 'meta', label: '元信息解析', group: '上传配置'"), '元信息解析归入上传配置')
   assert.ok(nav.includes("{ id: 'theme', label: '颜色模式', group: '外观配置'"), '颜色模式归入外观配置')
-  for (const [old, target] of [['upstream', 'telegram'], ['channel', 'telegram'], ['network', 'proxy'], ['check', 'check'], ['defaults', 'upload'], ['media', 'meta'], ['ops', 'traffic'], ['storage', 'traffic'], ['account', 'account'], ['security', 'account'], ['appearance', 'theme']]) {
+  for (const [old, target] of [['upstream', 'telegram'], ['channel', 'telegram'], ['network', 'proxy'], ['check', 'check'], ['defaults', 'upload'], ['media', 'upload'], ['ops', 'traffic'], ['storage', 'traffic'], ['account', 'account'], ['security', 'account'], ['appearance', 'theme']]) {
     assert.ok(view.includes(`${old}: '${target}'`), `旧锚点 ${old} 映射到 ${target}`)
   }
   assert.ok(view.includes('aria-label="主题模式"'), '外观与安全内有主题三态')

@@ -170,7 +170,7 @@ const LEGACY_ANCHORS: Record<string, string> = {
   upstream: 'telegram',
   network: 'proxy',
   check: 'check',
-  media: 'meta',
+  media: 'upload',
   defaults: 'upload',
   storage: 'traffic',
   ops: 'traffic',
@@ -772,7 +772,8 @@ function selectSection(id: string): void {
   if (!SETTING_NAV.some((item) => item.id === id)) return
   activeSection.value = id
   holdJump(id)
-  window.history.replaceState(null, '', '#' + id)
+  // 用 pushState 记一步历史：后退回到上一个区块，而不是直接离开设置页。
+  if (window.location.hash !== '#' + id) window.history.pushState(null, '', '#' + id)
   const target = SETTING_NAV.find((item) => item.id === id)?.target ?? id
   document.getElementById(target)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
@@ -800,6 +801,21 @@ function onScroll(): void {
   }
   syncActiveFromScroll()
 }
+
+// revealActiveNav 把窄屏横向药丸栏里的当前项滚进可视区，不动整页滚动位置。
+function revealActiveNav(): void {
+  void nextTick(() => {
+    const nav = [...document.querySelectorAll<HTMLElement>('nav[aria-label="设置分组"]')]
+      .find((element) => window.getComputedStyle(element).overflowX === 'auto')
+    if (nav === undefined) return
+    const active = nav.querySelector<HTMLElement>('a[href="#' + activeSection.value + '"]')
+    if (active === null) return
+    const left = active.offsetLeft - (nav.clientWidth - active.offsetWidth) / 2
+    nav.scrollTo({ left: Math.max(0, left), behavior: 'smooth' })
+  })
+}
+
+watch(activeSection, revealActiveNav)
 
 // syncActiveFromScroll 以顶栏下沿为准选出当前区块；滚到底部时兜底最后一项。
 // 偏移取 scroll-mt-36 的 144px 略多，锚点定位后的区块才会被认作当前项。
@@ -1044,6 +1060,97 @@ onBeforeUnmount(() => {
                         @click="saveBotPool"
                       >
                         保存 Bot 列表
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div id="telegraph" class="scroll-mt-36 rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+                  <div class="border-b border-line/70 px-5 py-4">
+                    <h3 class="text-sm font-semibold">Telegraph 发布</h3>
+                    <p class="mt-1 text-xs text-muted">发布页面的作者名由这里提供，令牌通过「申请账户」或环境变量写入。</p>
+                  </div>
+                  <div class="space-y-4 px-5 py-4">
+                    <label class="block">
+                      <span class="text-xs font-medium text-muted">作者名</span>
+                      <input
+                        v-model="form.authorName"
+                        type="text"
+                        autocomplete="off"
+                        :disabled="saving || managed(FIELD_TELEGRAPH_AUTHOR)"
+                        placeholder="留空则使用 Telegraph 默认作者"
+                        class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface disabled:opacity-60"
+                        :class="fieldErrors.includes(FIELD_TELEGRAPH_AUTHOR) ? 'border-danger' : ''"
+                      />
+                      <p v-if="fieldErrorText(FIELD_TELEGRAPH_AUTHOR) !== ''" class="mt-1 text-xs text-danger">
+                        {{ fieldErrorText(FIELD_TELEGRAPH_AUTHOR) }}
+                      </p>
+                      <p v-else-if="managed(FIELD_TELEGRAPH_AUTHOR)" class="mt-1 text-xs text-muted">
+                        {{ ENV_MANAGED_HINT }}
+                      </p>
+                    </label>
+
+                    <fieldset>
+                      <legend class="text-xs font-medium text-muted">链接生成方式</legend>
+                      <div class="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <label
+                          v-for="option in PATH_MODES"
+                          :key="option.value"
+                          class="flex min-h-11 cursor-pointer items-center gap-2.5 rounded-xl border border-line bg-canvas px-3 py-2.5 text-sm transition hover:border-ink/25 focus-within:border-ink"
+                          :class="form.pathMode === option.value ? 'border-accent bg-accent-soft' : ''"
+                        >
+                          <input
+                            v-model="form.pathMode"
+                            type="radio"
+                            name="path-mode"
+                            :value="option.value"
+                            :disabled="saving || managed(FIELD_TELEGRAPH_PATH_MODE)"
+                            class="h-6 w-6 shrink-0 accent-accent"
+                          />
+                          <span>{{ option.label }}</span>
+                        </label>
+                      </div>
+                      <p class="mt-1 text-xs text-muted">
+                        只影响之后发起的发布，页面仍显示原标题；已发布页面链接不会改变。
+                      </p>
+                      <p v-if="managed(FIELD_TELEGRAPH_PATH_MODE)" class="mt-1 text-xs text-muted">{{ ENV_MANAGED_HINT }}</p>
+                    </fieldset>
+
+                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div class="rounded-xl bg-canvas px-3 py-2.5">
+                        <p class="text-xs text-muted">访问令牌</p>
+                        <p class="mt-0.5 text-sm">{{ view.telegraph.token_set ? '已配置' : '未配置' }}</p>
+                      </div>
+                      <div class="rounded-xl bg-canvas px-3 py-2.5">
+                        <p class="text-xs text-muted">上游地址</p>
+                        <p class="mt-0.5 text-sm">{{ endpointText(view.telegraph.api_base_source) }}</p>
+                      </div>
+                    </div>
+
+                    <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-canvas px-3 py-2.5">
+                      <div class="min-w-0">
+                        <p class="text-xs text-muted">{{ telegraphAccountHint(telegraphState(), telegraphSubmitting) }}</p>
+                        <p v-if="telegraphError !== ''" class="mt-1 text-xs text-danger">{{ telegraphError }}</p>
+                        <p v-else-if="telegraphNote !== ''" class="mt-1 text-xs text-accent">{{ telegraphNote }}</p>
+                      </div>
+                      <button
+                        type="button"
+                        :disabled="telegraphAccountDisabled(telegraphState()) || telegraphSubmitting"
+                        class="h-11 shrink-0 rounded-xl border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-surface hover:text-ink disabled:opacity-60"
+                        @click="requestTelegraphAccount"
+                      >
+                        {{ telegraphSubmitting ? '申请中…' : '申请账户' }}
+                      </button>
+                    </div>
+                    <div class="flex flex-wrap items-center justify-between gap-3 border-t border-line/60 pt-3">
+                      <span class="text-xs text-muted">只影响之后发起的发布。</span>
+                      <button
+                        type="button"
+                        class="h-9 rounded-lg bg-brand px-3 text-xs font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
+                        :disabled="saving"
+                        @click="save(['telegraph'])"
+                      >
+                        保存发布配置
                       </button>
                     </div>
                   </div>
@@ -1304,97 +1411,6 @@ onBeforeUnmount(() => {
                 </div>
               </div>
             </section>
-
-                <div id="telegraph" class="scroll-mt-36 rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
-                  <div class="border-b border-line/70 px-5 py-4">
-                    <h3 class="text-sm font-semibold">Telegraph 发布</h3>
-                    <p class="mt-1 text-xs text-muted">发布页面的作者名由这里提供，令牌通过「申请账户」或环境变量写入。</p>
-                  </div>
-                  <div class="space-y-4 px-5 py-4">
-                    <label class="block">
-                      <span class="text-xs font-medium text-muted">作者名</span>
-                      <input
-                        v-model="form.authorName"
-                        type="text"
-                        autocomplete="off"
-                        :disabled="saving || managed(FIELD_TELEGRAPH_AUTHOR)"
-                        placeholder="留空则使用 Telegraph 默认作者"
-                        class="mt-1 h-11 w-full rounded-xl border border-line bg-canvas px-3 text-sm outline-none transition focus:border-ink/40 focus:bg-surface disabled:opacity-60"
-                        :class="fieldErrors.includes(FIELD_TELEGRAPH_AUTHOR) ? 'border-danger' : ''"
-                      />
-                      <p v-if="fieldErrorText(FIELD_TELEGRAPH_AUTHOR) !== ''" class="mt-1 text-xs text-danger">
-                        {{ fieldErrorText(FIELD_TELEGRAPH_AUTHOR) }}
-                      </p>
-                      <p v-else-if="managed(FIELD_TELEGRAPH_AUTHOR)" class="mt-1 text-xs text-muted">
-                        {{ ENV_MANAGED_HINT }}
-                      </p>
-                    </label>
-
-                    <fieldset>
-                      <legend class="text-xs font-medium text-muted">链接生成方式</legend>
-                      <div class="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                        <label
-                          v-for="option in PATH_MODES"
-                          :key="option.value"
-                          class="flex min-h-11 cursor-pointer items-center gap-2.5 rounded-xl border border-line bg-canvas px-3 py-2.5 text-sm transition hover:border-ink/25 focus-within:border-ink"
-                          :class="form.pathMode === option.value ? 'border-accent bg-accent-soft' : ''"
-                        >
-                          <input
-                            v-model="form.pathMode"
-                            type="radio"
-                            name="path-mode"
-                            :value="option.value"
-                            :disabled="saving || managed(FIELD_TELEGRAPH_PATH_MODE)"
-                            class="h-6 w-6 shrink-0 accent-accent"
-                          />
-                          <span>{{ option.label }}</span>
-                        </label>
-                      </div>
-                      <p class="mt-1 text-xs text-muted">
-                        只影响之后发起的发布，页面仍显示原标题；已发布页面链接不会改变。
-                      </p>
-                      <p v-if="managed(FIELD_TELEGRAPH_PATH_MODE)" class="mt-1 text-xs text-muted">{{ ENV_MANAGED_HINT }}</p>
-                    </fieldset>
-
-                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <div class="rounded-xl bg-canvas px-3 py-2.5">
-                        <p class="text-xs text-muted">访问令牌</p>
-                        <p class="mt-0.5 text-sm">{{ view.telegraph.token_set ? '已配置' : '未配置' }}</p>
-                      </div>
-                      <div class="rounded-xl bg-canvas px-3 py-2.5">
-                        <p class="text-xs text-muted">上游地址</p>
-                        <p class="mt-0.5 text-sm">{{ endpointText(view.telegraph.api_base_source) }}</p>
-                      </div>
-                    </div>
-
-                    <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-canvas px-3 py-2.5">
-                      <div class="min-w-0">
-                        <p class="text-xs text-muted">{{ telegraphAccountHint(telegraphState(), telegraphSubmitting) }}</p>
-                        <p v-if="telegraphError !== ''" class="mt-1 text-xs text-danger">{{ telegraphError }}</p>
-                        <p v-else-if="telegraphNote !== ''" class="mt-1 text-xs text-accent">{{ telegraphNote }}</p>
-                      </div>
-                      <button
-                        type="button"
-                        :disabled="telegraphAccountDisabled(telegraphState()) || telegraphSubmitting"
-                        class="h-11 shrink-0 rounded-xl border border-line px-3.5 text-sm font-medium text-muted transition hover:bg-surface hover:text-ink disabled:opacity-60"
-                        @click="requestTelegraphAccount"
-                      >
-                        {{ telegraphSubmitting ? '申请中…' : '申请账户' }}
-                      </button>
-                    </div>
-                    <div class="flex flex-wrap items-center justify-between gap-3 border-t border-line/60 pt-3">
-                      <span class="text-xs text-muted">只影响之后发起的发布。</span>
-                      <button
-                        type="button"
-                        class="h-9 rounded-lg bg-brand px-3 text-xs font-medium text-brand-ink transition hover:bg-brand-strong disabled:opacity-60"
-                        :disabled="saving"
-                        @click="save(['telegraph'])"
-                      >
-                        保存发布配置
-                      </button>
-                    </div>
-                  </div>
-                </div>
 
             </div>
 
@@ -1689,42 +1705,13 @@ onBeforeUnmount(() => {
                       <p v-else class="text-xs text-muted">重建会清掉该图集的小图并换新内容版本，再在浏览器内逐项回源生成，避免同时展开多张大图。</p>
                     </div>
 
-                    
+
 <p v-if="thumbError !== ''" class="text-xs text-danger">{{ thumbError }}</p>
                     <p v-else-if="thumbNote !== ''" class="text-xs text-accent">{{ thumbNote }}</p>
                   </div>
                 </div>
               </div>
             </section>
-            </div>
-
-            <div class="space-y-8">
-            <div id="theme" class="scroll-mt-36 rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
-              <div class="border-b border-line/70 px-5 py-4">
-                <h3 class="text-sm font-semibold">颜色模式</h3>
-                <p class="mt-1 text-xs text-muted">跟随系统会随设备日夜自动切换；主题只记在本机，不影响媒体遮罩开关。</p>
-              </div>
-              <div class="px-5 py-4">
-                <div class="inline-flex w-max items-center gap-1 rounded-xl border border-line/70 bg-canvas p-1" role="group" aria-label="主题模式">
-                  <button
-                    v-for="item in THEME_OPTIONS"
-                    :key="item.value"
-                    type="button"
-                    class="inline-flex h-11 items-center -my-1"
-                    :aria-pressed="themeMode === item.value"
-                    @click="setThemeMode(item.value)"
-                  >
-                    <span
-                      class="inline-flex h-9 items-center rounded-lg px-3 text-xs font-medium transition"
-                      :class="themeMode === item.value ? 'bg-surface text-ink shadow-[0_1px_0_0_rgba(27,26,23,0.08)]' : 'text-muted hover:text-ink'"
-                    >
-                      {{ item.label }}
-                    </span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
             <section id="account" class="scroll-mt-36">
               <div class="flex items-center gap-2">
                 <h2 class="text-base font-semibold tracking-tight">账号安全</h2>
@@ -1823,6 +1810,35 @@ onBeforeUnmount(() => {
                 </div>
               </div>
             </section>
+            </div>
+
+            <div class="space-y-8">
+            <div id="theme" class="scroll-mt-36 rounded-2xl bg-surface shadow-[0_1px_0_0_rgba(27,26,23,0.05)]">
+              <div class="border-b border-line/70 px-5 py-4">
+                <h3 class="text-sm font-semibold">颜色模式</h3>
+                <p class="mt-1 text-xs text-muted">跟随系统会随设备日夜自动切换；主题只记在本机，不影响媒体遮罩开关。</p>
+              </div>
+              <div class="px-5 py-4">
+                <div class="inline-flex w-max items-center gap-1 rounded-xl border border-line/70 bg-canvas p-1" role="group" aria-label="主题模式">
+                  <button
+                    v-for="item in THEME_OPTIONS"
+                    :key="item.value"
+                    type="button"
+                    class="inline-flex h-11 items-center -my-1"
+                    :aria-pressed="themeMode === item.value"
+                    @click="setThemeMode(item.value)"
+                  >
+                    <span
+                      class="inline-flex h-9 items-center rounded-lg px-3 text-xs font-medium transition"
+                      :class="themeMode === item.value ? 'bg-surface text-ink shadow-[0_1px_0_0_rgba(27,26,23,0.08)]' : 'text-muted hover:text-ink'"
+                    >
+                      {{ item.label }}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
             </div>
 
           </div>
