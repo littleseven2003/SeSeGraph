@@ -1033,3 +1033,37 @@ func TestSeedBotPoolNeverStoresPlaintext(t *testing.T) {
 		t.Fatalf("Bot 池未加密落库: %q", raw)
 	}
 }
+
+// TestBuildTelegraphManagerReadsSealedStore 验证发布管理器复用带密钥的存储：
+// 迁移后的密文令牌能被读出，状态正常，不再另建未注入加密器的存储。
+func TestBuildTelegraphManagerReadsSealedStore(t *testing.T) {
+	handle, err := db.Open(filepath.Join(t.TempDir(), "telegraph-sealed.db"))
+	if err != nil {
+		t.Fatalf("打开数据库失败: %v", err)
+	}
+	t.Cleanup(func() { _ = handle.Close() })
+	if err := db.Migrate(context.Background(), handle); err != nil {
+		t.Fatalf("迁移失败: %v", err)
+	}
+	store := zzTestSettingsStore(handle)
+	if err := store.Set(context.Background(), settings.KeyTelegraphToken, "telegraph-unit-token"); err != nil {
+		t.Fatalf("写入令牌失败: %v", err)
+	}
+	var raw string
+	if err := handle.QueryRow(`SELECT value FROM settings WHERE key = ?`, settings.KeyTelegraphToken).Scan(&raw); err != nil {
+		t.Fatalf("读原始值失败: %v", err)
+	}
+	if !settings.IsSealed(raw) {
+		t.Fatalf("令牌未加密落库: %q", raw)
+	}
+	manager := buildTelegraphManager(store, settings.Effective{
+		TelegraphAPIBase: settings.Value{Value: "https://telegra.ph"},
+	}, func(string) (string, bool) { return "", false })
+	status, err := manager.Status(context.Background())
+	if err != nil {
+		t.Fatalf("读取状态失败: %v", err)
+	}
+	if !status.Configured {
+		t.Fatal("迁移后的密文令牌应被识别为已配置")
+	}
+}

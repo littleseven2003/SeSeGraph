@@ -44,6 +44,8 @@ var sensitiveKeys = map[string]bool{
 	KeyTelegramToken:  true,
 	KeyTelegraphToken: true,
 	KeyTelegramBots:   true,
+	// 自定义代理地址允许带账密，同样必须密文落库。
+	KeyProxyURL: true,
 }
 
 // IsSensitiveKey 报告该配置键是否存放凭据。

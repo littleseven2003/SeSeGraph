@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"flag"
 	"fmt"
@@ -86,8 +85,11 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	settingsStore.SetCipher(secretCipher)
 	sealed, err := settings.SanitizeSecrets(ctx, settingsStore)
 	if err != nil {
-		if errors.Is(err, settings.ErrSecretKeyMissing) {
+		switch {
+		case errors.Is(err, settings.ErrSecretKeyMissing):
 			log.Print("存在历史明文凭据但未配置加密密钥，已停止启动")
+		case errors.Is(err, settings.ErrCleanupIncomplete):
+			log.Print("凭据清理未完成（数据库仍有读者），已停止启动")
 		}
 		return errSecretConfig
 	}
@@ -135,7 +137,7 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		return errDatabase
 	}
 
-	telegraphManager := buildTelegraphManager(store, effective, lookupEnv)
+	telegraphManager := buildTelegraphManager(settingsStore, effective, lookupEnv)
 	switcher := storage.NewSwitcher()
 	// gate 由上传队列与切换守卫共用：换 Bot 前先独占，确认没有在途任务。
 	gate := storage.NewUploadGate()
@@ -1069,7 +1071,7 @@ func startPublisher(ctx context.Context, repository *posts.Repository, manager *
 
 // buildTelegraphManager 创建 Telegraph 账户管理，环境变量令牌优先于数据库。
 // 上游地址取生效配置，便于在没有环境变量时使用设置页保存的地址。
-func buildTelegraphManager(store *sql.DB, effective settings.Effective, lookupEnv func(string) (string, bool)) *telegraph.Manager {
+func buildTelegraphManager(store *settings.Store, effective settings.Effective, lookupEnv func(string) (string, bool)) *telegraph.Manager {
 	token, _ := lookupEnv("TELEGRAPH_ACCESS_TOKEN")
 	author, _ := lookupEnv("TELEGRAPH_AUTHOR_NAME")
 	return telegraph.NewManager(telegraph.Config{
@@ -1077,7 +1079,7 @@ func buildTelegraphManager(store *sql.DB, effective settings.Effective, lookupEn
 		AuthorName:  strings.TrimSpace(author),
 		HTTPClient:  telegraphClient(effective),
 		APIBase:     effective.TelegraphAPIBase.Value,
-	}, settings.NewStore(store))
+	}, store)
 }
 
 // readImageConcurrency 读取图片网关并发上限，未配置时使用默认值。
