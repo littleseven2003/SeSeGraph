@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/api"
 	"github.com/littleseven2003/SeSeGraph/backend/internal/botpool"
@@ -348,7 +349,7 @@ func TestSeedBotPoolWritesMarkerOnlyAfterSuccess(t *testing.T) {
 		if err := db.Migrate(context.Background(), handle); err != nil {
 			t.Fatalf("迁移失败: %v", err)
 		}
-		store := settings.NewStore(handle)
+		store := zzTestSettingsStore(handle)
 		return botpool.New(store), settings.NewResolver(store, env), store
 	}
 
@@ -970,5 +971,65 @@ func TestTakeoverRequiresPrivateIndependentChannel(t *testing.T) {
 				t.Errorf("%s：不应登记 8 号引用，实际 %+v", item.name, refs)
 			}
 		}
+	}
+}
+
+// TestSeedBotPoolNeverStoresPlaintext 验证令牌只以密文落库，未配置密钥时不写库。
+func TestSeedBotPoolNeverStoresPlaintext(t *testing.T) {
+	newHandle := func(t *testing.T) *sql.DB {
+		t.Helper()
+		handle, err := db.Open(filepath.Join(t.TempDir(), "seed-secret.db"))
+		if err != nil {
+			t.Fatalf("打开数据库失败: %v", err)
+		}
+		t.Cleanup(func() { _ = handle.Close() })
+		if err := db.Migrate(context.Background(), handle); err != nil {
+			t.Fatalf("迁移失败: %v", err)
+		}
+		return handle
+	}
+
+	// 没密钥：跳过并入，不落任何令牌。
+	handle := newHandle(t)
+	plain := settings.NewStore(handle)
+	plainPool := botpool.New(plain)
+	plainResolver := settings.NewResolver(plain, settings.Env{TelegramToken: "111:legacy"})
+	if err := seedBotPool(context.Background(), plainPool, plainResolver, plain); err != nil {
+		t.Fatalf("缺密钥时应静默跳过: %v", err)
+	}
+	if bots, err := plainPool.List(context.Background()); err != nil || len(bots) != 0 {
+		t.Fatalf("缺密钥时不应写入列表: %+v err=%v", bots, err)
+	}
+
+	// 有密钥：并入列表，但磁盘上只有密文。
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"id":111,"is_bot":true}}`))
+	}))
+	t.Cleanup(upstream.Close)
+	handle = newHandle(t)
+	store := zzTestSettingsStore(handle)
+	pool := botpool.New(store)
+	resolver := settings.NewResolver(store, settings.Env{TelegramToken: "111:legacy", TelegramChannel: "@testchannel", TelegramAPIBase: upstream.URL})
+	eff, _ := resolver.Effective(context.Background())
+	prov, perr := newProviderWithToken(eff, "111:legacy")
+	if perr != nil || prov == nil {
+		t.Fatalf("构造提供方失败: %v", perr)
+	}
+	if id, ierr := prov.BotID(context.Background()); ierr != nil || id != 111 {
+		t.Fatalf("读取编号 = %d err=%v", id, ierr)
+	}
+	if err := seedBotPool(context.Background(), pool, resolver, store); err != nil {
+		t.Fatalf("并入失败: %v", err)
+	}
+	bots, err := pool.List(context.Background())
+	if err != nil || len(bots) != 1 || bots[0].Token != "111:legacy" || bots[0].BotID != 111 {
+		t.Fatalf("列表 = %+v err=%v", bots, err)
+	}
+	var raw string
+	if err := handle.QueryRow(`SELECT value FROM settings WHERE key = ?`, botpool.KeyBots).Scan(&raw); err != nil {
+		t.Fatalf("读原始值失败: %v", err)
+	}
+	if !settings.IsSealed(raw) || strings.Contains(raw, "legacy") {
+		t.Fatalf("Bot 池未加密落库: %q", raw)
 	}
 }

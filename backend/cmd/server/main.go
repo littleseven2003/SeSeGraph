@@ -76,6 +76,25 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		return errDatabase
 	}
 
+	// 凭据只以密文落库：部署端注入密钥后，先把历史明文改成密文再开始服务。
+	settingsStore := settings.NewStore(store)
+	secretCipher, err := settings.CipherFromEnv(lookupEnv)
+	if err != nil {
+		log.Print("加密密钥配置无效")
+		return errSecretConfig
+	}
+	settingsStore.SetCipher(secretCipher)
+	sealed, err := settings.SanitizeSecrets(ctx, settingsStore)
+	if err != nil {
+		if errors.Is(err, settings.ErrSecretKeyMissing) {
+			log.Print("存在历史明文凭据但未配置加密密钥，已停止启动")
+		}
+		return errSecretConfig
+	}
+	if sealed > 0 {
+		log.Printf("凭据加密：%d 项历史明文已改为密文", sealed)
+	}
+
 	authService := auth.NewService(store)
 	secret, err := authService.SessionSecret(ctx)
 	if err != nil {
@@ -91,7 +110,6 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		return errAssets
 	}
 
-	settingsStore := settings.NewStore(store)
 	resolver := settings.NewResolver(settingsStore, settings.Env{
 		TelegramToken:     envValue(lookupEnv, "TELEGRAM_BOT_TOKEN"),
 		TelegramChannel:   envValue(lookupEnv, "TELEGRAM_CHANNEL_ID"),
@@ -625,6 +643,10 @@ const uploadFrozenNote = "上游拒绝，账号受限"
 func seedBotPool(ctx context.Context, pool *botpool.Pool, resolver *settings.Resolver, store *settings.Store) error {
 	// 迁移只做一次：用户把旧 Bot 从列表移除后，重启不会再被加回来。
 	if _, done, err := store.Get(ctx, "telegram.bots.migrated"); err == nil && done {
+		return nil
+	}
+	// 没有加密密钥时不写库：宁可继续用环境变量单 Bot，也不把令牌落成明文。
+	if store.Cipher() == nil {
 		return nil
 	}
 	existing, err := pool.List(ctx)
@@ -1239,6 +1261,9 @@ var errServerStart = errors.New("HTTP 服务启动失败，请检查监听地址
 
 // errDatabase 是数据库或鉴权初始化失败时的固定说明，不包含路径等本地信息。
 var errDatabase = errors.New("数据库初始化失败，请检查数据目录是否可写")
+
+// errSecretConfig 是凭据加密配置不可用时的固定说明，不含密钥与明文。
+var errSecretConfig = errors.New("凭据加密配置不可用，请检查部署密钥")
 
 // errEditorConfig 表示在线编辑依赖装配失败，不回显具体原因。
 var errEditorConfig = errors.New("在线编辑初始化失败")
