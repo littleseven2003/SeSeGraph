@@ -206,6 +206,7 @@ nginx -t && systemctl reload nginx
 | `TELEGRAM_BOT_TOKEN` | 是 | 图床 Bot 令牌，需具备目标私有频道发消息权限 |
 | `TELEGRAM_CHANNEL_ID` | 是 | 私有频道标识，形如 `-100…`，或 `@channel` |
 | `TELEGRAM_TAKEOVER_CHAT_ID` | 否 | 旧图接管专用的独立私有维护频道，留空则不启用接管，原 Bot 的删除保护保持不变 |
+| `SESEGRAPH_SECRET_KEY` | 是 | 凭据加密密钥，32 字节随机值的 base64（`openssl rand -base64 32`）；也可用 `SESEGRAPH_SECRET_KEY_FILE` 指向只读密钥文件。未配置时令牌不会落盘，设置页保存凭据会被拒绝 |
 | `TELEGRAPH_ACCESS_TOKEN` | 否 | Telegraph 访问令牌；留空时可在设置页点击「申请账户」自动生成 |
 | `TELEGRAPH_AUTHOR_NAME` | 否 | Telegraph 页面显示的默认作者名 |
 | `LISTEN_ADDR` / `DATA_DIR` | 否 | 监听地址与数据目录，容器内默认 `:8080` 与 `/app/data` |
