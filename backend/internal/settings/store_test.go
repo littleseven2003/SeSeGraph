@@ -18,6 +18,22 @@ func newStore(t *testing.T) *Store {
 	if err := db.Migrate(context.Background(), handle); err != nil {
 		t.Fatalf("迁移失败: %v", err)
 	}
+	store := NewStore(handle)
+	store.SetCipher(testCipher(t))
+	return store
+}
+
+// newStoreWithoutCipher 用于验证未配置密钥时的拒绝写入行为。
+func newStoreWithoutCipher(t *testing.T) *Store {
+	t.Helper()
+	handle, err := db.Open(filepath.Join(t.TempDir(), "settings-plain.db"))
+	if err != nil {
+		t.Fatalf("打开数据库失败: %v", err)
+	}
+	t.Cleanup(func() { _ = handle.Close() })
+	if err := db.Migrate(context.Background(), handle); err != nil {
+		t.Fatalf("迁移失败: %v", err)
+	}
 	return NewStore(handle)
 }
 

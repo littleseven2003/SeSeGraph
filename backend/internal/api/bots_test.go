@@ -19,7 +19,7 @@ import (
 func TestBotsEndpointsStoreAndMaskTokens(t *testing.T) {
 	var pool *botpool.Pool
 	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
-		pool = botpool.New(settings.NewStore(handle))
+		pool = botpool.New(zzTestSettingsStore(handle))
 		deps.Bots = pool
 	})
 	cookie := env.setup(t)
@@ -86,9 +86,9 @@ func containsToken(body string) bool {
 func TestUpdateBotsRejectsWhenProbeFails(t *testing.T) {
 	var pool *botpool.Pool
 	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
-		pool = botpool.New(settings.NewStore(handle))
+		pool = botpool.New(zzTestSettingsStore(handle))
 		deps.Bots = pool
-		deps.Settings = settings.NewResolver(settings.NewStore(handle), settings.Env{
+		deps.Settings = settings.NewResolver(zzTestSettingsStore(handle), settings.Env{
 			TelegramToken:   "999:existing",
 			TelegramChannel: "-100777",
 		})
@@ -126,7 +126,7 @@ func TestTelegramSaveIsAtomicAndChecksBotID(t *testing.T) {
 	var pool *botpool.Pool
 	var resolver *settings.Resolver
 	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
-		store := settings.NewStore(handle)
+		store := zzTestSettingsStore(handle)
 		pool = botpool.New(store)
 		resolver = settings.NewResolver(store, settings.Env{TelegramAPIBase: tg.URL})
 		deps.Bots = pool
@@ -232,7 +232,7 @@ func TestTelegramKeepsFrozenBotWithExclusiveMedia(t *testing.T) {
 	var pool *botpool.Pool
 	var repository *posts.Repository
 	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
-		store := settings.NewStore(handle)
+		store := zzTestSettingsStore(handle)
 		pool = botpool.New(store)
 		deps.Bots = pool
 		deps.Settings = settings.NewResolver(store, settings.Env{TelegramAPIBase: tg.URL})

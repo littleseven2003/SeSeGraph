@@ -290,6 +290,10 @@ func telegramSettingsHandler(deps Deps) gin.HandlerFunc {
 		channelValue := channel
 		if err := deps.Settings.UpdateAtomic(ctx, settings.Patch{TelegramChannel: &channelValue},
 			map[string]string{botpool.KeyBots: encoded}); err != nil {
+			if errors.Is(err, settings.ErrSecretKeyMissing) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "服务端未配置加密密钥，暂不能保存 Bot 凭据"})
+				return
+			}
 			c.JSON(http.StatusBadRequest, gin.H{"error": "频道或 Bot 列表校验未通过"})
 			return
 		}

@@ -33,7 +33,7 @@ func newPublishEnv(t *testing.T, publicURL string, withTelegraph bool) *testEnv 
 		if !withTelegraph {
 			return
 		}
-		store := settings.NewStore(handle)
+		store := zzTestSettingsStore(handle)
 		manager := telegraph.NewManager(telegraph.Config{APIBase: upstream.URL}, store)
 		deps.Telegraph = manager
 		// 预置令牌，模拟已完成建号。

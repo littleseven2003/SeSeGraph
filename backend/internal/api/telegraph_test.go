@@ -66,7 +66,7 @@ func (f *fakeTelegraph) formValue(key string) string {
 func telegraphEnv(t *testing.T, upstream string) (*testEnv, *settings.Store) {
 	t.Helper()
 	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
-		deps.Telegraph = telegraph.NewManager(telegraph.Config{APIBase: upstream, AuthorName: "SeSe"}, settings.NewStore(nil))
+		deps.Telegraph = telegraph.NewManager(telegraph.Config{APIBase: upstream, AuthorName: "SeSe"}, zzTestSettingsStore(nil))
 	})
 	return env, nil
 }
@@ -96,7 +96,7 @@ func TestTelegraphStatusDefaultsToNotConfigured(t *testing.T) {
 func TestTelegraphCreateAccountPersistsTokenWithoutEcho(t *testing.T) {
 	fake := newFakeTelegraph(t)
 	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
-		deps.Telegraph = telegraph.NewManager(telegraph.Config{APIBase: fake.server.URL}, settings.NewStore(handle))
+		deps.Telegraph = telegraph.NewManager(telegraph.Config{APIBase: fake.server.URL}, zzTestSettingsStore(handle))
 	})
 	cookie := env.setup(t)
 
@@ -143,7 +143,7 @@ func TestTelegraphCreateAccountPersistsTokenWithoutEcho(t *testing.T) {
 func TestTelegraphCreateAccountRequiresSession(t *testing.T) {
 	fake := newFakeTelegraph(t)
 	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
-		deps.Telegraph = telegraph.NewManager(telegraph.Config{APIBase: fake.server.URL}, settings.NewStore(handle))
+		deps.Telegraph = telegraph.NewManager(telegraph.Config{APIBase: fake.server.URL}, zzTestSettingsStore(handle))
 	})
 
 	rec := env.do(t, http.MethodPost, "/api/settings/telegraph/create-account", `{"short_name":"sese"}`, nil)
@@ -159,7 +159,7 @@ func TestTelegraphCreateAccountMapsUpstreamFailure(t *testing.T) {
 	fake := newFakeTelegraph(t)
 	fake.status = http.StatusInternalServerError
 	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
-		deps.Telegraph = telegraph.NewManager(telegraph.Config{APIBase: fake.server.URL}, settings.NewStore(handle))
+		deps.Telegraph = telegraph.NewManager(telegraph.Config{APIBase: fake.server.URL}, zzTestSettingsStore(handle))
 	})
 	cookie := env.setup(t)
 
@@ -179,7 +179,7 @@ func TestTelegraphEnvTokenTakesPriority(t *testing.T) {
 			AccessToken: "env-token",
 			AuthorName:  "环境作者",
 			APIBase:     fake.server.URL,
-		}, settings.NewStore(handle))
+		}, zzTestSettingsStore(handle))
 	})
 	cookie := env.setup(t)
 

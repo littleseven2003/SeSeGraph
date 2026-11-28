@@ -413,6 +413,9 @@ func updateSettingsHandler(deps Deps) gin.HandlerFunc {
 				"fields": conflict.Fields,
 			})
 			return
+		case errors.Is(err, settings.ErrSecretKeyMissing):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "服务端未配置加密密钥，暂不能保存凭据"})
+			return
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存配置失败"})
 			return

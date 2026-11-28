@@ -117,7 +117,7 @@ func newGuardEnv(t *testing.T, apiBase string, count int64) (*Guard, *storage.Sw
 	if err := db.Migrate(context.Background(), handle); err != nil {
 		t.Fatalf("迁移失败: %v", err)
 	}
-	store := settings.NewStore(handle)
+	store := zzTestSettingsStore(handle)
 	switcher := storage.NewSwitcher()
 	gate := storage.NewUploadGate()
 	images := count

@@ -32,7 +32,7 @@ func newSettingsEnvWithReload(t *testing.T, envValues settings.Env, reload func(
 	var resolver *settings.Resolver
 	calls := 0
 	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
-		resolver = settings.NewResolver(settings.NewStore(handle), envValues)
+		resolver = settings.NewResolver(zzTestSettingsStore(handle), envValues)
 		deps.Settings = resolver
 		if reload != nil {
 			deps.Reload = func(ctx context.Context) error {
@@ -579,7 +579,7 @@ func TestSettingsSaveTriggersReload(t *testing.T) {
 func TestSettingsReloadFailureKeepsOldProvider(t *testing.T) {
 	streams := &fakeStreamProvider{}
 	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
-		deps.Settings = settings.NewResolver(settings.NewStore(handle), settings.Env{})
+		deps.Settings = settings.NewResolver(zzTestSettingsStore(handle), settings.Env{})
 		deps.Streams = streams
 		deps.Reload = func(context.Context) error { return errors.New("切换失败") }
 	})
@@ -641,7 +641,7 @@ func TestSettingsBotMismatchKeepsImages(t *testing.T) {
 	streams := &fakeStreamProvider{}
 	var resolver *settings.Resolver
 	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
-		resolver = settings.NewResolver(settings.NewStore(handle), settings.Env{})
+		resolver = settings.NewResolver(zzTestSettingsStore(handle), settings.Env{})
 		deps.Settings = resolver
 		deps.Streams = streams
 		deps.PrepareProvider = func(context.Context, settings.Effective) (*provider.Candidate, error) {
@@ -683,7 +683,7 @@ func TestSettingsProxyChangeRebuildsTelegramTransport(t *testing.T) {
 		prepares := 0
 		var resolver *settings.Resolver
 		env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
-			resolver = settings.NewResolver(settings.NewStore(handle), settings.Env{})
+			resolver = settings.NewResolver(zzTestSettingsStore(handle), settings.Env{})
 			deps.Settings = resolver
 			deps.PrepareProvider = func(context.Context, settings.Effective) (*provider.Candidate, error) {
 				prepares++
@@ -719,7 +719,7 @@ func TestSettingsSavesApplyInOrder(t *testing.T) {
 
 	var resolver *settings.Resolver
 	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
-		resolver = settings.NewResolver(settings.NewStore(handle), settings.Env{})
+		resolver = settings.NewResolver(zzTestSettingsStore(handle), settings.Env{})
 		deps.Settings = resolver
 		deps.SettingsLock = &sync.Mutex{}
 		deps.Reload = func(ctx context.Context) error {
@@ -832,7 +832,7 @@ func TestSettingsPersistFailureKeepsRuntimeAndDB(t *testing.T) {
 	var store *settings.Store
 	commits := 0
 	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
-		store = settings.NewStore(handle)
+		store = zzTestSettingsStore(handle)
 		resolver = settings.NewResolver(store, settings.Env{})
 		guard = provider.NewGuard(storage.NewSwitcher(), store,
 			func(context.Context) (int64, error) { return 0, nil }, storage.NewUploadGate())
@@ -958,7 +958,7 @@ func TestTrafficStatsHandler(t *testing.T) {
 // TestSettingsMetaUpdate 验证说明文件名与解析方式的读写与回落。
 func TestSettingsMetaUpdate(t *testing.T) {
 	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
-		deps.Settings = settings.NewResolver(settings.NewStore(handle), settings.Env{})
+		deps.Settings = settings.NewResolver(zzTestSettingsStore(handle), settings.Env{})
 	})
 	cookie := env.setup(t)
 
@@ -1022,7 +1022,7 @@ func readEffectiveSettings(t *testing.T, env *testEnv, cookie *http.Cookie) (map
 	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
 		t.Fatalf("解析响应失败: %v", err)
 	}
-	effective, err := settings.NewResolver(settings.NewStore(env.handle), settings.Env{}).Effective(context.Background())
+	effective, err := settings.NewResolver(zzTestSettingsStore(env.handle), settings.Env{}).Effective(context.Background())
 	if err != nil {
 		t.Fatalf("解析生效配置失败: %v", err)
 	}
@@ -1034,7 +1034,7 @@ func TestSettingsHotAppliesTrafficAndBackup(t *testing.T) {
 	meter := traffic.New(nil, traffic.Options{})
 	applied := 0
 	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
-		deps.Settings = settings.NewResolver(settings.NewStore(handle), settings.Env{})
+		deps.Settings = settings.NewResolver(zzTestSettingsStore(handle), settings.Env{})
 		deps.Traffic = meter
 		deps.ApplyBackupSchedule = func(settings.Effective) error {
 			applied++
@@ -1088,7 +1088,7 @@ func TestSettingsHotAppliesTrafficAndBackup(t *testing.T) {
 // 选了 4 路也不会多占一个必然排队的名额。
 func TestSettingsUploadConcurrency(t *testing.T) {
 	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
-		deps.Settings = settings.NewResolver(settings.NewStore(handle), settings.Env{})
+		deps.Settings = settings.NewResolver(zzTestSettingsStore(handle), settings.Env{})
 		deps.UploadConcurrency = 2
 	})
 	cookie := env.setup(t)
@@ -1110,7 +1110,7 @@ func TestSettingsUploadConcurrency(t *testing.T) {
 // TestSettingsUploadConcurrencyDefault 验证未配置时回落到默认上限，与限流器口径一致。
 func TestSettingsUploadConcurrencyDefault(t *testing.T) {
 	env := newTestEnvWith(t, testSetupToken, func(deps *Deps, handle *sql.DB) {
-		deps.Settings = settings.NewResolver(settings.NewStore(handle), settings.Env{})
+		deps.Settings = settings.NewResolver(zzTestSettingsStore(handle), settings.Env{})
 		deps.UploadConcurrency = 0
 	})
 	cookie := env.setup(t)
